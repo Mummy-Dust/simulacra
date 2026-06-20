@@ -1,0 +1,22 @@
+# Target: ESP32-WROVER-E (classic ESP32, dual-core, PSRAM).
+# The target is selected with `idf.py set-target esp32` rather than pinned here,
+# which is the canonical approach and avoids IDF_TARGET-mismatch build errors.
+
+# Bluetooth: enable controller + NimBLE host (lighter than Bluedroid, ideal for
+# a broadcaster-only workload). Bluedroid stays off.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# simulacra only broadcasts (non-connectable advertising). We'd prefer broadcaster-
+# only, but ESP-IDF v5.4's ble_gap.c references ble_gap_call_conn_event_cb() in
+# ble_gap_set_data_len() unconditionally while that helper is compiled out unless a
+# connect role is enabled -> -Werror implicit-declaration. So we keep the PERIPHERAL
+# role on (it defines NIMBLE_BLE_CONNECT) to compile cleanly; we never accept a
+# connection. CENTRAL and OBSERVER (scanning) stay off.
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+
+# Slightly larger app log buffer is handy while we tune on hardware.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

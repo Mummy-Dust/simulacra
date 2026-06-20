@@ -1,6 +1,8 @@
 # splinter
 "Let me tell you why you're here. You're here because you know something. What you know you can't explain, but you feel it. You've felt it your entire life, that there's something wrong with the world. You don't know what it is, but it's there, like a splinter in your mind, driving you mad." — Morpheus
 
+<img width="1625" height="1077" alt="image" src="https://github.com/user-attachments/assets/b2bd80d8-875c-45b5-8e96-a5309474d132" />
+
 ---
 
 A BLE **privacy / anti-tracking decoy** for the ESP32. It continuously fabricates a

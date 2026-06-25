@@ -27,6 +27,7 @@ typedef struct {
     const char *name;         // <= 12 chars to stay within the 31-byte adv budget; NULL = no name
 } vendor_t;
 
+// Tile Inc company id 0x0157; Tile devices also advertise service UUID 0xFEED (see templates.c).
 static const vendor_t VENDORS[] = {
     { 0x0075, "Galaxy Buds" },   // Samsung Electronics
     { 0x00E0, "Pixel Buds"  },   // Google

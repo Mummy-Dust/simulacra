@@ -15,7 +15,7 @@ static const device_template_t TEMPLATES[] = {
     { "ibeacon",      FMT_IBEACON,      0x004C, 0,     NULL,           0,  90, 110, 16 },
     { "eddy-uid",     FMT_EDDYSTONE_UID,0,      0xFEAA, NULL,          0,  90, 110, 10 },
     { "eddy-url",     FMT_EDDYSTONE_URL,0,      0xFEAA, NULL,          0, 650, 750,  6 },
-    // a tracker row is added in Task 4.
+    { "tile",         FMT_SVC_TRACKER,  0x0157, 0xFEED, NULL,          0,1000,2000, 14 },
 };
 
 static uint16_t rnd_range(uint16_t lo, uint16_t hi) { return lo + (esp_random() % (hi - lo + 1)); }
@@ -94,6 +94,17 @@ static void enc_eddystone_url(struct ble_hs_adv_fields *f, uint8_t *sd)
     f->svc_data_uuid16 = sd; f->svc_data_uuid16_len = n;
 }
 
+// Tile-style tracker: advertises service UUID 0xFEED with a short id-shaped blob.
+static const ble_uuid16_t TILE_UUID = BLE_UUID16_INIT(0xFEED);
+
+static void enc_tracker(struct ble_hs_adv_fields *f, uint8_t *sd)
+{
+    sd[0] = 0xED; sd[1] = 0xFE;             // Tile service UUID (little-endian)
+    for (int i = 0; i < 10; i++) sd[2 + i] = rnd_byte();   // tracker-id-shaped blob
+    f->uuids16 = &TILE_UUID; f->num_uuids16 = 1; f->uuids16_is_complete = 1;
+    f->svc_data_uuid16 = sd; f->svc_data_uuid16_len = 12;
+}
+
 int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t *out_len,
                    uint16_t *out_itvl_ms, uint16_t *out_company_id)
 {
@@ -107,7 +118,8 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
         case FMT_IBEACON:       enc_ibeacon(&f, scratch); break;
         case FMT_EDDYSTONE_UID: enc_eddystone_uid(&f, scratch); break;
         case FMT_EDDYSTONE_URL: enc_eddystone_url(&f, scratch); break;
-        default: *out_len = 0; return 1;   // unimplemented families (Task 4) -> RED
+        case FMT_SVC_TRACKER:   enc_tracker(&f, scratch); break;
+        default: *out_len = 0; return 1;   // unreachable: every family has an encoder
     }
 
     if (t->name && (esp_random() % 100) < t->name_prob) {

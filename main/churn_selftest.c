@@ -180,6 +180,16 @@ static void test_eddystone(void)
     }
 }
 
+static void test_tracker(void)
+{
+    const device_template_t *t = find_family(FMT_SVC_TRACKER);
+    ST_CHECK(t != NULL, "tracker template present");
+    if (!t) return;
+    uint8_t pay[31], len = 0; uint16_t itvl = 0, cid = 0;
+    ST_CHECK(template_build(t, pay, &len, &itvl, &cid) == 0 && len > 0, "tracker builds");
+    ST_CHECK(payload_has_svc_uuid16(pay, len, 0xFEED), "tracker svc-data 0xFEED");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -209,6 +219,7 @@ int churn_selftest_run(void)
     test_templates();
     test_ibeacon();
     test_eddystone();
+    test_tracker();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

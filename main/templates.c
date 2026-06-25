@@ -2,6 +2,7 @@
 #include "templates.h"
 #include "esp_random.h"
 #include "host/ble_hs.h"
+#include "host/ble_uuid.h"
 
 // --- the bundle library (M4: hand-written; M6 will learn the real mix) ---
 static const device_template_t TEMPLATES[] = {
@@ -12,7 +13,9 @@ static const device_template_t TEMPLATES[] = {
     { "fitness-grmn", FMT_VENDOR_MFG,   0x0087, 0,     "vivosmart",   50, 900,1100, 14 },
     { "sensor-nordic",FMT_VENDOR_MFG,   0x0059, 0,     NULL,           0,1800,2200, 18 },
     { "ibeacon",      FMT_IBEACON,      0x004C, 0,     NULL,           0,  90, 110, 16 },
-    // more beacon + tracker rows are added in Tasks 3-4.
+    { "eddy-uid",     FMT_EDDYSTONE_UID,0,      0xFEAA, NULL,          0,  90, 110, 10 },
+    { "eddy-url",     FMT_EDDYSTONE_URL,0,      0xFEAA, NULL,          0, 650, 750,  6 },
+    // a tracker row is added in Task 4.
 };
 
 static uint16_t rnd_range(uint16_t lo, uint16_t hi) { return lo + (esp_random() % (hi - lo + 1)); }
@@ -59,6 +62,38 @@ static void enc_ibeacon(struct ble_hs_adv_fields *f, uint8_t *mfg)
     f->mfg_data = mfg; f->mfg_data_len = 25;
 }
 
+// Eddystone advertises under the 16-bit service UUID 0xFEAA, with the frame payload
+// carried as service data for the same UUID (frame byte selects UID / URL / TLM / ...).
+static const ble_uuid16_t EDDY_UUID = BLE_UUID16_INIT(0xFEAA);
+
+static void enc_eddystone_uid(struct ble_hs_adv_fields *f, uint8_t *sd)
+{
+    sd[0] = 0xAA; sd[1] = 0xFE;             // service UUID (little-endian)
+    sd[2] = 0x00;                           // frame type: UID
+    sd[3] = 0xC5;                           // ranging tx power
+    for (int i = 0; i < 10; i++) sd[4 + i]  = rnd_byte();  // namespace
+    for (int i = 0; i < 6;  i++) sd[14 + i] = rnd_byte();  // instance
+    sd[20] = 0x00; sd[21] = 0x00;           // reserved
+    f->uuids16 = &EDDY_UUID; f->num_uuids16 = 1; f->uuids16_is_complete = 1;
+    f->svc_data_uuid16 = sd; f->svc_data_uuid16_len = 22;
+}
+
+// Eddystone-URL: scheme 0x03 = "https://", expansion byte 0x07 = ".com/"
+static void enc_eddystone_url(struct ble_hs_adv_fields *f, uint8_t *sd)
+{
+    static const char *hosts[] = { "example", "acme", "store", "venue" };
+    const char *h = hosts[esp_random() % 4];
+    uint8_t n = 0;
+    sd[n++] = 0xAA; sd[n++] = 0xFE;         // service UUID
+    sd[n++] = 0x10;                         // frame type: URL
+    sd[n++] = 0xC5;                         // tx power
+    sd[n++] = 0x03;                         // scheme https://
+    for (const char *c = h; *c; c++) sd[n++] = (uint8_t)*c;
+    sd[n++] = 0x07;                         // .com/
+    f->uuids16 = &EDDY_UUID; f->num_uuids16 = 1; f->uuids16_is_complete = 1;
+    f->svc_data_uuid16 = sd; f->svc_data_uuid16_len = n;
+}
+
 int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t *out_len,
                    uint16_t *out_itvl_ms, uint16_t *out_company_id)
 {
@@ -68,9 +103,11 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
 
     static uint8_t scratch[31];  // mfg/svc-data working buffer (single task, not reentrant)
     switch (t->family) {
-        case FMT_VENDOR_MFG: enc_vendor_mfg(t, &f, scratch); break;
-        case FMT_IBEACON:    enc_ibeacon(&f, scratch); break;
-        default: *out_len = 0; return 1;   // unimplemented families (Tasks 3-4) -> RED
+        case FMT_VENDOR_MFG:    enc_vendor_mfg(t, &f, scratch); break;
+        case FMT_IBEACON:       enc_ibeacon(&f, scratch); break;
+        case FMT_EDDYSTONE_UID: enc_eddystone_uid(&f, scratch); break;
+        case FMT_EDDYSTONE_URL: enc_eddystone_url(&f, scratch); break;
+        default: *out_len = 0; return 1;   // unimplemented families (Task 4) -> RED
     }
 
     if (t->name && (esp_random() % 100) < t->name_prob) {

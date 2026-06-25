@@ -152,6 +152,34 @@ static void test_ibeacon(void)
     ST_CHECK(!has_apple_popup_subtype(pay, len), "iBeacon: no forbidden Apple subtype");
 }
 
+static bool payload_has_svc_uuid16(const uint8_t *p, uint8_t len, uint16_t uuid)
+{
+    uint8_t lo = uuid & 0xff, hi = (uuid >> 8) & 0xff;
+    for (int i = 0; i + 1 < len; ) {
+        uint8_t adlen = p[i], adtype = p[i+1];
+        // 0x16 = service data 16-bit; first two data bytes are the UUID (little-endian)
+        if (adtype == 0x16 && adlen >= 3 && p[i+2] == lo && p[i+3] == hi) return true;
+        i += adlen + 1;
+    }
+    return false;
+}
+
+static void test_eddystone(void)
+{
+    const device_template_t *u = find_family(FMT_EDDYSTONE_UID);
+    const device_template_t *r = find_family(FMT_EDDYSTONE_URL);
+    ST_CHECK(u && r, "Eddystone UID+URL templates present");
+    uint8_t pay[31], len = 0; uint16_t itvl = 0, cid = 0;
+    if (u) {
+        ST_CHECK(template_build(u, pay, &len, &itvl, &cid) == 0 && len > 0, "Eddystone-UID builds");
+        ST_CHECK(payload_has_svc_uuid16(pay, len, 0xFEAA), "Eddystone-UID svc-data 0xFEAA");
+    }
+    if (r) {
+        ST_CHECK(template_build(r, pay, &len, &itvl, &cid) == 0 && len > 0, "Eddystone-URL builds");
+        ST_CHECK(payload_has_svc_uuid16(pay, len, 0xFEAA), "Eddystone-URL svc-data 0xFEAA");
+    }
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -180,6 +208,7 @@ int churn_selftest_run(void)
     // --- M4 templates ---
     test_templates();
     test_ibeacon();
+    test_eddystone();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

@@ -6,9 +6,12 @@
 // roster.* (identity pool) and churn.* (active-set / cooldown / time-slice); this
 // file is the slim entry point.
 //
-// M3 Task 1 milestone: a smoke driver proving 4 genuinely-concurrent extended-
-// advertising instances on the C6 via the churn_adv adapter. The churn engine
-// replaces simulacra_run() in Task 6.
+// Two build modes, selected by CHURN_SELFTEST below:
+//   * CHURN_SELFTEST=1 (M3 Tasks 2-5): run the on-target logic self-test with the
+//     radio idle, loop-printing PASS/FAIL over serial. No advertising.
+//   * CHURN_SELFTEST=0 (normal): drive the decoy population on the radios. Until
+//     the churn engine is wired in (Task 6), normal mode runs simulacra_run()'s
+//     4-instance smoke driver proving concurrent ext-adv.
 //
 // Decoy guardrails (see decoy_vendors.h): advertising is NON-CONNECTABLE and the
 // payload is never shaped like Apple Continuity / Microsoft Swift Pair / Google
@@ -31,13 +34,22 @@
 
 #include "identity.h"
 #include "churn_adv.h"
+#include "churn_selftest.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Splinter v2 requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
 #endif
 
+// M3 Tasks 2-5: build the on-target self-test (radio idle). Task 6 sets this to 0.
+#ifndef CHURN_SELFTEST
+#define CHURN_SELFTEST 1
+#endif
+
 static const char *TAG = "splinter";
 static volatile bool s_host_synced = false;
+
+#if !CHURN_SELFTEST
+// ---- M3 Task 1 smoke driver (normal-mode only; replaced by churn in Task 6) ----
 
 // Build a valid random-static address: 6 random bytes with the two most
 // significant bits set. Regenerates the astronomically rare all-zero / all-ones
@@ -103,13 +115,22 @@ static void simulacra_run(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+#endif  // !CHURN_SELFTEST
 
 static void simulacra_task(void *arg)
 {
     while (!s_host_synced) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+#if CHURN_SELFTEST
+    int fails = churn_selftest_run();
+    for (;;) {  // loop-print so the USB-JTAG reader reliably catches it
+        ESP_LOGW(TAG, "SELFTEST result: %s (fails=%d)", fails ? "FAIL" : "PASS", fails);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+#else
     simulacra_run();
+#endif
 }
 
 static void on_sync(void)

@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <string.h>
 #include "churn_selftest.h"
 #include "roster.h"
 #include "churn.h"
@@ -61,6 +62,42 @@ static void test_cooldown(void)
     ST_CHECK(!violated, "no MAC reappears within its cooldown window");
 }
 
+static const identity_t *s_rec[CHURN_HW_INSTANCES];
+static int s_apply_calls;
+static int rec_apply(uint8_t instance, const identity_t *id)
+{ if (instance < CHURN_HW_INSTANCES) s_rec[instance] = id; s_apply_calls++; return 0; }
+
+static void test_timeslice(void)
+{
+    roster_init();
+    memset(s_rec, 0, sizeof(s_rec));
+    s_apply_calls = 0;
+    churn_set_apply(rec_apply);
+    churn_init(0);
+    // Freeze dwell so nobody retires mid-test (deterministic coverage).
+    for (int s = 0; s < CHURN_ACTIVE_SET; s++) {
+        identity_t *a = (identity_t *)churn_active_at(s);
+        if (a) a->active_until_ms = 0xFFFFFFFFu;
+    }
+
+    // Collect the identities placed on radios across two consecutive slices.
+    const identity_t *seen[CHURN_HW_INSTANCES * 2]; int n = 0;
+    churn_tick(CHURN_SLICE_MS);            // slice phase 1
+    for (int i = 0; i < CHURN_HW_INSTANCES; i++) seen[n++] = s_rec[i];
+    churn_tick(2 * CHURN_SLICE_MS);        // slice phase 2
+    for (int i = 0; i < CHURN_HW_INSTANCES; i++) seen[n++] = s_rec[i];
+
+    // With ACTIVE_SET=8, HW=4, every active identity should appear within 2 slices.
+    int covered = 0;
+    for (int s = 0; s < CHURN_ACTIVE_SET; s++) {
+        const identity_t *a = churn_active_at(s);
+        for (int j = 0; j < n; j++) if (seen[j] == a) { covered++; break; }
+    }
+    ST_CHECK(covered == CHURN_ACTIVE_SET,
+             "every active identity is on-air within 2 slices");
+    ST_CHECK(s_apply_calls > 0, "time-slice drives the apply callback");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -84,6 +121,7 @@ int churn_selftest_run(void)
     // --- churn lifecycle ---
     test_churn_lifecycle();
     test_cooldown();
+    test_timeslice();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

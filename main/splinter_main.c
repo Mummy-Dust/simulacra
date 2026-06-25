@@ -39,8 +39,9 @@
 #endif
 
 // Normal (shipped) mode. Set to 1 to build the on-target self-test instead.
+// (1 during M4 dev — Task 6 sets it back to 0.)
 #ifndef CHURN_SELFTEST
-#define CHURN_SELFTEST 0
+#define CHURN_SELFTEST 1
 #endif
 
 static const char *TAG = "splinter";

@@ -3,6 +3,7 @@
 #include "churn_selftest.h"
 #include "roster.h"
 #include "churn.h"
+#include "templates.h"
 #include "esp_log.h"
 
 static const char *TAG = "selftest";
@@ -98,6 +99,23 @@ static void test_timeslice(void)
     ST_CHECK(s_apply_calls > 0, "time-slice drives the apply callback");
 }
 
+static void test_templates(void)
+{
+    ST_CHECK(templates_count() >= 5, "template library populated");
+    bool all_build = true, all_budget = true, all_itvl = true;
+    for (size_t i = 0; i < templates_count(); i++) {
+        const device_template_t *t = template_at(i);
+        uint8_t pay[31], len = 0; uint16_t itvl = 0, cid = 0;
+        int rc = template_build(t, pay, &len, &itvl, &cid);
+        if (rc != 0 || len == 0) { all_build = false; continue; }
+        if (len > 31) all_budget = false;
+        if (itvl < t->itvl_min_ms || itvl > t->itvl_max_ms) all_itvl = false;
+    }
+    ST_CHECK(all_build, "every template builds a non-empty payload");
+    ST_CHECK(all_budget, "every template payload fits 31 bytes");
+    ST_CHECK(all_itvl, "every interval is within the template band");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -122,6 +140,9 @@ int churn_selftest_run(void)
     test_churn_lifecycle();
     test_cooldown();
     test_timeslice();
+
+    // --- M4 templates ---
+    test_templates();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

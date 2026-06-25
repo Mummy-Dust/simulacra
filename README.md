@@ -18,9 +18,10 @@ decoy every cycle. On the ESP32-C6 it runs up to **4 genuinely-concurrent** adve
 (BT 5 extended advertising) and time-slices a larger active set across them.
 
 - a pre-generated **roster** of persistent identities, each with a stable
-  **random-static MAC** (what modern phones, watches and earbuds already use for privacy),
-  a vendor drawn from `main/decoy_vendors.h` surfaced via its **Company ID in
-  manufacturer-specific data**, an optional short name, and a frozen benign payload;
+  **random-static MAC** (what modern phones, watches and earbuds already use for privacy)
+  and a frozen, format-correct payload drawn from an **archetype library**
+  (`main/templates.c`) — vendor earbuds/fitness/sensor manufacturer-data, iBeacon,
+  Eddystone-UID/-URL, and Tile-style service data — each a coherent vendor+interval+payload bundle;
 - a **churn engine** that keeps ~`CHURN_ACTIVE_SET` identities "present" at once: each
   dwells for a few minutes, then retires into a cooldown of tens of minutes before it may
   **reappear with the same MAC** — so a scanner sees devices arrive, linger, leave, and
@@ -33,11 +34,16 @@ devices with staggered arrivals/departures and gradual turnover — not one-shot
 
 ## What it deliberately does NOT do (non-intrusive BLE connections)
 
-Advertising is **non-connectable** and the payload is never shaped like
-Apple Continuity (`0x004C`), Microsoft Swift Pair (`0x0006`), or Google Fast Pair
-(`0xFE2C`). Those formats trigger pairing pop-ups on bystanders' phones/PCs — a decoy
-needs realistic *presence*, not pop-up spam aimed at people nearby, so those payloads are
-never emitted. See the header comment in `main/decoy_vendors.h`.
+Advertising is **non-connectable**, and the payload never carries the Apple subtypes that
+make bystanders' phones pop up: Continuity proximity-pairing (`0x07`), nearby-action
+(`0x0F`), or Find My (`0x12`). Plain **iBeacon** (Apple company `0x004C`, subtype `0x02`)
+*is* emitted — it is a silent location beacon that never triggers a pairing dialog.
+Microsoft Swift Pair (`0x0006`) and Google Fast Pair (`0xFE2C`) are likewise never emitted.
+A decoy needs realistic *presence*, not pop-up spam aimed at people nearby.
+
+This "refined Law 3" is enforced in two places: the iBeacon encoder hardcodes the
+`4C 00 02 15` prefix so it can never drift into a pop-up subtype, and the on-target
+self-test scans every roster payload for the forbidden subtypes.
 
 This helps prevent annoying pop-ups that are seen in other "spammers" in other products and firmware variants. This is how we get around that. 
 
@@ -77,16 +83,19 @@ The synthetic-population tunables live in `main/churn.h`:
 | `CHURN_DWELL_MIN_MS` / `CHURN_DWELL_MAX_MS` | 3 min / 10 min | How long an identity stays on air before retiring |
 | `CHURN_COOLDOWN_MIN_MS` / `CHURN_COOLDOWN_MAX_MS` | 30 min / 60 min | How long a retired identity waits before it may reappear |
 
-Identity-shape tunables live in `main/roster.*`:
+Identity-shape tunables live in `main/roster.h`:
 
 | Macro | Default | Effect |
 |-------|---------|--------|
 | `CHURN_ROSTER_SIZE` (`roster.h`) | 256 | Size of the persistent identity pool |
-| `SIMULACRA_NAME_PROB` (`roster.c`) | 60 | % chance an identity advertises a device name |
-| `SIMULACRA_MFG_PROB` (`roster.c`) | 85 | % chance an identity carries vendor manufacturer data |
 
-Add more vendors/names to `main/decoy_vendors.h` for a denser, more varied crowd (keep
-names ≤ 12 chars to stay within the 31-byte advertising budget).
+**Archetype library.** Each identity's payload is built from one of the archetype bundles in
+`main/templates.c` — vendor earbuds/fitness/sensor manufacturer-data, iBeacon,
+Eddystone-UID/-URL, and Tile-style service data. Each bundle pins a vendor/format together
+with its own interval band and (optional) device name, so a decoy can never present an
+impossible vendor+payload+timing combination. Tune the crowd by editing the table: the
+`weight` column sets each archetype's share of the mix, and the `itvl_min_ms` / `itvl_max_ms`
+columns set its advertising cadence. Keep names ≤ 12 chars to stay within the 31-byte budget.
 
 ## Troubleshooting
 

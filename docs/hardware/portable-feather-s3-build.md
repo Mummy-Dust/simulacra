@@ -1,13 +1,16 @@
-# Portable Splinter — Feather ESP32-S3 build
+# Portable Splinter — ESP32-S3 build
 
 A battery-powered, place-and-go splinter node. The radio work (BLE synthetic
 population now; Wi-Fi capture/inject later) all runs on the S3's single 2.4 GHz
 radio — **no SDR or extra RF hardware**. This build is **solder-free**: every
 peripheral is STEMMA QT (I²C) or JST.
 
-> Develop on the **QT Py S3** you already have (USB-powered). Move to the **Feather
-> S3** for a deployable battery node — it adds LiPo charging + a fuel gauge. The
-> firmware is identical (`idf.py set-target esp32s3`); only the board changes.
+> **Decided build:** develop on the **QT Py S3** you already have (USB-powered); deploy on
+> the **Lonely Binary ESP32-S3 N16R8** (8 MB PSRAM + external antenna), powered by an
+> **Adafruit PowerBoost 1000C + a 3000 mAh LiPo** (see *Powering it*, below). The firmware
+> is identical across S3 boards (`idf.py set-target esp32s3`); only the board changes. The
+> **Feather S3** is the zero-solder fallback if you'd trade the antenna/PSRAM for onboard
+> charging + a fuel gauge.
 
 ## Bill of materials
 
@@ -16,7 +19,8 @@ peripheral is STEMMA QT (I²C) or JST.
 | Item | Purpose | Adafruit PID | ~$ |
 |------|---------|--------------|----|
 | ESP32-S3 Feather (4 MB flash / 2 MB PSRAM) | Brains + radio; USB-C, JST LiPo, MAX17048 fuel gauge, charging, STEMMA QT, NeoPixel | 5477 | 17.50 |
-| LiPo 3.7 V, JST-PH (2000–2500 mAh) | Untethered power | 2011 / 328 | 9–15 |
+| LiPo 3.7 V, JST-PH (2000–2500 mAh; or your 3000 mAh) | Untethered power | 2011 / 328 | 9–15 |
+| **Adafruit PowerBoost 1000C** (Route A) | Charge + 5 V boost + load-share, **no auto-off**; powers a bare devkit (QT Py / N16R8) over USB | 2465 | ~20 |
 | Inline JST-PH battery switch | True off without unplugging the cell | — | 2–3 |
 | USB-C cable | Flash + charge | — | 5 |
 | Enclosure (project box or 3D-printed Feather+LiPo case) | Place-and-go | — | 5–10 |
@@ -65,7 +69,36 @@ Core ≈ **$40–50**. Core + IMU ≈ **$50–65**. Full M8 ≈ **$75–90**.
 
 SPI stays free for the Adalogger SD wing. The onboard NeoPixel is on its own GPIO.
 
-## Power & charging
+## Powering it — pick one (decided: Route A)
+
+Bare S3 devkits (QT Py / Lonely Binary N16R8) have **no onboard charging or regulation**,
+so they need a power module. The trap with consumer USB power banks is that most
+**auto-shut-off below ~50–100 mA** — fatal for a duty-cycled node. Both routes below avoid
+that. Don't feed a LiPo straight to the board: a 4.2 V cell over-volts the 3V3 rail (3.6 V
+max), and most onboard LDOs brown out feeding VIN below ~4.4 V. Regulate to a clean 5 V.
+
+### Route A — recommended: PowerBoost 1000C + LiPo (most capable, near solder-free)
+
+For the QT Py / N16R8. The **Adafruit PowerBoost 1000C** integrates charge + 5 V boost +
+load-sharing in one board and **does not auto-off** (it's a boost converter, not a smart
+pack). Keeps the N16R8's 8 MB PSRAM + external antenna.
+
+- **Battery in:** plug the LiPo's 2-pin JST-PH into the PowerBoost. Bare leads / wrong
+  connector? Use a **JST-PH screw-terminal adapter** (no soldering) or a JST pigtail.
+- **Power out:** short **USB-A → USB-C** cable from the PowerBoost to the board. No solder.
+- **Charge:** micro-USB into the PowerBoost (load-sharing = runs while charging, UPS-style).
+- **On/off (solder-free):** an **inline USB power switch** on the output cable, or just
+  unplug. (Optionally a switch on the PowerBoost `EN`→`GND` pads — one joint.)
+- **Runtime:** a 3000 mAh cell ≈ ~15 h all-on, far more duty-cycled.
+
+> ⚠️ **LiPo polarity.** Confirm the cell matches the PowerBoost's JST-PH polarity with a
+> meter before first plug-in — reversed can destroy the cell/board. SparkFun/Amazon cells
+> are frequently reversed vs Adafruit.
+
+### Route B — zero-solder board: Feather ESP32-S3 + JST LiPo
+
+If you'd rather guarantee **zero soldering** and don't need the N16R8's antenna/PSRAM, the
+Feather has JST + charging + fuel gauge onboard:
 
 - **Charge:** plug USB-C; the Feather's CHG LED lights while charging (~500 mA default).
 - **Fuel gauge:** MAX17048 reports battery % over I²C — used in M8 for power telemetry.

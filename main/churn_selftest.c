@@ -5,6 +5,7 @@
 #include "churn.h"
 #include "templates.h"
 #include "rf_model.h"
+#include "observe.h"
 #include "esp_log.h"
 
 static const char *TAG = "selftest";
@@ -243,6 +244,34 @@ static void test_rf_model(void)
     ST_CHECK((int)(s.pop_ewma + 0.5f) == 5 && (int)(s.arrival_per_min + 0.5f) == 5, "first sweep seeds EWMA");
 }
 
+static void test_observe_dedup(void)
+{
+    const uint8_t A[6] = {0x01,0x02,0x03,0x04,0x05,0xC0};
+    const uint8_t B[6] = {0x11,0x12,0x13,0x14,0x15,0xC1};
+    rf_model_t m; rf_model_reset(&m);
+    observe_reset_ephemeral(0xDEADBEEF);
+
+    observe_ingest(&m, A, 1000, 0x0075, -40, 0);   // first sighting of A
+    observe_ingest(&m, A, 1150, 0x0075, -40, 0);   // repeat -> 150 ms interval
+    ST_CHECK(observe_ephemeral_count() == 1, "repeat MAC does not inflate distinct count");
+    int vi = rf_vendor_index(&m, 0x0075);
+    ST_CHECK(vi >= 0 && m.vendors[vi].itvl_bins[rf_itvl_bin(150)] == 1, "interval estimated from re-sighting");
+
+    observe_ingest(&m, B, 1200, 0x0087, -55, 0);   // a second distinct device
+    ST_CHECK(observe_ephemeral_count() == 2, "distinct devices counted");
+
+    observe_end_sweep(&m, 60000);
+    ST_CHECK((int)(m.pop_ewma + 0.5f) == 2, "sweep population = distinct devices");
+    ST_CHECK((int)(m.arrival_per_min + 0.5f) == 2, "arrival rate folded");
+    ST_CHECK(observe_ephemeral_count() == 0, "ephemeral table wiped after sweep (no identifiers retained)");
+
+    // salt sensitivity: the same MAC hashes differently under a different per-boot salt,
+    // so the in-RAM hash is not a stable cross-boot identifier.
+    observe_reset_ephemeral(0x11111111u); uint32_t h1 = observe_hash_mac(A);
+    observe_reset_ephemeral(0x22222222u); uint32_t h2 = observe_hash_mac(A);
+    ST_CHECK(h1 != h2, "salt makes the dedup hash non-stable across boots");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -275,6 +304,7 @@ int churn_selftest_run(void)
     test_tracker();
     test_roster_payloads();
     test_rf_model();
+    test_observe_dedup();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

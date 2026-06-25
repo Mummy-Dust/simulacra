@@ -11,7 +11,8 @@ static const device_template_t TEMPLATES[] = {
     { "earbuds-sony", FMT_VENDOR_MFG,   0x012D, 0,     NULL,          40, 120, 180,  4 },
     { "fitness-grmn", FMT_VENDOR_MFG,   0x0087, 0,     "vivosmart",   50, 900,1100, 14 },
     { "sensor-nordic",FMT_VENDOR_MFG,   0x0059, 0,     NULL,           0,1800,2200, 18 },
-    // beacon + tracker rows are added in Tasks 2-4.
+    { "ibeacon",      FMT_IBEACON,      0x004C, 0,     NULL,           0,  90, 110, 16 },
+    // more beacon + tracker rows are added in Tasks 3-4.
 };
 
 static uint16_t rnd_range(uint16_t lo, uint16_t hi) { return lo + (esp_random() % (hi - lo + 1)); }
@@ -46,6 +47,18 @@ static void enc_vendor_mfg(const device_template_t *t, struct ble_hs_adv_fields 
     f->mfg_data_len = (uint8_t)(5 + extra);
 }
 
+// iBeacon: Apple company 4C 00, type 0x02, length 0x15, then UUID + major + minor + tx power.
+// Hardcoded prefix => can never drift into a Continuity pop-up subtype (refined Law 3).
+static void enc_ibeacon(struct ble_hs_adv_fields *f, uint8_t *mfg)
+{
+    mfg[0] = 0x4C; mfg[1] = 0x00;          // Apple company id
+    mfg[2] = 0x02; mfg[3] = 0x15;          // iBeacon type, length 21
+    for (int i = 0; i < 16; i++) mfg[4 + i]  = rnd_byte();   // proximity UUID
+    for (int i = 0; i < 4;  i++) mfg[20 + i] = rnd_byte();   // major + minor
+    mfg[24] = 0xC5;                         // measured power, -59 dBm
+    f->mfg_data = mfg; f->mfg_data_len = 25;
+}
+
 int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t *out_len,
                    uint16_t *out_itvl_ms, uint16_t *out_company_id)
 {
@@ -56,7 +69,8 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
     static uint8_t scratch[31];  // mfg/svc-data working buffer (single task, not reentrant)
     switch (t->family) {
         case FMT_VENDOR_MFG: enc_vendor_mfg(t, &f, scratch); break;
-        default: *out_len = 0; return 1;   // unimplemented families (Tasks 2-4) -> RED
+        case FMT_IBEACON:    enc_ibeacon(&f, scratch); break;
+        default: *out_len = 0; return 1;   // unimplemented families (Tasks 3-4) -> RED
     }
 
     if (t->name && (esp_random() % 100) < t->name_prob) {
@@ -64,8 +78,8 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
         f.name_len = (uint8_t)strlen(t->name);
         f.name_is_complete = 1;
     }
-    f.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
-    f.tx_pwr_lvl_is_present = 1;
+    // No separate TX-power AD: beacons carry measured power inside their own payload,
+    // and it would push iBeacon (flags 3 + mfg 27) over the 31-byte budget.
 
     uint8_t buf[BLE_HS_ADV_MAX_SZ], len = 0;
     if (ble_hs_adv_set_fields(&f, buf, &len, sizeof(buf)) != 0) { *out_len = 0; return 1; }

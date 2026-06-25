@@ -116,6 +116,42 @@ static void test_templates(void)
     ST_CHECK(all_itvl, "every interval is within the template band");
 }
 
+static const device_template_t *find_family(fmt_family_t fam)
+{
+    for (size_t i = 0; i < templates_count(); i++)
+        if (template_at(i)->family == fam) return template_at(i);
+    return NULL;
+}
+
+// Refined Law 3: a payload must never carry an Apple Continuity pop-up subtype
+// (0x07 proximity pairing, 0x0F nearby action) or Find My (0x12). iBeacon (0x02) is fine.
+static bool has_apple_popup_subtype(const uint8_t *p, uint8_t len)
+{
+    for (int i = 0; i + 2 < len; i++)
+        if (p[i] == 0x4C && p[i+1] == 0x00 &&
+            (p[i+2] == 0x07 || p[i+2] == 0x0F || p[i+2] == 0x12)) return true;
+    return false;
+}
+
+static void test_ibeacon(void)
+{
+    const device_template_t *t = find_family(FMT_IBEACON);
+    ST_CHECK(t != NULL, "iBeacon template present");
+    if (!t) return;
+    uint8_t pay[31], len = 0; uint16_t itvl = 0, cid = 0;
+    ST_CHECK(template_build(t, pay, &len, &itvl, &cid) == 0 && len > 0, "iBeacon builds");
+    bool prefix_ok = false;
+    for (int i = 0; i + 1 < len; ) {
+        uint8_t adlen = pay[i]; uint8_t adtype = pay[i+1];
+        if (adtype == 0xFF && adlen >= 5 &&
+            pay[i+2] == 0x4C && pay[i+3] == 0x00 && pay[i+4] == 0x02 && pay[i+5] == 0x15)
+            prefix_ok = true;
+        i += adlen + 1;
+    }
+    ST_CHECK(prefix_ok, "iBeacon payload carries 4C 00 02 15");
+    ST_CHECK(!has_apple_popup_subtype(pay, len), "iBeacon: no forbidden Apple subtype");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -143,6 +179,7 @@ int churn_selftest_run(void)
 
     // --- M4 templates ---
     test_templates();
+    test_ibeacon();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

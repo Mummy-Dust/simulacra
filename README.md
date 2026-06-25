@@ -12,17 +12,24 @@ real device(s) don't stand out.
 
 ## What it does
 
-Every `SIMULACRA_ROTATE_MS` (default 250 ms) splinter retires the current advertisement
-and mints a new decoy with:
+splinter v2 maintains a **synthetic population** of plausible-but-fake BLE devices that
+persists and turns over like a real crowd — rather than flickering a brand-new random
+decoy every cycle. On the ESP32-C6 it runs up to **4 genuinely-concurrent** advertisers
+(BT 5 extended advertising) and time-slices a larger active set across them.
 
-- a fresh **random-static MAC** — exactly what modern phones, watches and earbuds already
-  do for privacy, so the churn looks realistic;
-- a random vendor drawn from `main/decoy_vendors.h`, surfaced via the **Company ID in
-  manufacturer-specific data** (the spec-defined vendor signal a scanner actually reads);
-- an optional short device name and a benign random payload.
+- a pre-generated **roster** of persistent identities, each with a stable
+  **random-static MAC** (what modern phones, watches and earbuds already use for privacy),
+  a vendor drawn from `main/decoy_vendors.h` surfaced via its **Company ID in
+  manufacturer-specific data**, an optional short name, and a frozen benign payload;
+- a **churn engine** that keeps ~`CHURN_ACTIVE_SET` identities "present" at once: each
+  dwells for a few minutes, then retires into a cooldown of tens of minutes before it may
+  **reappear with the same MAC** — so a scanner sees devices arrive, linger, leave, and
+  come back later, exactly like a real space;
+- the active set is **time-sliced** across the 4 hardware advertising instances, so the
+  crowd is larger than the radio count.
 
-A scanner sampling over a few seconds therefore logs dozens of distinct, vendor-attributed
-devices appearing and disappearing.
+A scanner watching over minutes therefore logs a stable handful of vendor-attributed
+devices with staggered arrivals/departures and gradual turnover — not one-shot flicker.
 
 ## What it deliberately does NOT do (non-intrusive BLE connections)
 
@@ -39,8 +46,8 @@ This helps prevent annoying pop-ups that are seen in other "spammers" in other p
 
 ## Hardware
 
-- ESP32-WROVER-E (classic dual-core ESP32 with PSRAM)
-- USB serial at `/dev/ttyUSB0`
+- **Seeed XIAO ESP32-C6** (v2 target) — BT 5 LE extended advertising, native USB-Serial-JTAG
+- ESP32-WROVER-E (classic dual-core ESP32 with PSRAM) — original v1 single-advertiser target
 
 ## Build & flash
 
@@ -49,7 +56,7 @@ Requires ESP-IDF v5.4 (installed at `~/esp/esp-idf`).
 ```bash
 . ~/esp/esp-idf/export.sh          # load the IDF environment into this shell
 cd ~/Projects/splinter
-idf.py set-target esp32            # one-time, generates sdkconfig from sdkconfig.defaults
+idf.py set-target esp32c6          # one-time; picks up sdkconfig.defaults.esp32c6 (ext-adv)
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
@@ -59,14 +66,22 @@ Flashing needs serial access — your user must be in the `dialout` group
 
 ## Configuration
 
-Tunables live at the top of `main/simulacra_main.c`:
+The synthetic-population tunables live in `main/churn.h`:
 
 | Macro | Default | Effect |
 |-------|---------|--------|
-| `SIMULACRA_ROTATE_MS` | 250 | How often a brand-new decoy takes the air (lower = denser crowd) |
-| `SIMULACRA_NAME_PROB` | 60 | % chance a decoy advertises a device name |
-| `SIMULACRA_MFG_PROB` | 85 | % chance a decoy carries vendor manufacturer data |
-| `SIMULACRA_ADV_MS` | 120 | On-air advertising interval per decoy (ms) |
+| `CHURN_ACTIVE_SET` | 8 | How many identities are "present" at once — the crowd size / density |
+| `CHURN_TICK_MS` | 250 | Scheduler tick; each tick advances the state machine and yields |
+| `CHURN_DWELL_MIN_MS` / `CHURN_DWELL_MAX_MS` | 3 min / 10 min | How long an identity stays on air before retiring |
+| `CHURN_COOLDOWN_MIN_MS` / `CHURN_COOLDOWN_MAX_MS` | 30 min / 60 min | How long a retired identity waits before it may reappear |
+
+Identity-shape tunables live in `main/roster.*`:
+
+| Macro | Default | Effect |
+|-------|---------|--------|
+| `CHURN_ROSTER_SIZE` (`roster.h`) | 256 | Size of the persistent identity pool |
+| `SIMULACRA_NAME_PROB` (`roster.c`) | 60 | % chance an identity advertises a device name |
+| `SIMULACRA_MFG_PROB` (`roster.c`) | 85 | % chance an identity carries vendor manufacturer data |
 
 Add more vendors/names to `main/decoy_vendors.h` for a denser, more varied crowd (keep
 names ≤ 12 chars to stay within the 31-byte advertising budget).

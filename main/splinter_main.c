@@ -7,32 +7,30 @@
 // file is the slim entry point.
 //
 // Two build modes, selected by CHURN_SELFTEST below:
-//   * CHURN_SELFTEST=1 (M3 Tasks 2-5): run the on-target logic self-test with the
-//     radio idle, loop-printing PASS/FAIL over serial. No advertising.
-//   * CHURN_SELFTEST=0 (normal): drive the decoy population on the radios. Until
-//     the churn engine is wired in (Task 6), normal mode runs simulacra_run()'s
-//     4-instance smoke driver proving concurrent ext-adv.
+//   * CHURN_SELFTEST=0 (normal, shipped): drive the decoy population — churn_tick
+//     advances the state machine every CHURN_TICK_MS and applies identity changes
+//     to the 4 ext-adv radios via the NimBLE adapter (churn_adv_apply).
+//   * CHURN_SELFTEST=1 (M3 dev): run the on-target logic self-test with the radio
+//     idle, loop-printing PASS/FAIL over serial. No advertising.
 //
 // Decoy guardrails (see decoy_vendors.h): advertising is NON-CONNECTABLE and the
 // payload is never shaped like Apple Continuity / Microsoft Swift Pair / Google
 // Fast Pair, so it creates realistic presence without popping pairing dialogs.
 
-#include <string.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_random.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
-#include "nimble/hci_common.h"
 #include "host/ble_hs.h"
-#include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 
 #include "identity.h"
+#include "roster.h"
+#include "churn.h"
 #include "churn_adv.h"
 #include "churn_selftest.h"
 
@@ -40,82 +38,13 @@
 #error "Splinter v2 requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
 #endif
 
-// M3 Tasks 2-5: build the on-target self-test (radio idle). Task 6 sets this to 0.
+// Normal (shipped) mode. Set to 1 to build the on-target self-test instead.
 #ifndef CHURN_SELFTEST
-#define CHURN_SELFTEST 1
+#define CHURN_SELFTEST 0
 #endif
 
 static const char *TAG = "splinter";
 static volatile bool s_host_synced = false;
-
-#if !CHURN_SELFTEST
-// ---- M3 Task 1 smoke driver (normal-mode only; replaced by churn in Task 6) ----
-
-// Build a valid random-static address: 6 random bytes with the two most
-// significant bits set. Regenerates the astronomically rare all-zero / all-ones
-// random part that NimBLE would reject.
-static void make_random_static_addr(uint8_t out[6])
-{
-    for (;;) {
-        for (int i = 0; i < 6; i++) {
-            out[i] = (uint8_t)(esp_random() & 0xff);
-        }
-        out[5] |= 0xc0;
-        int ones = __builtin_popcount(out[5] & 0x3f);
-        for (int i = 0; i < 5; i++) {
-            ones += __builtin_popcount(out[i]);
-        }
-        if (ones != 0 && ones != 46) {
-            return;
-        }
-    }
-}
-
-// M3 Task 1 smoke: build one DETERMINISTIC identifiable identity (instance i) —
-// random-static MAC + a guaranteed manufacturer payload carrying a distinct decoy
-// company id, so a scanner can attribute every instance unambiguously.
-static void fill_identity(identity_t *id, uint8_t i)
-{
-    static const uint16_t cids[CHURN_HW_INSTANCES] = { 0x0075, 0x00E0, 0x009E, 0x0087 };
-    make_random_static_addr(id->addr);
-
-    struct ble_hs_adv_fields f;
-    memset(&f, 0, sizeof(f));
-    f.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    uint8_t mfg[4];
-    mfg[0] = (uint8_t)(cids[i] & 0xff);
-    mfg[1] = (uint8_t)((cids[i] >> 8) & 0xff);
-    mfg[2] = 0xA0;
-    mfg[3] = i;
-    f.mfg_data = mfg;
-    f.mfg_data_len = sizeof(mfg);
-    f.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
-    f.tx_pwr_lvl_is_present = 1;
-
-    uint8_t buf[BLE_HS_ADV_MAX_SZ];
-    uint8_t len = 0;
-    if (ble_hs_adv_set_fields(&f, buf, &len, sizeof(buf)) != 0) {
-        len = 0;
-    }
-    memcpy(id->payload, buf, len);
-    id->payload_len = len;
-    id->company_id = cids[i];
-    id->adv_itvl_ms = 120;
-}
-
-static void simulacra_run(void)
-{
-    static identity_t ids[CHURN_HW_INSTANCES];
-    for (uint8_t i = 0; i < CHURN_HW_INSTANCES; i++) {
-        fill_identity(&ids[i], i);
-        int rc = churn_adv_apply(i, &ids[i]);
-        ESP_LOGW(TAG, "smoke inst %u start rc=%d (cid=0x%04x)", i, rc, ids[i].company_id);
-    }
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-#endif  // !CHURN_SELFTEST
 
 static void simulacra_task(void *arg)
 {
@@ -129,7 +58,21 @@ static void simulacra_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 #else
-    simulacra_run();
+    // Drive the synthetic BLE population: each tick advances the active-set /
+    // cooldown / time-slice state machine and reprograms the 4 ext-adv radios via
+    // the NimBLE adapter. vTaskDelay yields every tick so the single-core task
+    // watchdog never fires.
+    //
+    // roster_init() MUST run before churn_init(): churn pulls identities straight
+    // from the roster pool, and an uninitialized pool yields adv_itvl_ms=0, which
+    // the controller rejects (HCI 0x12). The self-tests init the roster themselves.
+    roster_init();
+    churn_set_apply(churn_adv_apply);
+    churn_init((uint32_t)(esp_timer_get_time() / 1000));
+    for (;;) {
+        churn_tick((uint32_t)(esp_timer_get_time() / 1000));
+        vTaskDelay(pdMS_TO_TICKS(CHURN_TICK_MS));
+    }
 #endif
 }
 

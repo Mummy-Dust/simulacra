@@ -47,6 +47,7 @@ This helps prevent annoying pop-ups that are seen in other "spammers" in other p
 ## Hardware
 
 - **Seeed XIAO ESP32-C6** (v2 target) — BT 5 LE extended advertising, native USB-Serial-JTAG
+- **Adafruit ESP32-S3** (QT Py / Feather) — v2 portable target (dual-core; battery-ready on the Feather). Build/BOM guide: [docs/hardware/portable-feather-s3-build.md](docs/hardware/portable-feather-s3-build.md)
 - ESP32-WROVER-E (classic dual-core ESP32 with PSRAM) — original v1 single-advertiser target
 
 ## Build & flash
@@ -57,6 +58,7 @@ Requires ESP-IDF v5.4 (installed at `~/esp/esp-idf`).
 . ~/esp/esp-idf/export.sh          # load the IDF environment into this shell
 cd ~/Projects/splinter
 idf.py set-target esp32c6          # one-time; picks up sdkconfig.defaults.esp32c6 (ext-adv)
+# or, for an ESP32-S3 board (QT Py / Feather):  idf.py set-target esp32s3
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```

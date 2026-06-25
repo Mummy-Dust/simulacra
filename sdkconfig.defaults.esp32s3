@@ -1,0 +1,13 @@
+# Splinter v2: extended advertising on the ESP32-S3 (Adafruit QT Py S3 / Feather S3).
+# The firmware is portable across NimBLE targets; only the per-target ext-adv
+# concurrency knob lives here. The shared sdkconfig.defaults carries the common
+# BT/NimBLE host + role config. Verified: builds clean for esp32s3.
+CONFIG_BT_NIMBLE_EXT_ADV=y
+CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=4
+
+# PSRAM is intentionally left OFF so this image boots on BOTH QT Py S3 variants:
+#   - No-PSRAM   (Adafruit PID 5426, 8MB flash)
+#   - 2MB PSRAM  (Adafruit PID 5700, 4MB flash) and the Feather S3 (PID 5477)
+# When you've confirmed a PSRAM board and want the M5/M6 buffering headroom, add:
+#   CONFIG_SPIRAM=y
+# (Adafruit S3 boards use quad PSRAM, which is the IDF default SPIRAM mode.)

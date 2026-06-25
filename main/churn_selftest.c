@@ -4,6 +4,7 @@
 #include "roster.h"
 #include "churn.h"
 #include "templates.h"
+#include "rf_model.h"
 #include "esp_log.h"
 
 static const char *TAG = "selftest";
@@ -209,6 +210,39 @@ static void test_roster_payloads(void)
     ST_CHECK(archetype_ok, "roster: every identity carries a valid template index");
 }
 
+static void test_rf_model(void)
+{
+    rf_model_t m;
+    rf_model_reset(&m);
+    ST_CHECK(m.magic == RF_MODEL_MAGIC && m.version == RF_MODEL_VERSION, "rf_model resets to valid header");
+    ST_CHECK(m.total_obs == 0 && m.other_count == 0, "rf_model resets counts to zero");
+
+    // bin edges
+    ST_CHECK(rf_itvl_bin(49) == 0 && rf_itvl_bin(50) == 1 && rf_itvl_bin(2001) == 6, "interval bin edges");
+    ST_CHECK(rf_rssi_bin(-100) == 0 && rf_rssi_bin(-20) == 7, "rssi bin edges");
+    ST_CHECK(rf_pdu_bin(0) == 0 && rf_pdu_bin(4) == 4 && rf_pdu_bin(9) == RF_PDU_BINS - 1, "pdu bin map");
+
+    // first sighting (no interval), then a repeat with a 150 ms interval
+    rf_model_observe(&m, 0x004C, -50, 0, -1);
+    rf_model_observe(&m, 0x004C, -50, 0, 150);
+    int vi = rf_vendor_index(&m, 0x004C);
+    ST_CHECK(vi >= 0 && m.vendors[vi].count == 2, "vendor slot counts both observations");
+    ST_CHECK(m.vendors[vi].itvl_bins[rf_itvl_bin(150)] == 1, "interval sample lands in bin 2");
+    ST_CHECK(m.vendors[vi].itvl_bins[0] == 0, "no spurious interval sample for first sighting");
+    ST_CHECK(m.rssi_bins[rf_rssi_bin(-50)] == 2 && m.pdu_bins[0] == 2, "rssi+pdu histograms updated");
+
+    // vendor-table overflow -> other bucket
+    rf_model_t o; rf_model_reset(&o);
+    for (int i = 0; i < RF_VENDOR_SLOTS; i++) rf_model_observe(&o, (uint16_t)(0x100 + i), -60, 0, -1);
+    rf_model_observe(&o, 0x9999, -60, 0, -1);   // 25th distinct vendor
+    ST_CHECK(o.other_count == 1, "overflow vendor lands in other bucket");
+
+    // sweep EWMA
+    rf_model_t s; rf_model_reset(&s);
+    rf_model_end_sweep(&s, 5, 60000, 5);
+    ST_CHECK((int)(s.pop_ewma + 0.5f) == 5 && (int)(s.arrival_per_min + 0.5f) == 5, "first sweep seeds EWMA");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -240,6 +274,7 @@ int churn_selftest_run(void)
     test_eddystone();
     test_tracker();
     test_roster_payloads();
+    test_rf_model();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

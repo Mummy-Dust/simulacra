@@ -1,6 +1,7 @@
 #include <string.h>
 #include "rf_model.h"
 #include "esp_log.h"
+#include "nvs.h"
 
 static const char *TAG = "rf_model";
 
@@ -100,4 +101,28 @@ void rf_model_dump(const rf_model_t *m)
              (unsigned)m->rssi_bins[6], (unsigned)m->rssi_bins[7],
              (unsigned)m->pdu_bins[0], (unsigned)m->pdu_bins[1], (unsigned)m->pdu_bins[2],
              (unsigned)m->pdu_bins[3], (unsigned)m->pdu_bins[4]);
+}
+
+int rf_model_save_nvs(const rf_model_t *m)
+{
+    nvs_handle_t h;
+    esp_err_t e = nvs_open("splinter", NVS_READWRITE, &h);
+    if (e != ESP_OK) return (int)e;
+    e = nvs_set_blob(h, "rf_model", m, sizeof(*m));
+    if (e == ESP_OK) e = nvs_commit(h);
+    nvs_close(h);
+    return (int)e;
+}
+
+int rf_model_load_nvs(rf_model_t *m)
+{
+    nvs_handle_t h;
+    esp_err_t e = nvs_open("splinter", NVS_READONLY, &h);
+    if (e != ESP_OK) return (int)e;
+    size_t len = sizeof(*m);
+    e = nvs_get_blob(h, "rf_model", m, &len);
+    nvs_close(h);
+    if (e != ESP_OK || len != sizeof(*m) ||
+        m->magic != RF_MODEL_MAGIC || m->version != RF_MODEL_VERSION) return -1;
+    return 0;
 }

@@ -45,3 +45,7 @@ size_t rf_pdu_bin(uint8_t pdu_type);
 int    rf_vendor_index(const rf_model_t *m, uint16_t company_id);  // occupied slot or -1
 
 void   rf_model_dump(const rf_model_t *m);
+
+// NVS persistence: namespace "splinter", key "rf_model". Return 0 on success.
+int    rf_model_save_nvs(const rf_model_t *m);
+int    rf_model_load_nvs(rf_model_t *m);   // 0 and fills m if a valid current-version blob exists

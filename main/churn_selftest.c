@@ -272,6 +272,19 @@ static void test_observe_dedup(void)
     ST_CHECK(h1 != h2, "salt makes the dedup hash non-stable across boots");
 }
 
+static void test_rf_model_nvs(void)
+{
+    rf_model_t m; rf_model_reset(&m);
+    rf_model_observe(&m, 0x004C, -50, 0, 150);
+    rf_model_observe(&m, 0x0075, -60, 3, 900);
+    rf_model_end_sweep(&m, 3, 60000, 3);
+
+    ST_CHECK(rf_model_save_nvs(&m) == 0, "rf_model saves to NVS");
+    rf_model_t r; memset(&r, 0xAA, sizeof(r));
+    ST_CHECK(rf_model_load_nvs(&r) == 0, "rf_model loads from NVS");
+    ST_CHECK(memcmp(&m, &r, sizeof(m)) == 0, "rf_model NVS round-trips byte-exact");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -305,6 +318,7 @@ int churn_selftest_run(void)
     test_roster_payloads();
     test_rf_model();
     test_observe_dedup();
+    test_rf_model_nvs();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

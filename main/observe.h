@@ -21,3 +21,6 @@ size_t   observe_ephemeral_count(void);
 
 // --- live radio path (implemented in Task 4) ---
 void     observe_start(uint32_t boot_salt);   // load model from NVS, start passive scan
+// Periodic liveness line (scan rc + running totals); call from the idle observe loop so the
+// device is observable even when ambient BLE traffic is sparse.
+void     observe_heartbeat(void);

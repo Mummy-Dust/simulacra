@@ -97,6 +97,27 @@ impossible vendor+payload+timing combination. Tune the crowd by editing the tabl
 `weight` column sets each archetype's share of the mix, and the `itvl_min_ms` / `itvl_max_ms`
 columns set its advertising cadence. Keep names ≤ 12 chars to stay within the 31-byte budget.
 
+### Observe mode (M5)
+
+Build with `SIMULACRA_OBSERVE=1` (in `main/simulacra_main.c`) to **profile the ambient BLE
+environment** instead of advertising. Observe mode passively scans (extended discovery, since
+ext-adv is enabled) and aggregates what it hears into a small model of distributions — vendor mix,
+per-vendor interval histograms, RSSI spread, advertising-PDU types, distinct-device population, and
+arrival rate — persisted to NVS (`main/rf_model.c`). It **stores no per-device identifiers**: every
+MAC is hashed with a per-boot salt for in-window dedup only and dropped at capture; the ephemeral
+table is wiped each sweep. The model is what M6 will sample to generate a population that matches the
+room. The default build (`SIMULACRA_OBSERVE=0`) is unchanged — the decoy. Cadence knobs live at the
+top of `main/observe.c` (`OBS_SWEEP_MS`, `OBS_PERSIST_EVERY`; raise from the 15 s test value for a
+long-running deployment). This needs the observer role — `CONFIG_BT_NIMBLE_ROLE_OBSERVER=y` in
+`sdkconfig.defaults.esp32c6`.
+
+### Antenna (XIAO ESP32-C6)
+
+The firmware drives the XIAO C6 RF switch at boot: GPIO3 low enables the switch, GPIO14 selects the
+antenna. It defaults to the **external U.FL antenna** (`SIMULACRA_EXT_ANTENNA 1`). If you run on the
+**onboard** ceramic antenna, set `SIMULACRA_EXT_ANTENNA 0` — selecting external with no antenna
+attached degrades RF (and noticeably hurts scan/RX sensitivity in observe mode).
+
 ## Troubleshooting
 
 - **`apt` says "Release file ... is not valid yet"** — the system clock is wrong. Fix with

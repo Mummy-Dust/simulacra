@@ -21,7 +21,9 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "nvs_flash.h"
+#include "driver/gpio.h"
 
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -33,15 +35,21 @@
 #include "churn.h"
 #include "churn_adv.h"
 #include "churn_selftest.h"
+#include "observe.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Splinter v2 requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
 #endif
 
 // Normal (shipped) mode. Set to 1 to build the on-target self-test instead.
-// (1 during M5 dev — Task 4 sets it back to 0.)
 #ifndef CHURN_SELFTEST
-#define CHURN_SELFTEST 1
+#define CHURN_SELFTEST 0
+#endif
+
+// Observe mode (M5): set to 1 to passively scan + model the ambient BLE environment
+// (never advertises). Takes precedence over CHURN_SELFTEST when set.
+#ifndef SIMULACRA_OBSERVE
+#define SIMULACRA_OBSERVE 0
 #endif
 
 static const char *TAG = "splinter";
@@ -52,7 +60,12 @@ static void simulacra_task(void *arg)
     while (!s_host_synced) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-#if CHURN_SELFTEST
+#if SIMULACRA_OBSERVE
+    // M5 observe mode: passively scan + model the ambient BLE environment. The scan
+    // callback (NimBLE host task) does all the modeling/persisting; this task just idles.
+    observe_start(esp_random());
+    for (;;) { observe_heartbeat(); vTaskDelay(pdMS_TO_TICKS(2000)); }
+#elif CHURN_SELFTEST
     int fails = churn_selftest_run();
     for (;;) {  // loop-print so the USB-JTAG reader reliably catches it
         ESP_LOGW(TAG, "SELFTEST result: %s (fails=%d)", fails ? "FAIL" : "PASS", fails);
@@ -95,8 +108,27 @@ static void nimble_host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
+// Seeed XIAO ESP32-C6 antenna switch: GPIO3 LOW enables the RF switch; GPIO14 selects the
+// antenna (LOW = onboard ceramic, HIGH = external U.FL). Must run before BLE start.
+// IMPORTANT: selecting external (HIGH) with no U.FL antenna attached degrades RF. Set
+// SIMULACRA_EXT_ANTENNA to 0 if running on the onboard antenna.
+#ifndef SIMULACRA_EXT_ANTENNA
+#define SIMULACRA_EXT_ANTENNA 1   // 1 = external U.FL (fitted on this build), 0 = onboard ceramic
+#endif
+static void xiao_c6_select_antenna(void)
+{
+    gpio_reset_pin(GPIO_NUM_3);
+    gpio_set_direction(GPIO_NUM_3, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_3, 0);                       // enable the RF switch (active low)
+    gpio_reset_pin(GPIO_NUM_14);
+    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_14, SIMULACRA_EXT_ANTENNA ? 1 : 0);  // 1 = external U.FL, 0 = onboard
+}
+
 void app_main(void)
 {
+    xiao_c6_select_antenna();
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

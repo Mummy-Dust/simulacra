@@ -1,5 +1,10 @@
 #include <string.h>
 #include "observe.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_random.h"
+#include "host/ble_hs.h"
+#include "host/ble_gap.h"
 
 #define OBS_TABLE_CAP 256
 
@@ -62,4 +67,89 @@ size_t observe_ephemeral_count(void)
     size_t n = 0;
     for (size_t i = 0; i < OBS_TABLE_CAP; i++) if (s_tbl[i].used) n++;
     return n;
+}
+
+// --- live radio path ---
+
+static const char *TAG = "observe";
+#define OBS_SWEEP_MS       15000   // observation window (15 s: short enough for the ~13 s reader)
+#define OBS_PERSIST_EVERY  1       // persist + dump every N sweeps
+#define OBS_SCAN_ITVL      0x00A0  // 100 ms in 0.625 ms units
+#define OBS_SCAN_WIN       0x00A0  // 100 ms window == interval -> continuous passive scan
+
+static rf_model_t s_model;
+static uint32_t   s_sweep_start_ms;
+static uint32_t   s_persist_ctr;
+static int        s_scan_rc = -1;          // last ble_gap_disc() result (liveness/diag)
+
+static void observe_maybe_close_sweep(uint32_t now)
+{
+    if (now - s_sweep_start_ms < OBS_SWEEP_MS) return;
+    observe_end_sweep(&s_model, now - s_sweep_start_ms);
+    s_sweep_start_ms = now;
+    ESP_LOGW(TAG, "[sweep %u] pop=%u arr/min=%u obs=%u",
+             (unsigned)s_model.sweeps, (unsigned)(s_model.pop_ewma + 0.5f),
+             (unsigned)(s_model.arrival_per_min + 0.5f), (unsigned)s_model.total_obs);
+    if (++s_persist_ctr >= OBS_PERSIST_EVERY) {
+        s_persist_ctr = 0;
+        rf_model_save_nvs(&s_model);
+        rf_model_dump(&s_model);
+    }
+}
+
+static int observe_gap_event(struct ble_gap_event *event, void *arg);
+
+// Start extended passive discovery. With CONFIG_BT_NIMBLE_EXT_ADV enabled (the decoy needs it),
+// scan reports arrive as BLE_GAP_EVENT_EXT_DISC -- legacy ble_gap_disc reports are never delivered,
+// so the scan must be started via ble_gap_ext_disc().
+static void observe_start_scan(void)
+{
+    struct ble_gap_ext_disc_params uncoded;
+    memset(&uncoded, 0, sizeof(uncoded));
+    uncoded.passive = 1;                       // never send scan requests -> never reveal ourselves
+    uncoded.itvl    = OBS_SCAN_ITVL;
+    uncoded.window  = OBS_SCAN_WIN;
+    // duration 0 = forever, period 0 = none, filter_duplicates 0 = report every packet (we dedup)
+    s_scan_rc = ble_gap_ext_disc(BLE_OWN_ADDR_PUBLIC, 0, 0, 0, 0, 0, &uncoded, NULL,
+                                 observe_gap_event, NULL);
+}
+
+static int observe_gap_event(struct ble_gap_event *event, void *arg)
+{
+    (void)arg;
+    if (event->type == BLE_GAP_EVENT_DISC_COMPLETE) {        // restart if the scan ever ends
+        observe_start_scan();
+        return 0;
+    }
+    if (event->type != BLE_GAP_EVENT_EXT_DISC) return 0;
+
+    struct ble_gap_ext_disc_desc *d = &event->ext_disc;
+    uint16_t company = RF_VENDOR_UNKNOWN;
+    struct ble_hs_adv_fields f;
+    if (ble_hs_adv_parse_fields(&f, d->data, d->length_data) == 0 &&
+        f.mfg_data && f.mfg_data_len >= 2)
+        company = (uint16_t)(f.mfg_data[0] | (f.mfg_data[1] << 8));
+
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
+    observe_ingest(&s_model, d->addr.val, now, company, d->rssi, d->legacy_event_type);  // MAC dropped inside
+    observe_maybe_close_sweep(now);
+    return 0;
+}
+
+void observe_start(uint32_t boot_salt)
+{
+    observe_reset_ephemeral(boot_salt);
+    if (rf_model_load_nvs(&s_model) != 0) rf_model_reset(&s_model);
+    s_sweep_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    s_persist_ctr = 0;
+    observe_start_scan();
+    ESP_LOGW(TAG, "observe scan start rc=%d", s_scan_rc);
+}
+
+void observe_heartbeat(void)
+{
+    ESP_LOGW(TAG, "alive scan_rc=%d sweeps=%u obs=%u distinct=%u",
+             s_scan_rc, (unsigned)s_model.sweeps, (unsigned)s_model.total_obs,
+             (unsigned)observe_ephemeral_count());
 }

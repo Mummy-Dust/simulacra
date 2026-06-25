@@ -4,3 +4,8 @@
 # instance count from the NimBLE host value below (verified: 4 instances run).
 CONFIG_BT_NIMBLE_EXT_ADV=y
 CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=4
+
+# M5 observe mode: enable the NimBLE observer (scanning) role so ble_gap_disc() can
+# passively scan the ambient BLE environment. The default decoy build is broadcaster-only
+# and never scans; enabling observer here is inert for it (just links scan support in).
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y

@@ -1,5 +1,10 @@
-# splinter
-"Let me tell you why you're here. You're here because you know something. What you know you can't explain, but you feel it. You've felt it your entire life, that there's something wrong with the world. You don't know what it is, but it's there, like a splinter in your mind, driving you mad." — Morpheus
+# Simulacra
+
+> *Raise a host that was never born.* Simulacra conjures a churning crowd of phantom
+> Bluetooth devices — copies with no originals — so a watcher cataloguing the room
+> loses your real signal among the dead.
+
+*A fork of [Splinter](https://github.com/0xXyc/splinter) by 0xXyc (Jacob Swiz), used with permission. Splinter is the foundation this builds on.*
 
 <img width="1625" height="1077" alt="image" src="https://github.com/user-attachments/assets/b2bd80d8-875c-45b5-8e96-a5309474d132" />
 
@@ -12,7 +17,7 @@ real device(s) don't stand out.
 
 ## What it does
 
-splinter v2 maintains a **synthetic population** of plausible-but-fake BLE devices that
+Simulacra maintains a **synthetic population** of plausible-but-fake BLE devices that
 persists and turns over like a real crowd — rather than flickering a brand-new random
 decoy every cycle. On the ESP32-C6 it runs up to **4 genuinely-concurrent** advertisers
 (BT 5 extended advertising) and time-slices a larger active set across them.
@@ -62,7 +67,7 @@ Requires ESP-IDF v5.4 (installed at `~/esp/esp-idf`).
 
 ```bash
 . ~/esp/esp-idf/export.sh          # load the IDF environment into this shell
-cd ~/Projects/splinter
+cd ~/Projects/simulacra
 idf.py set-target esp32c6          # one-time; picks up sdkconfig.defaults.esp32c6 (ext-adv)
 # or, for an ESP32-S3 board (QT Py / Feather):  idf.py set-target esp32s3
 idf.py build

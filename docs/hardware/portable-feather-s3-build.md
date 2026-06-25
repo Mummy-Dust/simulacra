@@ -1,6 +1,6 @@
-# Portable Splinter — ESP32-S3 build
+# Portable Simulacra — ESP32-S3 build
 
-A battery-powered, place-and-go splinter node. The radio work (BLE synthetic
+A battery-powered, place-and-go Simulacra node. The radio work (BLE synthetic
 population now; Wi-Fi capture/inject later) all runs on the S3's single 2.4 GHz
 radio — **no SDR or extra RF hardware**. This build is **solder-free**: every
 peripheral is STEMMA QT (I²C) or JST.

@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Project:** Splinter → **Simulacra** (rename pending upstream sign-off — see the rename draft).
+> **Project:** **Simulacra** — a fork of [Splinter](https://github.com/0xXyc/splinter) by 0xXyc (Jacob Swiz), used with permission.
 >
 > A BLE/RF **anti-tracking decoy**: generate a synthetic population of plausible-but-fake
 > wireless devices that statistically matches the local RF environment but corresponds to

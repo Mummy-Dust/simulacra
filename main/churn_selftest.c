@@ -33,6 +33,34 @@ static void test_churn_lifecycle(void)
     ST_CHECK(after && after->state == ID_ACTIVE, "promoted identity is ACTIVE");
 }
 
+static void test_cooldown(void)
+{
+    roster_init();
+    churn_set_apply(noop_apply);
+    churn_init(0);
+
+    // Retire slot 0 at t=1000; capture its cooldown deadline.
+    identity_t *retiring = (identity_t *)churn_active_at(0);
+    retiring->active_until_ms = 1000;
+    churn_tick(2000);
+    ST_CHECK(retiring->state == ID_COOLDOWN, "retired -> COOLDOWN");
+    uint32_t elig = retiring->eligible_at_ms;
+    ST_CHECK(elig >= 2000 + CHURN_COOLDOWN_MIN_MS, "cooldown >= min");
+    ST_CHECK(elig <= 2000 + CHURN_COOLDOWN_MAX_MS, "cooldown <= max");
+
+    // Long simulation: this identity never re-enters ACTIVE before eligible_at.
+    bool violated = false;
+    for (uint32_t t = 2000; t < 4000000u; t += 1000) {
+        churn_tick(t);
+        if (t < elig) {
+            for (size_t s = 0; s < CHURN_ACTIVE_SET; s++) {
+                if (churn_active_at(s) == retiring) violated = true;
+            }
+        }
+    }
+    ST_CHECK(!violated, "no MAC reappears within its cooldown window");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -55,6 +83,7 @@ int churn_selftest_run(void)
 
     // --- churn lifecycle ---
     test_churn_lifecycle();
+    test_cooldown();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

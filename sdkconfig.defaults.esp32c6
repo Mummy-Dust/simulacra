@@ -1,0 +1,6 @@
+# Splinter v2: extended advertising for genuinely-concurrent decoy instances on the C6.
+# With NimBLE as the host, the controller's BT_LE_* ext-adv symbols are inactive
+# (they depend on !BT_NIMBLE_ENABLED). The controller derives its concurrent
+# instance count from the NimBLE host value below (verified: 4 instances run).
+CONFIG_BT_NIMBLE_EXT_ADV=y
+CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=4

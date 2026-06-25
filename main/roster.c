@@ -1,15 +1,6 @@
-#include <stdbool.h>
-#include <string.h>
 #include "roster.h"
-#include "decoy_vendors.h"
+#include "templates.h"
 #include "esp_random.h"
-#include "host/ble_hs.h"
-#include "services/gap/ble_svc_gap.h"
-
-// Probability (percent) that a generated identity carries a friendly name /
-// manufacturer-specific data, mirroring the variety of a real BLE crowd.
-#define SIMULACRA_NAME_PROB 60
-#define SIMULACRA_MFG_PROB  85
 
 static identity_t s_roster[CHURN_ROSTER_SIZE];
 static size_t     s_cursor;
@@ -28,41 +19,25 @@ static void make_random_static_addr(uint8_t out[6])
     }
 }
 
-// Populate an adv-fields struct for a random vendor from the decoy palette.
-// Returns the chosen company id (stored on the identity for inspection). Never
-// emits Apple/Microsoft/Google pairing-popup formats — the palette excludes them.
-static uint16_t build_fields(struct ble_hs_adv_fields *f, uint8_t *mfg)
-{
-    const vendor_t *v = &VENDORS[esp_random() % VENDOR_COUNT];
-    memset(f, 0, sizeof(*f));
-    f->flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    bool used_name = false;
-    if (v->name && (esp_random() % 100) < SIMULACRA_NAME_PROB) {
-        f->name = (uint8_t *)v->name; f->name_len = strlen(v->name);
-        f->name_is_complete = 1; used_name = true;
-    }
-    if ((esp_random() % 100) < SIMULACRA_MFG_PROB) {
-        size_t body = used_name ? 3 : (3 + (esp_random() % 5));
-        mfg[0] = (uint8_t)(v->company_id & 0xff);
-        mfg[1] = (uint8_t)((v->company_id >> 8) & 0xff);
-        for (size_t i = 0; i < body; i++) mfg[2 + i] = (uint8_t)(esp_random() & 0xff);
-        f->mfg_data = mfg; f->mfg_data_len = 2 + body;
-    }
-    f->tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO; f->tx_pwr_lvl_is_present = 1;
-    return v->company_id;
-}
-
+// Build every identity from a randomly-picked archetype bundle (templates.c).
+// Each identity freezes a coherent vendor+interval+payload triple; the template
+// encoders are the single place format correctness and Law 3 are enforced.
 void roster_init(void)
 {
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = &s_roster[i];
         make_random_static_addr(id->addr);
-        struct ble_hs_adv_fields f; uint8_t mfg[10];
-        id->company_id = build_fields(&f, mfg);
-        uint8_t buf[BLE_HS_ADV_MAX_SZ], len = 0;
-        if (ble_hs_adv_set_fields(&f, buf, &len, sizeof(buf)) != 0) len = 0;
-        memcpy(id->payload, buf, len); id->payload_len = len;
-        id->adv_itvl_ms = 100 + (esp_random() % 200);  // 100-300 ms
+        const device_template_t *t = templates_pick();
+        uint16_t itvl = 0, cid = 0;
+        if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) {
+            id->payload_len = 0;            // serialization guard; self-test catches this
+        }
+        id->company_id = cid;
+        id->adv_itvl_ms = itvl;
+        // record which TEMPLATES[] row this is (for inspection/test)
+        id->archetype_idx = 0;
+        for (size_t k = 0; k < templates_count(); k++)
+            if (template_at(k) == t) { id->archetype_idx = (uint8_t)k; break; }
         id->state = ID_IDLE; id->active_until_ms = 0; id->eligible_at_ms = 0;
     }
     s_cursor = 0;

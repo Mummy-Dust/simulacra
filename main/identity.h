@@ -9,6 +9,7 @@ typedef struct {
     uint8_t    payload[31];      // frozen, serialized AD bytes
     uint8_t    payload_len;
     uint16_t   adv_itvl_ms;      // this identity's on-air interval
+    uint8_t    archetype_idx;    // index into TEMPLATES[], for inspection/test
     id_state_t state;
     uint32_t   active_until_ms;  // ACTIVE: dwell deadline (absolute ms)
     uint32_t   eligible_at_ms;   // COOLDOWN: earliest re-promotion time (absolute ms)

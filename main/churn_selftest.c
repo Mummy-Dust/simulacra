@@ -190,6 +190,25 @@ static void test_tracker(void)
     ST_CHECK(payload_has_svc_uuid16(pay, len, 0xFEED), "tracker svc-data 0xFEED");
 }
 
+// Whole-roster structural + Law-3 guard: every identity must be a template-built,
+// budget-fitting, non-popup payload on a random-static MAC.
+static void test_roster_payloads(void)
+{
+    roster_init();
+    bool macs_ok = true, payload_ok = true, no_popup = true, archetype_ok = true;
+    for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
+        identity_t *id = roster_at(i);
+        if ((id->addr[5] & 0xc0) != 0xc0) macs_ok = false;
+        if (id->payload_len == 0 || id->payload_len > 31) payload_ok = false;
+        if (has_apple_popup_subtype(id->payload, id->payload_len)) no_popup = false;
+        if (id->archetype_idx >= templates_count()) archetype_ok = false;
+    }
+    ST_CHECK(macs_ok, "roster: all MACs random-static");
+    ST_CHECK(payload_ok, "roster: all payloads non-empty and <=31B");
+    ST_CHECK(no_popup, "roster: no forbidden Apple subtype anywhere");
+    ST_CHECK(archetype_ok, "roster: every identity carries a valid template index");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -220,6 +239,7 @@ int churn_selftest_run(void)
     test_ibeacon();
     test_eddystone();
     test_tracker();
+    test_roster_payloads();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

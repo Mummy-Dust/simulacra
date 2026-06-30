@@ -51,6 +51,7 @@ void roster_init(void)
     rf_model_t m;
     if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
         generate_roster(&m, s_roster, CHURN_ROSTER_SIZE);
+        generate_dump_roster(s_roster, CHURN_ROSTER_SIZE);   // acceptance/inspection
     } else {
         roster_fill_from_templates();
     }

@@ -4,6 +4,9 @@
 #include "churn.h"          // CHURN_ACTIVE_SET
 #include "roster.h"         // make_random_static_addr_pub
 #include "esp_random.h"
+#include "esp_log.h"
+
+static const char *TAG = "generate";
 
 // --- persona profile (factor in tenths, to avoid float in the hot path) ---
 #if CONFIG_IDF_TARGET_ESP32C5
@@ -129,4 +132,17 @@ uint8_t generate_active_target(const rf_model_t *m)
     if (t > GEN_CEILING) t = GEN_CEILING;
     if (t > CHURN_ACTIVE_SET) t = CHURN_ACTIVE_SET;
     return (uint8_t)t;
+}
+
+void generate_dump_roster(const identity_t *roster, size_t n)
+{
+    uint16_t ids[24]; uint32_t cnt[24]; size_t k = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint16_t c = roster[i].company_id; size_t j;
+        for (j = 0; j < k; j++) if (ids[j] == c) { cnt[j]++; break; }
+        if (j == k && k < 24) { ids[k] = c; cnt[k] = 1; k++; }
+    }
+    ESP_LOGW(TAG, "GENERATED roster n=%u distinct_companies=%u", (unsigned)n, (unsigned)k);
+    for (size_t j = 0; j < k; j++)
+        ESP_LOGW(TAG, "  company 0x%04X x%u", ids[j], (unsigned)cnt[j]);
 }

@@ -13,3 +13,6 @@ size_t  generate_roster(const rf_model_t *m, identity_t *roster, size_t n);
 
 // Population-matched active-set target from pop_ewma, persona-tuned and clamped.
 uint8_t generate_active_target(const rf_model_t *m);
+
+// Log the generated roster's company-id histogram over serial (acceptance/inspection).
+void    generate_dump_roster(const identity_t *roster, size_t n);

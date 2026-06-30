@@ -116,6 +116,19 @@ top of `main/observe.c` (`OBS_SWEEP_MS`, `OBS_PERSIST_EVERY`; raise from the 15 
 long-running deployment). This needs the observer role — `CONFIG_BT_NIMBLE_ROLE_OBSERVER=y` in
 `sdkconfig.defaults.esp32c6`.
 
+### Population-match (M6)
+
+When an observed model is present in NVS (from observe mode), the decoy **generates its roster by
+sampling that model** instead of the hand-weighted templates (`main/generate.c`): company-IDs drawn
+from the observed vendor mix (any company-ID, not just the templated few — Apple `0x004C` always
+becomes safe iBeacon), intervals from each vendor's observed histogram, fresh random-static MACs, and
+**dithered per-identity TX power** for a realistic signal-strength spread. The active-set size is
+driven by the observed population, **persona-tuned** (`SIMULACRA_PERSONA`, defaulting from the chip
+target): **Ward** (C5, fixed/vehicle) runs denser (`1.5× / 6–16`), **Shade** (C6, EDC) stays
+conservative (`1.1× / 4–8`). A fresh/never-observed device (model `total_obs < 50`) falls back to the
+template population, so it's always believable. Re-profiling = re-run observe mode; the decoy
+regenerates at next boot. (Continuous/automatic re-profiling is M8.)
+
 ### Antenna (XIAO ESP32-C6)
 
 The firmware drives the XIAO C6 RF switch at boot: GPIO3 low enables the switch, GPIO14 selects the

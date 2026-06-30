@@ -45,7 +45,7 @@
 
 // Normal (shipped) mode. Set to 1 to build the on-target self-test instead.
 #ifndef CHURN_SELFTEST
-#define CHURN_SELFTEST 1
+#define CHURN_SELFTEST 0
 #endif
 
 // Observe mode (M5): set to 1 to passively scan + model the ambient BLE environment

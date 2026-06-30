@@ -336,6 +336,23 @@ static void test_generate(void)
     ST_CHECK(empty.total_obs < GEN_MIN_OBS, "empty model is below the generate threshold (caller falls back)");
 }
 
+static void test_roster_generate_path(void)
+{
+    rf_model_t m; rf_model_reset(&m);
+    for (int i=0;i<80;i++) rf_model_observe(&m, 0x0075, -60, 0, 900);
+    rf_model_end_sweep(&m, 5, 60000, 5);
+    rf_model_save_nvs(&m);
+
+    roster_init();
+    bool ok=true; for (size_t i=0;i<CHURN_ROSTER_SIZE;i++){
+        identity_t *id=roster_at(i);
+        if (id->payload_len==0 || id->payload_len>31) ok=false;
+        if (has_apple_popup_subtype(id->payload,id->payload_len)) ok=false;
+        if (id->archetype_idx>=templates_count()) ok=false;
+    }
+    ST_CHECK(ok, "roster_init generate path: all payloads valid, Law-3-clean, valid archetype");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -372,6 +389,7 @@ int churn_selftest_run(void)
     test_rf_model_nvs();
     test_vendor_mfg_builder();
     test_generate();
+    test_roster_generate_path();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

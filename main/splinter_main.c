@@ -36,6 +36,8 @@
 #include "churn_adv.h"
 #include "churn_selftest.h"
 #include "observe.h"
+#include "rf_model.h"
+#include "generate.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Splinter v2 requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -81,6 +83,12 @@ static void simulacra_task(void *arg)
     // from the roster pool, and an uninitialized pool yields adv_itvl_ms=0, which
     // the controller rejects (HCI 0x12). The self-tests init the roster themselves.
     roster_init();
+    // M6 population-match: size the active set to the observed population (persona-tuned).
+    {
+        rf_model_t m;
+        if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS)
+            churn_set_active_target(generate_active_target(&m));
+    }
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
     for (;;) {

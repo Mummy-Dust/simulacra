@@ -1,5 +1,7 @@
 #include "roster.h"
 #include "templates.h"
+#include "rf_model.h"
+#include "generate.h"
 #include "esp_random.h"
 
 static identity_t s_roster[CHURN_ROSTER_SIZE];
@@ -19,10 +21,9 @@ void make_random_static_addr_pub(uint8_t out[6])
     }
 }
 
-// Build every identity from a randomly-picked archetype bundle (templates.c).
-// Each identity freezes a coherent vendor+interval+payload triple; the template
-// encoders are the single place format correctness and Law 3 are enforced.
-void roster_init(void)
+// M4 fallback: build every identity from a randomly-picked archetype bundle (templates.c).
+// Used when no usable observed model is present (fresh / never-observed device).
+static void roster_fill_from_templates(void)
 {
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = &s_roster[i];
@@ -38,7 +39,20 @@ void roster_init(void)
         id->archetype_idx = 0;
         for (size_t k = 0; k < templates_count(); k++)
             if (template_at(k) == t) { id->archetype_idx = (uint8_t)k; break; }
+        id->tx_power = 0;
         id->state = ID_IDLE; id->active_until_ms = 0; id->eligible_at_ms = 0;
+    }
+}
+
+// M6: build the roster by sampling the observed model when one is present and dense enough;
+// otherwise fall back to the static template population.
+void roster_init(void)
+{
+    rf_model_t m;
+    if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
+        generate_roster(&m, s_roster, CHURN_ROSTER_SIZE);
+    } else {
+        roster_fill_from_templates();
     }
     s_cursor = 0;
 }

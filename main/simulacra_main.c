@@ -41,6 +41,7 @@
 #include "generate.h"
 #include "probe.h"
 #include "sniff.h"
+#include "coexist.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -87,16 +88,10 @@ static void simulacra_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 #else
-    // Drive the synthetic BLE population: each tick advances the active-set /
-    // cooldown / time-slice state machine and reprograms the 4 ext-adv radios via
-    // the NimBLE adapter. vTaskDelay yields every tick so the single-core task
-    // watchdog never fires.
-    //
-    // roster_init() MUST run before churn_init(): churn pulls identities straight
-    // from the roster pool, and an uninitialized pool yields adv_itvl_ms=0, which
-    // the controller rejects (HCI 0x12). The self-tests init the roster themselves.
+    // Combined coexist decoy (default): set up the BLE population, then hand the tick loop
+    // to the coordinator (it owns churn_tick + Wi-Fi bursts + re-profile). roster_init()
+    // MUST precede churn_init(): churn pulls identities straight from the roster pool.
     roster_init();
-    // M6 population-match: size the active set to the observed population (persona-tuned).
     {
         rf_model_t m;
         if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
@@ -108,15 +103,10 @@ static void simulacra_task(void *arg)
     }
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
-    uint32_t last_hb = 0;
-    for (;;) {
-        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-        churn_tick(now);
-        if (now - last_hb >= 5000) {   // liveness: active = persona-sized population-match target
-            last_hb = now;
-            ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());
-        }
-        vTaskDelay(pdMS_TO_TICKS(CHURN_TICK_MS));
+    coexist_start();
+    for (;;) {                                          // this task idles; coexist runs the show
+        ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 #endif
 }

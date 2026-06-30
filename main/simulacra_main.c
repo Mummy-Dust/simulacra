@@ -39,6 +39,7 @@
 #include "observe.h"
 #include "rf_model.h"
 #include "generate.h"
+#include "probe.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -46,13 +47,18 @@
 
 // Normal (shipped) mode. Set to 1 to build the on-target self-test instead.
 #ifndef CHURN_SELFTEST
-#define CHURN_SELFTEST 1
+#define CHURN_SELFTEST 0
 #endif
 
 // Observe mode (M5): set to 1 to passively scan + model the ambient BLE environment
 // (never advertises). Takes precedence over CHURN_SELFTEST when set.
 #ifndef SIMULACRA_OBSERVE
 #define SIMULACRA_OBSERVE 0
+#endif
+
+// Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
+#ifndef SIMULACRA_PROBE
+#define SIMULACRA_PROBE 1
 #endif
 
 static const char *TAG = "simulacra";
@@ -165,6 +171,12 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+#if SIMULACRA_PROBE
+    // Wi-Fi-only mode: init Wi-Fi + start the probe injector; NimBLE is never initialized.
+    probe_start();
+    return;
+#endif
 
     // NimBLE logs every GAP procedure at INFO; keep only warnings+.
     esp_log_level_set("NimBLE", ESP_LOG_WARN);

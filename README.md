@@ -129,6 +129,19 @@ conservative (`1.1× / 4–8`). A fresh/never-observed device (model `total_obs 
 template population, so it's always believable. Re-profiling = re-run observe mode; the decoy
 regenerates at next boot. (Continuous/automatic re-profiling is M8.)
 
+### Wi-Fi probe injection (M7)
+
+Build with `SIMULACRA_PROBE=1` (in `main/simulacra_main.c`) for a **Wi-Fi-only** mode that injects
+synthetic 802.11 **probe requests** (`main/probe.c`, via `esp_wifi_80211_tx`) — adding the Wi-Fi
+dimension to the decoy. A small active set of fake "phones" each use a **randomized,
+locally-administered MAC** (what privacy-randomizing phones emit) and broadcast at a phone-like rate,
+channel-hopping 2.4 GHz (**+5 GHz on the C5/Ward** via `WIFI_BAND_MODE_AUTO`); MACs rotate over time
+so a sniffer sees devices come and go. **Wi-Fi "Law 3":** only **broadcast/wildcard-SSID** probes are
+ever emitted — never directed probes naming an SSID (those would leak a fake preferred-network-list,
+itself a fingerprint). Persona-tuned (defaults from the chip target): Ward ~8 fake phones dual-band,
+Shade ~4 on 2.4 GHz with faster MAC rotation. NimBLE is not started in this mode. Synthetic for now —
+Wi-Fi observe→match is a later milestone, and **BLE + Wi-Fi coexistence is M8**.
+
 ### Antenna (XIAO ESP32-C6)
 
 The firmware drives the XIAO C6 RF switch at boot: GPIO3 low enables the switch, GPIO14 selects the

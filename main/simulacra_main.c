@@ -58,7 +58,7 @@
 
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
 #ifndef SIMULACRA_PROBE
-#define SIMULACRA_PROBE 1
+#define SIMULACRA_PROBE 0
 #endif
 
 static const char *TAG = "simulacra";

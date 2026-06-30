@@ -25,7 +25,7 @@ int churn_adv_apply(uint8_t instance, const identity_t *id)
     p.sid           = instance;
     p.itvl_min      = ADV_ITVL_UNITS(id->adv_itvl_ms);
     p.itvl_max      = ADV_ITVL_UNITS(id->adv_itvl_ms + 30);
-    p.tx_power      = 127;
+    p.tx_power      = (id->tx_power != 0) ? id->tx_power : 127;   // per-identity dither; 0 -> max/default
     rc = ble_gap_ext_adv_configure(instance, &p, NULL, NULL, NULL);
     if (rc) { ESP_LOGW(TAG, "configure inst %u rc=%d", instance, rc); return rc; }
 

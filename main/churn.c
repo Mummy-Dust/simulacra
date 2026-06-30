@@ -12,6 +12,14 @@ static identity_t   *s_occupant[CHURN_HW_INSTANCES];
 static uint32_t      s_phase;
 static uint32_t      s_last_slice_ms;
 static churn_apply_fn s_apply;
+static uint8_t        s_active_target = CHURN_ACTIVE_SET;  // M6: runtime population-match size
+
+void churn_set_active_target(uint8_t n)
+{
+    if (n < 1) n = 1;
+    if (n > CHURN_ACTIVE_SET) n = CHURN_ACTIVE_SET;
+    s_active_target = n;
+}
 
 static uint32_t rnd_range(uint32_t lo, uint32_t hi)
 {
@@ -24,7 +32,8 @@ void churn_init(uint32_t now_ms)
 {
     s_phase = 0; s_last_slice_ms = now_ms;
     for (int i = 0; i < CHURN_HW_INSTANCES; i++) s_occupant[i] = NULL;
-    for (int i = 0; i < CHURN_ACTIVE_SET; i++) {
+    for (int i = 0; i < CHURN_ACTIVE_SET; i++) s_active[i] = NULL;
+    for (int i = 0; i < s_active_target; i++) {
         identity_t *id = roster_promote_candidate(now_ms);
         s_active[i] = id;
         if (id) {
@@ -36,7 +45,7 @@ void churn_init(uint32_t now_ms)
 
 void churn_tick(uint32_t now_ms)
 {
-    for (int s = 0; s < CHURN_ACTIVE_SET; s++) {
+    for (int s = 0; s < s_active_target; s++) {
         identity_t *id = s_active[s];
         if (id && now_ms >= id->active_until_ms) {
             id->state = ID_COOLDOWN;
@@ -53,11 +62,11 @@ void churn_tick(uint32_t now_ms)
         s_last_slice_ms = now_ms; s_phase++;
         for (int i = 0; i < CHURN_HW_INSTANCES; i++) {
             int idx;
-            if (CHURN_ACTIVE_SET <= CHURN_HW_INSTANCES) {
-                if (i >= CHURN_ACTIVE_SET) continue;     // fewer identities than radios
+            if (s_active_target <= CHURN_HW_INSTANCES) {
+                if (i >= s_active_target) continue;      // fewer identities than radios
                 idx = i;                                 // static mapping, 100% duty
             } else {
-                idx = (s_phase * CHURN_HW_INSTANCES + i) % CHURN_ACTIVE_SET;
+                idx = (s_phase * CHURN_HW_INSTANCES + i) % s_active_target;
             }
             identity_t *target = s_active[idx];
             if (target && target != s_occupant[i]) {
@@ -71,11 +80,11 @@ void churn_tick(uint32_t now_ms)
 size_t churn_active_count(void)
 {
     size_t n = 0;
-    for (int i = 0; i < CHURN_ACTIVE_SET; i++) if (s_active[i]) n++;
+    for (int i = 0; i < s_active_target; i++) if (s_active[i]) n++;
     return n;
 }
 
 const identity_t *churn_active_at(size_t slot)
 {
-    return (slot < CHURN_ACTIVE_SET) ? s_active[slot] : NULL;
+    return (slot < s_active_target) ? s_active[slot] : NULL;
 }

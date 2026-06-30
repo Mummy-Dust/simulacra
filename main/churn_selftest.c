@@ -83,21 +83,22 @@ static void test_timeslice(void)
         if (a) a->active_until_ms = 0xFFFFFFFFu;
     }
 
-    // Collect the identities placed on radios across two consecutive slices.
-    const identity_t *seen[CHURN_HW_INSTANCES * 2]; int n = 0;
-    churn_tick(CHURN_SLICE_MS);            // slice phase 1
-    for (int i = 0; i < CHURN_HW_INSTANCES; i++) seen[n++] = s_rec[i];
-    churn_tick(2 * CHURN_SLICE_MS);        // slice phase 2
-    for (int i = 0; i < CHURN_HW_INSTANCES; i++) seen[n++] = s_rec[i];
+    // Collect the identities placed on radios across enough slices to cover the whole active set.
+    int slices = (CHURN_ACTIVE_SET + CHURN_HW_INSTANCES - 1) / CHURN_HW_INSTANCES;
+    const identity_t *seen[CHURN_ACTIVE_SET * 2]; int n = 0;
+    for (int sl = 1; sl <= slices; sl++) {
+        churn_tick((uint32_t)sl * CHURN_SLICE_MS);
+        for (int i = 0; i < CHURN_HW_INSTANCES; i++) seen[n++] = s_rec[i];
+    }
 
-    // With ACTIVE_SET=8, HW=4, every active identity should appear within 2 slices.
+    // Every active identity should appear within ceil(ACTIVE_SET / HW) slices.
     int covered = 0;
     for (int s = 0; s < CHURN_ACTIVE_SET; s++) {
         const identity_t *a = churn_active_at(s);
         for (int j = 0; j < n; j++) if (seen[j] == a) { covered++; break; }
     }
     ST_CHECK(covered == CHURN_ACTIVE_SET,
-             "every active identity is on-air within 2 slices");
+             "every active identity is on-air within ceil(ACTIVE_SET/HW) slices");
     ST_CHECK(s_apply_calls > 0, "time-slice drives the apply callback");
 }
 

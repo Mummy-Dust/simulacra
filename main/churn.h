@@ -7,7 +7,7 @@
 // Active-set / cooldown / time-slice tunables. ACTIVE_SET is the synthetic crowd
 // size (how many identities are "present" at once); it is deliberately a plain
 // constant so the population density is a one-line tunable (see Task 6).
-#define CHURN_ACTIVE_SET        8
+#define CHURN_ACTIVE_SET        16   // MAX active-set capacity (Ward ceiling); runtime target <= this
 #define CHURN_TICK_MS           250
 #define CHURN_SLICE_MS          1000
 #define CHURN_DWELL_MIN_MS      180000u    // 3 min
@@ -21,6 +21,9 @@
 typedef int (*churn_apply_fn)(uint8_t instance, const identity_t *id);
 
 void   churn_set_apply(churn_apply_fn fn);
+// Set how many active slots churn fills/manages (1..CHURN_ACTIVE_SET). Call before churn_init.
+// Defaults to CHURN_ACTIVE_SET. This is the population-match knob (M6).
+void   churn_set_active_target(uint8_t n);
 void   churn_init(uint32_t now_ms);
 void   churn_tick(uint32_t now_ms);
 size_t churn_active_count(void);                 // non-NULL active slots

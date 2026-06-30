@@ -8,6 +8,7 @@
 #include "observe.h"
 #include "generate.h"
 #include "probe.h"
+#include "drift.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -375,6 +376,29 @@ static void test_probe_frame(void)
     ST_CHECK(memcmp(a,b,6)!=0, "random MAC varies across calls");
 }
 
+static void test_drift(void)
+{
+    rf_model_t a; rf_model_reset(&a);                  // 100% Apple
+    for (int i=0;i<100;i++) rf_model_observe(&a, 0x004C, -50, 0, -1);
+    rf_model_end_sweep(&a, 5, 60000, 5);
+    ST_CHECK(drift_score(&a, &a) < 0.01f, "drift: identical models score ~0");
+
+    rf_model_t b; rf_model_reset(&b);                  // 100% Samsung (disjoint mix)
+    for (int i=0;i<100;i++) rf_model_observe(&b, 0x0075, -50, 0, -1);
+    rf_model_end_sweep(&b, 5, 60000, 5);
+    float far = drift_score(&a, &b);
+    ST_CHECK(far > 0.6f, "drift: disjoint vendor mixes score high");
+    ST_CHECK(drift_exceeds(far, 0.5f), "drift_exceeds true above threshold");
+
+    rf_model_t c; rf_model_reset(&c);                  // 70/30 partial overlap with a
+    for (int i=0;i<70;i++) rf_model_observe(&c, 0x004C, -50, 0, -1);
+    for (int i=0;i<30;i++) rf_model_observe(&c, 0x0075, -50, 0, -1);
+    rf_model_end_sweep(&c, 5, 60000, 5);
+    float mid = drift_score(&a, &c);
+    ST_CHECK(mid > 0.01f && mid < far, "drift: partial overlap is monotonic with mix distance");
+    ST_CHECK(!drift_exceeds(0.1f, 0.5f), "drift_exceeds false below threshold");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -413,6 +437,7 @@ int churn_selftest_run(void)
     test_generate();
     test_roster_generate_path();
     test_probe_frame();
+    test_drift();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

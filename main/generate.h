@@ -1,0 +1,15 @@
+#pragma once
+#include <stdint.h>
+#include "identity.h"
+#include "rf_model.h"
+
+#define GEN_MIN_OBS 50   // below this total_obs, the model is too sparse -> caller falls back
+
+// Fill `roster[0..n)` by sampling the model: vendor weighted by observed mix, payload from the
+// matching template or a generic vendor-mfg, interval from that vendor's histogram, fresh
+// random-static MAC, dithered TX. Every identity gets a valid archetype_idx and a non-empty,
+// Law-3-clean payload. Returns the number of identities successfully built (== n on success).
+size_t  generate_roster(const rf_model_t *m, identity_t *roster, size_t n);
+
+// Population-matched active-set target from pop_ewma, persona-tuned and clamped.
+uint8_t generate_active_target(const rf_model_t *m);

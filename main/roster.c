@@ -7,8 +7,8 @@ static size_t     s_cursor;
 
 // Build a valid random-static address: 6 random bytes with the two most
 // significant bits set. Regenerates the astronomically rare all-zero / all-ones
-// random part that NimBLE would reject.
-static void make_random_static_addr(uint8_t out[6])
+// random part that NimBLE would reject. Shared with generate.c (M6).
+void make_random_static_addr_pub(uint8_t out[6])
 {
     for (;;) {
         for (int i = 0; i < 6; i++) out[i] = (uint8_t)(esp_random() & 0xff);
@@ -26,7 +26,7 @@ void roster_init(void)
 {
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = &s_roster[i];
-        make_random_static_addr(id->addr);
+        make_random_static_addr_pub(id->addr);
         const device_template_t *t = templates_pick();
         uint16_t itvl = 0, cid = 0;
         if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) {

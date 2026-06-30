@@ -6,7 +6,10 @@
 #include "templates.h"
 #include "rf_model.h"
 #include "observe.h"
+#include "generate.h"
 #include "esp_log.h"
+
+#define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
 
 static const char *TAG = "selftest";
 static int s_total, s_fail;
@@ -300,6 +303,39 @@ static void test_vendor_mfg_builder(void)
     ST_CHECK(found, "generic vendor-mfg carries the requested company id");
 }
 
+static void test_generate(void)
+{
+    rf_model_t m; rf_model_reset(&m);
+    // 70% company 0x0040 @ ~150 ms, 30% Samsung 0x0075 @ ~900 ms
+    for (int i=0;i<70;i++) rf_model_observe(&m, 0x0040, -55, 0, 150);
+    for (int i=0;i<30;i++) rf_model_observe(&m, 0x0075, -65, 0, 900);
+    rf_model_end_sweep(&m, 6, 60000, 6);
+
+    static identity_t roster[64];
+    size_t built = generate_roster(&m, roster, 64);
+    ST_CHECK(built == 64, "every generated identity has a payload");
+    int c40=0, c75=0; bool budget=true, mac=true, nopop=true, arch=true;
+    for (size_t i=0;i<64;i++){
+        if (roster[i].company_id==0x0040) c40++;
+        if (roster[i].company_id==0x0075) c75++;
+        if (roster[i].payload_len==0 || roster[i].payload_len>31) budget=false;
+        if ((roster[i].addr[5]&0xc0)!=0xc0) mac=false;
+        if (has_apple_popup_subtype(roster[i].payload, roster[i].payload_len)) nopop=false;
+        if (roster[i].archetype_idx >= templates_count()) arch=false;
+    }
+    ST_CHECK(budget, "generated payloads fit 31 bytes");
+    ST_CHECK(mac, "generated MACs are random-static");
+    ST_CHECK(nopop, "generated roster: no forbidden Apple subtype");
+    ST_CHECK(arch, "generated identities carry a valid archetype index");
+    ST_CHECK(c40 > c75, "generated vendor mix tracks the observed mix (0x0040 dominant)");
+
+    uint8_t at = generate_active_target(&m);   // pop=6 -> Ward 9 / Shade 7, clamped
+    ST_CHECK(at >= GEN_FLOOR_TEST_MIN && at <= CHURN_ACTIVE_SET, "active target clamped to persona range");
+
+    rf_model_t empty; rf_model_reset(&empty);
+    ST_CHECK(empty.total_obs < GEN_MIN_OBS, "empty model is below the generate threshold (caller falls back)");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -335,6 +371,7 @@ int churn_selftest_run(void)
     test_observe_dedup();
     test_rf_model_nvs();
     test_vendor_mfg_builder();
+    test_generate();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

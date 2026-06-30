@@ -14,3 +14,4 @@ void        roster_init(void);
 identity_t *roster_promote_candidate(uint32_t now_ms);  // eligible identity (now IDLE) or NULL
 size_t      roster_count_in_state(id_state_t s);
 identity_t *roster_at(size_t i);                        // for tests
+void        make_random_static_addr_pub(uint8_t out[6]);// shared with generate.c (M6)

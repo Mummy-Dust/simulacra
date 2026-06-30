@@ -7,6 +7,7 @@
 #include "rf_model.h"
 #include "observe.h"
 #include "generate.h"
+#include "probe.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -353,6 +354,27 @@ static void test_roster_generate_path(void)
     ST_CHECK(ok, "roster_init generate path: all payloads valid, Law-3-clean, valid archetype");
 }
 
+static void test_probe_frame(void)
+{
+    const uint8_t mac[6] = {0x12,0x34,0x56,0x78,0x9a,0xbc};
+    uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
+    ST_CHECK(probe_build_request(mac, 6, f, &n) == 0 && n >= 24 && n <= PROBE_FRAME_MAX, "probe frame builds, valid length");
+    ST_CHECK(f[0] == 0x40 && f[1] == 0x00, "frame control = probe request");
+    bool da=true, bssid=true, sa=true;
+    for (int i=0;i<6;i++){ if (f[4+i]!=0xff) da=false; if (f[16+i]!=0xff) bssid=false; if (f[10+i]!=mac[i]) sa=false; }
+    ST_CHECK(da && bssid, "DA + BSSID are broadcast");
+    ST_CHECK(sa, "SA = supplied MAC");
+    ST_CHECK(f[24]==0x00 && f[25]==0x00, "SSID IE is wildcard (len 0) -- Law 3");
+    ST_CHECK(f[26]==0x01, "Supported Rates IE present");
+    bool directed=false;
+    for (size_t i=24; i+1 < n; ) { uint8_t id=f[i], ln=f[i+1]; if (id==0x00 && ln!=0) directed=true; i += 2+ln; }
+    ST_CHECK(!directed, "no directed (named-SSID) probe ever emitted");
+
+    uint8_t a[6], b[6]; probe_random_mac(a); probe_random_mac(b);
+    ST_CHECK((a[0]&0x03)==0x02, "random MAC is locally-administered + unicast");
+    ST_CHECK(memcmp(a,b,6)!=0, "random MAC varies across calls");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -390,6 +412,7 @@ int churn_selftest_run(void)
     test_vendor_mfg_builder();
     test_generate();
     test_roster_generate_path();
+    test_probe_frame();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

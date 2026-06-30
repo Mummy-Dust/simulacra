@@ -87,5 +87,12 @@ void coexist_start(void)
     s_wifi_ok = (rc == 0);
     if (s_wifi_ok) { probe_pool_init(); ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
     else           { ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
-    xTaskCreate(coexist_task, "coexist", 8192, NULL, 5, NULL);
+    BaseType_t ok = xTaskCreate(coexist_task, "coexist", 8192, NULL, 5, NULL);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "coexist_task create failed -> BLE-only emergency loop");
+        for (;;) {                    // never brick: keep the BLE decoy advertising
+            churn_tick((uint32_t)(esp_timer_get_time() / 1000));
+            vTaskDelay(pdMS_TO_TICKS(COEX_TICK_MS));
+        }
+    }
 }

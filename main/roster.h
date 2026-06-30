@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "identity.h"
+#include "rf_model.h"
 
 // Persistent pool of pre-generated synthetic identities. Identities are created
 // once at init (stable MAC + frozen payload) and cycled through the lifecycle
@@ -15,3 +16,7 @@ identity_t *roster_promote_candidate(uint32_t now_ms);  // eligible identity (no
 size_t      roster_count_in_state(id_state_t s);
 identity_t *roster_at(size_t i);                        // for tests
 void        make_random_static_addr_pub(uint8_t out[6]);// shared with generate.c (M6)
+// M8 live re-profiling: regenerate ONLY the IDLE identities from a fresh model. ACTIVE and
+// COOLDOWN identities keep their MAC/payload, so the visible crowd turns over gradually
+// (fresh room-matched identities phase in as churn promotes them; no hard swap).
+void        roster_reseed_idle(const rf_model_t *m);

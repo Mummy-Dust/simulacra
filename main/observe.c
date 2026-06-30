@@ -3,6 +3,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
 
@@ -81,6 +83,7 @@ static rf_model_t s_model;
 static uint32_t   s_sweep_start_ms;
 static uint32_t   s_persist_ctr;
 static int        s_scan_rc = -1;          // last ble_gap_disc() result (liveness/diag)
+static bool       s_window_mode;           // true while observe_window() owns the scan
 
 static void observe_maybe_close_sweep(uint32_t now)
 {
@@ -117,8 +120,8 @@ static void observe_start_scan(void)
 static int observe_gap_event(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
-    if (event->type == BLE_GAP_EVENT_DISC_COMPLETE) {        // restart if the scan ever ends
-        observe_start_scan();
+    if (event->type == BLE_GAP_EVENT_DISC_COMPLETE) {        // restart only in standalone mode
+        if (!s_window_mode) observe_start_scan();
         return 0;
     }
     if (event->type != BLE_GAP_EVENT_EXT_DISC) return 0;
@@ -132,8 +135,8 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
 
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
-    observe_ingest(&s_model, d->addr.val, now, company, d->rssi, d->legacy_event_type);  // MAC dropped inside
-    observe_maybe_close_sweep(now);
+    observe_ingest(&s_model, d->addr.val, now, company, d->rssi, d->legacy_event_type);
+    if (!s_window_mode) observe_maybe_close_sweep(now);      // window mode closes explicitly
     return 0;
 }
 
@@ -153,3 +156,27 @@ void observe_heartbeat(void)
              s_scan_rc, (unsigned)s_model.sweeps, (unsigned)s_model.total_obs,
              (unsigned)observe_ephemeral_count());
 }
+
+void observe_reprofile_init(uint32_t boot_salt)
+{
+    observe_reset_ephemeral(boot_salt);                      // sets the per-boot salt
+    if (rf_model_load_nvs(&s_model) != 0) rf_model_reset(&s_model);
+}
+
+void observe_window(uint32_t duration_ms)
+{
+    observe_reset_ephemeral(s_salt);                         // fresh dedup table, keep the boot salt
+    s_window_mode    = true;
+    s_sweep_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    observe_start_scan();                                    // EXT_DISC reports -> observe_gap_event
+    vTaskDelay(pdMS_TO_TICKS(duration_ms));
+    ble_gap_disc_cancel();                                   // stop scanning; advertising continues
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    observe_end_sweep(&s_model, now - s_sweep_start_ms);
+    s_window_mode = false;
+    ESP_LOGW(TAG, "[reprofile sweep %u] pop=%u arr/min=%u obs=%u",
+             (unsigned)s_model.sweeps, (unsigned)(s_model.pop_ewma + 0.5f),
+             (unsigned)(s_model.arrival_per_min + 0.5f), (unsigned)s_model.total_obs);
+}
+
+const rf_model_t *observe_model(void) { return &s_model; }

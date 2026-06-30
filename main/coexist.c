@@ -35,8 +35,15 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "freertos/task.h"
 #include "churn.h"
 #include "probe.h"
+#include "drift.h"
+#include "observe.h"
+#include "generate.h"
+#include "roster.h"
+#include "rf_model.h"
+#include "esp_random.h"
 
 static const char *TAG = "coexist";
+#define OBS_REPROFILE_MS 15000
 #define COEX_TICK_MS   250
 #define COEX_5G_EVERY  4               // do a 5 GHz excursion every Nth Wi-Fi burst (keep it sparse)
 
@@ -57,6 +64,26 @@ static void coexist_5g_excursion(void)
 static void coexist_5g_excursion(void) {}
 #endif
 
+static void coexist_handle_drift(const coexist_persona_t *p, float score) { (void)p; (void)score; }
+
+static void coexist_reprofile(const coexist_persona_t *p)
+{
+    rf_model_t prev = *observe_model();                     // snapshot pre-update
+    observe_window(OBS_REPROFILE_MS);                       // ~15 s scan while advertising
+    const rf_model_t *cur = observe_model();
+    if (cur->total_obs < GEN_MIN_OBS) {                     // too sparse -> keep current population
+        ESP_LOGW(TAG, "reprofile: total_obs=%u < %d -> skip reshape",
+                 (unsigned)cur->total_obs, GEN_MIN_OBS);
+        return;
+    }
+    float score = drift_score(&prev, cur);
+    roster_reseed_idle(cur);                                // fresh identities into the IDLE pool
+    uint8_t at = generate_active_target(cur);
+    churn_set_active_target(at);                            // resize to the new population
+    ESP_LOGW(TAG, "reprofile: drift=%.3f active_target=%u", score, (unsigned)at);
+    coexist_handle_drift(p, score);                         // Layer 3 (Task 7); no-op on Ward
+}
+
 static void coexist_task(void *arg)
 {
     (void)arg;
@@ -73,10 +100,7 @@ static void coexist_task(void *arg)
             if (n24) probe_inject_burst(ch24[hop24++ % n24]);        // 2.4 GHz (coex-arbitrated)
             if (p->use_5g && (++s_wifi_ctr % COEX_5G_EVERY == 0)) coexist_5g_excursion();
         }
-        if (d.fire_reprofile) {
-            // Layer 2 (Task 6) hooks in here. Layer 1: heartbeat only.
-            ESP_LOGW(TAG, "reprofile slot (Layer 2 lands in Task 6)");
-        }
+        if (d.fire_reprofile) coexist_reprofile(p);
         vTaskDelay(pdMS_TO_TICKS(COEX_TICK_MS));
     }
 }
@@ -87,6 +111,7 @@ void coexist_start(void)
     s_wifi_ok = (rc == 0);
     if (s_wifi_ok) { probe_pool_init(); ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
     else           { ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
+    observe_reprofile_init(esp_random());
     BaseType_t ok = xTaskCreate(coexist_task, "coexist", 8192, NULL, 5, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "coexist_task create failed -> BLE-only emergency loop");

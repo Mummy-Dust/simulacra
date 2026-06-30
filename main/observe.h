@@ -24,3 +24,12 @@ void     observe_start(uint32_t boot_salt);   // load model from NVS, start pass
 // Periodic liveness line (scan rc + running totals); call from the idle observe loop so the
 // device is observable even when ambient BLE traffic is sparse.
 void     observe_heartbeat(void);
+
+// --- live re-profiling (M8): bounded observe window while advertising continues ---
+// Load the persistent model once (call before the first observe_window).
+void              observe_reprofile_init(uint32_t boot_salt);
+// Run ONE bounded scan window (blocks the caller for duration_ms), ingesting reports while
+// ext-adv keeps running, then close the sweep and fold into the model.
+void              observe_window(uint32_t duration_ms);
+// The current persistent model (RAM).
+const rf_model_t *observe_model(void);

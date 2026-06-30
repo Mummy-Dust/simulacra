@@ -81,3 +81,11 @@ size_t roster_count_in_state(id_state_t s)
 }
 
 identity_t *roster_at(size_t i) { return &s_roster[i]; }
+
+void roster_reseed_idle(const rf_model_t *m)
+{
+    for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
+        if (s_roster[i].state != ID_IDLE) continue;
+        generate_roster(m, &s_roster[i], 1);   // fills MAC/payload/itvl and sets state = ID_IDLE
+    }
+}

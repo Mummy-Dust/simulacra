@@ -1,4 +1,5 @@
-// splinter v2 — BLE privacy / anti-tracking decoy (ESP-IDF + NimBLE), ESP32-C6.
+// Simulacra — BLE privacy / anti-tracking decoy (ESP-IDF + NimBLE), ESP32-C5/C6.
+// Fork of Splinter by 0xXyc (Jacob Swiz).
 //
 // v2 builds a synthetic *population*: plausible-but-fake BLE devices that persist
 // and turn over like a real crowd, so a tracker in a space you control sees lots
@@ -40,7 +41,7 @@
 #include "generate.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
-#error "Splinter v2 requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
+#error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
 #endif
 
 // Normal (shipped) mode. Set to 1 to build the on-target self-test instead.
@@ -54,7 +55,7 @@
 #define SIMULACRA_OBSERVE 0
 #endif
 
-static const char *TAG = "splinter";
+static const char *TAG = "simulacra";
 static volatile bool s_host_synced = false;
 
 static void simulacra_task(void *arg)
@@ -176,5 +177,5 @@ void app_main(void)
     ble_svc_gap_init();
 
     nimble_port_freertos_init(nimble_host_task);
-    xTaskCreate(simulacra_task, "splinter", 4096, NULL, 5, NULL);
+    xTaskCreate(simulacra_task, "simulacra", 4096, NULL, 5, NULL);
 }

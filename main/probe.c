@@ -66,8 +66,14 @@ static uint8_t s_macs[PROBE_MAX_PHONES][6];
 static int     s_n;
 static int     s_hop;
 
+// Debug: pin injection to a single 2.4 GHz channel (0 = normal hop). For A/B isolation tests.
+#define PROBE_PIN_CH 0
+
 static uint8_t next_channel(void)
 {
+#if PROBE_PIN_CH
+    return PROBE_PIN_CH;
+#endif
     // interleave 2.4 GHz with 5 GHz (C5) so both bands get traffic
     s_hop++;
 #if PROBE_USE_5G

@@ -40,6 +40,7 @@
 #include "rf_model.h"
 #include "generate.h"
 #include "probe.h"
+#include "sniff.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -59,6 +60,11 @@
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
 #ifndef SIMULACRA_PROBE
 #define SIMULACRA_PROBE 0
+#endif
+
+// Sniff mode (verification / Wi-Fi-observe seed): promiscuous-capture probe requests, log counts.
+#ifndef SIMULACRA_SNIFF
+#define SIMULACRA_SNIFF 0
 #endif
 
 static const char *TAG = "simulacra";
@@ -175,6 +181,11 @@ void app_main(void)
 #if SIMULACRA_PROBE
     // Wi-Fi-only mode: init Wi-Fi + start the probe injector; NimBLE is never initialized.
     probe_start();
+    return;
+#endif
+#if SIMULACRA_SNIFF
+    // Wi-Fi-only verification mode: promiscuous-capture probe requests, log counts. NimBLE idle.
+    sniff_start();
     return;
 #endif
 

@@ -86,13 +86,23 @@ static void simulacra_task(void *arg)
     // M6 population-match: size the active set to the observed population (persona-tuned).
     {
         rf_model_t m;
-        if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS)
-            churn_set_active_target(generate_active_target(&m));
+        if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
+            uint8_t at = generate_active_target(&m);
+            churn_set_active_target(at);
+            ESP_LOGW(TAG, "population-match: pop=%u active_target=%u",
+                     (unsigned)(m.pop_ewma + 0.5f), (unsigned)at);
+        }
     }
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
+    uint32_t last_hb = 0;
     for (;;) {
-        churn_tick((uint32_t)(esp_timer_get_time() / 1000));
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        churn_tick(now);
+        if (now - last_hb >= 5000) {   // liveness: active = persona-sized population-match target
+            last_hb = now;
+            ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());
+        }
         vTaskDelay(pdMS_TO_TICKS(CHURN_TICK_MS));
     }
 #endif
@@ -120,9 +130,14 @@ static void nimble_host_task(void *param)
 // antenna (LOW = onboard ceramic, HIGH = external U.FL). Must run before BLE start.
 // IMPORTANT: selecting external (HIGH) with no U.FL antenna attached degrades RF. Set
 // SIMULACRA_EXT_ANTENNA to 0 if running on the onboard antenna.
-// C6-ONLY: GPIO3/GPIO14 are XIAO-C6-specific pins; other boards (e.g. the C5 DevKit, which
-// selects its antenna with a hardware jumper) must not drive them, so guard on the target.
-#if CONFIG_IDF_TARGET_ESP32C6
+// BOARD-SPECIFIC: GPIO3/GPIO14 are the XIAO C6's antenna-switch pins. Other ESP32-C6 boards
+// (e.g. the SparkFun Thing Plus C6, which selects its antenna with a hardware jumper) must NOT
+// drive them, so this is gated on SIMULACRA_BOARD_XIAO_C6 (default 0 = don't touch the pins).
+// Build for the XIAO C6 with -DSIMULACRA_BOARD_XIAO_C6=1 (and SIMULACRA_EXT_ANTENNA as needed).
+#ifndef SIMULACRA_BOARD_XIAO_C6
+#define SIMULACRA_BOARD_XIAO_C6 0
+#endif
+#if SIMULACRA_BOARD_XIAO_C6
 #ifndef SIMULACRA_EXT_ANTENNA
 #define SIMULACRA_EXT_ANTENNA 1   // 1 = external U.FL (fitted on this build), 0 = onboard ceramic
 #endif
@@ -139,7 +154,7 @@ static void xiao_c6_select_antenna(void)
 
 void app_main(void)
 {
-#if CONFIG_IDF_TARGET_ESP32C6
+#if SIMULACRA_BOARD_XIAO_C6
     xiao_c6_select_antenna();
 #endif
 

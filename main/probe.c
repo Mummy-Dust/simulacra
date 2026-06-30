@@ -55,7 +55,7 @@ static const char *TAG = "probe";
 #endif
 #define PROBE_MAX_PHONES 12
 #define PROBE_BURST_MS   2000
-#define PROBE_ROTATE_MS  30000
+#define PROBE_ROTATE_EVERY 15          // ~1-in-15 bursts rotates one fake phone to a fresh MAC
 
 static const uint8_t CH_24[] = { 1, 6, 11 };
 #if PROBE_USE_5G
@@ -66,15 +66,59 @@ static uint8_t s_macs[PROBE_MAX_PHONES][6];
 static int     s_n;
 static int     s_hop;
 
-// Debug: pin injection to a single 2.4 GHz channel (0 = normal hop). For A/B isolation tests.
-#define PROBE_PIN_CH 0
+int probe_wifi_init(void)
+{
+    esp_err_t e;
+    if ((e = esp_netif_init()) != ESP_OK) return e;
+    e = esp_event_loop_create_default();
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) return e;   // tolerate pre-existing loop
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    if ((e = esp_wifi_init(&cfg)) != ESP_OK) return e;
+    if ((e = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK) return e;
+    if ((e = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK) return e;
+#if CONFIG_IDF_TARGET_ESP32C5
+    esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO);               // 2.4 + 5 GHz
+#endif
+    if ((e = esp_wifi_start()) != ESP_OK) return e;
+    return 0;
+}
 
+void probe_pool_init(void)
+{
+    s_n = PROBE_PHONES; if (s_n > PROBE_MAX_PHONES) s_n = PROBE_MAX_PHONES;
+    for (int i = 0; i < s_n; i++) probe_random_mac(s_macs[i]);
+}
+
+int probe_phone_count(void) { return s_n; }
+
+size_t probe_channels_24(const uint8_t **out) { *out = CH_24; return sizeof(CH_24)/sizeof(CH_24[0]); }
+size_t probe_channels_5g(const uint8_t **out)
+{
+#if PROBE_USE_5G
+    *out = CH_5; return sizeof(CH_5)/sizeof(CH_5[0]);
+#else
+    *out = NULL; return 0;
+#endif
+}
+
+int probe_inject_burst(uint8_t channel)
+{
+    int crc = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    int rc = 0;
+    for (int i = 0; i < s_n; i++) {
+        uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
+        probe_build_request(s_macs[i], channel, f, &n);
+        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, true);
+    }
+    if ((esp_random() % PROBE_ROTATE_EVERY) == 0)               // retire one fake phone -> fresh MAC
+        probe_random_mac(s_macs[esp_random() % s_n]);
+    ESP_LOGW(TAG, "burst ch=%u phones=%d set_ch_rc=%d tx_rc=%d", channel, s_n, crc, rc);
+    return rc;
+}
+
+// Dev mode (SIMULACRA_PROBE): forever-loop wrapper over the scheduler core.
 static uint8_t next_channel(void)
 {
-#if PROBE_PIN_CH
-    return PROBE_PIN_CH;
-#endif
-    // interleave 2.4 GHz with 5 GHz (C5) so both bands get traffic
     s_hop++;
 #if PROBE_USE_5G
     if (s_hop & 1) return CH_5[(s_hop / 2) % (int)(sizeof(CH_5) / sizeof(CH_5[0]))];
@@ -87,40 +131,16 @@ static uint8_t next_channel(void)
 static void probe_task(void *arg)
 {
     (void)arg;
-    s_n = PROBE_PHONES; if (s_n > PROBE_MAX_PHONES) s_n = PROBE_MAX_PHONES;
-    for (int i = 0; i < s_n; i++) probe_random_mac(s_macs[i]);
-    uint32_t last_rotate = 0;
     for (;;) {
-        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-        uint8_t ch = next_channel();
-        int crc = esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-        int rc = 0;
-        for (int i = 0; i < s_n; i++) {
-            uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
-            probe_build_request(s_macs[i], ch, f, &n);
-            rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, true);
-        }
-        if (now - last_rotate >= PROBE_ROTATE_MS) {   // retire one fake phone -> fresh MAC
-            last_rotate = now;
-            probe_random_mac(s_macs[esp_random() % s_n]);
-        }
-        ESP_LOGW(TAG, "burst ch=%u phones=%d set_ch_rc=%d tx_rc=%d", ch, s_n, crc, rc);
+        probe_inject_burst(next_channel());
         vTaskDelay(pdMS_TO_TICKS(PROBE_BURST_MS));
     }
 }
 
 void probe_start(void)
 {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-#if CONFIG_IDF_TARGET_ESP32C5
-    esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO);   // 2.4 + 5 GHz
-#endif
-    ESP_ERROR_CHECK(esp_wifi_start());
+    if (probe_wifi_init() != 0) { ESP_LOGE(TAG, "wifi init failed"); return; }
+    probe_pool_init();
     xTaskCreate(probe_task, "probe", 4096, NULL, 5, NULL);
     ESP_LOGW(TAG, "probe injector started (phones=%d 5g=%d)", PROBE_PHONES, PROBE_USE_5G);
 }

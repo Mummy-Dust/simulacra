@@ -13,3 +13,7 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 # M8: software coexistence so the Wi-Fi and BT controllers run concurrently and
 # esp_coex arbitrates radio access. Our Wi-Fi use is injection-only (no AP association).
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# M8: BLE + Wi-Fi together (~1.2 MB binary) exceeds the default 1 MB factory partition.
+# Switch to the 1500 K "large" single-app layout, which still fits in 2 MB flash.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

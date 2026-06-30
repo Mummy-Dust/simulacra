@@ -43,12 +43,15 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "esp_random.h"
 
 static const char *TAG = "coexist";
-#define OBS_REPROFILE_MS 15000
-#define COEX_TICK_MS   250
-#define COEX_5G_EVERY  4               // do a 5 GHz excursion every Nth Wi-Fi burst (keep it sparse)
+#define OBS_REPROFILE_MS   15000
+#define COEX_TICK_MS       250
+#define COEX_5G_EVERY      4               // do a 5 GHz excursion every Nth Wi-Fi burst (keep it sparse)
+#define SHADE_DRIFT_ACCEL  3.0f
+#define SHADE_ACCEL_DECAY_MS 120000u       // ~2 min linear decay back to 1.0
 
 static bool     s_wifi_ok;
 static uint32_t s_wifi_ctr;
+static uint32_t s_accel_until_ms;         // 0 = not accelerating
 
 #if CONFIG_IDF_TARGET_ESP32C5
 // C5 hard exclusion: tuning to 5 GHz means BLE (2.4 GHz) cannot TX. Batch a quick sweep
@@ -64,7 +67,20 @@ static void coexist_5g_excursion(void)
 static void coexist_5g_excursion(void) {}
 #endif
 
-static void coexist_handle_drift(const coexist_persona_t *p, float score) { (void)p; (void)score; }
+static void coexist_handle_drift(const coexist_persona_t *p, float score)
+{
+#if !CONFIG_IDF_TARGET_ESP32C5                  // Shade (C6) only; Ward is stationary
+    if (drift_exceeds(score, p->drift_threshold)) {
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        s_accel_until_ms = now + SHADE_ACCEL_DECAY_MS;
+        churn_set_accel(SHADE_DRIFT_ACCEL);
+        ESP_LOGW(TAG, "anti-entourage: drift=%.3f > %.2f -> accel=%.1f for %ums",
+                 score, p->drift_threshold, SHADE_DRIFT_ACCEL, (unsigned)SHADE_ACCEL_DECAY_MS);
+    }
+#else
+    (void)p; (void)score;
+#endif
+}
 
 static void coexist_reprofile(const coexist_persona_t *p)
 {
@@ -84,6 +100,20 @@ static void coexist_reprofile(const coexist_persona_t *p)
     coexist_handle_drift(p, score);                         // Layer 3 (Task 7); no-op on Ward
 }
 
+static void coexist_decay_accel(void)
+{
+    if (s_accel_until_ms == 0) return;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now >= s_accel_until_ms) {
+        churn_set_accel(1.0f);
+        s_accel_until_ms = 0;
+        ESP_LOGW(TAG, "anti-entourage: accel decayed to 1.0");
+        return;
+    }
+    float frac = (float)(s_accel_until_ms - now) / (float)SHADE_ACCEL_DECAY_MS;   // 1.0 -> 0
+    churn_set_accel(1.0f + (SHADE_DRIFT_ACCEL - 1.0f) * frac);                    // linear decay
+}
+
 static void coexist_task(void *arg)
 {
     (void)arg;
@@ -94,6 +124,7 @@ static void coexist_task(void *arg)
     for (;;) {
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         churn_tick(now);                                // BLE ext-adv runs continuously under coex
+        coexist_decay_accel();
         coexist_due_t d = coexist_due(p, now, &last_wifi, &last_repro);
         if (d.fire_wifi && s_wifi_ok) {
             const uint8_t *ch24; size_t n24 = probe_channels_24(&ch24);

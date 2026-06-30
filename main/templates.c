@@ -37,10 +37,10 @@ const device_template_t *templates_pick(void)
 }
 
 // mfg buffer: company(2) + model + status + battery + 1-3 plausible bytes
-static void enc_vendor_mfg(const device_template_t *t, struct ble_hs_adv_fields *f, uint8_t *mfg)
+static void enc_vendor_mfg(uint16_t company_id, struct ble_hs_adv_fields *f, uint8_t *mfg)
 {
-    mfg[0] = (uint8_t)(t->company_id & 0xff);
-    mfg[1] = (uint8_t)((t->company_id >> 8) & 0xff);
+    mfg[0] = (uint8_t)(company_id & 0xff);
+    mfg[1] = (uint8_t)((company_id >> 8) & 0xff);
     mfg[2] = rnd_byte();                       // model/type
     mfg[3] = (uint8_t)(rnd_byte() & 0x0f);     // status flags
     mfg[4] = (uint8_t)(esp_random() % 101);    // battery 0-100
@@ -114,7 +114,7 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
 
     static uint8_t scratch[31];  // mfg/svc-data working buffer (single task, not reentrant)
     switch (t->family) {
-        case FMT_VENDOR_MFG:    enc_vendor_mfg(t, &f, scratch); break;
+        case FMT_VENDOR_MFG:    enc_vendor_mfg(t->company_id, &f, scratch); break;
         case FMT_IBEACON:       enc_ibeacon(&f, scratch); break;
         case FMT_EDDYSTONE_UID: enc_eddystone_uid(&f, scratch); break;
         case FMT_EDDYSTONE_URL: enc_eddystone_url(&f, scratch); break;
@@ -136,5 +136,19 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
     *out_len = len;
     *out_itvl_ms = rnd_range(t->itvl_min_ms, t->itvl_max_ms);
     *out_company_id = t->company_id;
+    return 0;
+}
+
+int template_build_vendor_mfg(uint16_t company_id, uint8_t out_payload[31], uint8_t *out_len)
+{
+    struct ble_hs_adv_fields f;
+    memset(&f, 0, sizeof(f));
+    f.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    static uint8_t scratch[31];
+    enc_vendor_mfg(company_id, &f, scratch);
+    uint8_t buf[BLE_HS_ADV_MAX_SZ], len = 0;
+    if (ble_hs_adv_set_fields(&f, buf, &len, sizeof(buf)) != 0) { *out_len = 0; return 1; }
+    memcpy(out_payload, buf, len);
+    *out_len = len;
     return 0;
 }

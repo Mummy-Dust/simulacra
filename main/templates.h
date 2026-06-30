@@ -33,3 +33,7 @@ const device_template_t *templates_pick(void);   // weighted by .weight
 // failed to serialize (e.g. over the 31-byte budget).
 int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t *out_len,
                    uint16_t *out_itvl_ms, uint16_t *out_company_id);
+
+// Build a generic-but-valid vendor manufacturer-data advertisement for an arbitrary company id
+// (for model-driven generation of vendors with no specific template). Returns 0 on success.
+int template_build_vendor_mfg(uint16_t company_id, uint8_t out_payload[31], uint8_t *out_len);

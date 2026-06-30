@@ -285,6 +285,20 @@ static void test_rf_model_nvs(void)
     ST_CHECK(memcmp(&m, &r, sizeof(m)) == 0, "rf_model NVS round-trips byte-exact");
 }
 
+static void test_vendor_mfg_builder(void)
+{
+    uint8_t pay[31], len = 0;
+    ST_CHECK(template_build_vendor_mfg(0x0040, pay, &len) == 0 && len > 0 && len <= 31,
+             "generic vendor-mfg builds for an arbitrary company id");
+    bool found = false;                         // company id present in a 0xFF mfg AD, little-endian
+    for (int i = 0; i + 1 < len; ) {
+        uint8_t adlen = pay[i], adtype = pay[i+1];
+        if (adtype == 0xFF && adlen >= 3 && pay[i+2] == 0x40 && pay[i+3] == 0x00) found = true;
+        i += adlen + 1;
+    }
+    ST_CHECK(found, "generic vendor-mfg carries the requested company id");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -319,6 +333,7 @@ int churn_selftest_run(void)
     test_rf_model();
     test_observe_dedup();
     test_rf_model_nvs();
+    test_vendor_mfg_builder();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

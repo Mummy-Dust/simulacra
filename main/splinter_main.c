@@ -112,6 +112,9 @@ static void nimble_host_task(void *param)
 // antenna (LOW = onboard ceramic, HIGH = external U.FL). Must run before BLE start.
 // IMPORTANT: selecting external (HIGH) with no U.FL antenna attached degrades RF. Set
 // SIMULACRA_EXT_ANTENNA to 0 if running on the onboard antenna.
+// C6-ONLY: GPIO3/GPIO14 are XIAO-C6-specific pins; other boards (e.g. the C5 DevKit, which
+// selects its antenna with a hardware jumper) must not drive them, so guard on the target.
+#if CONFIG_IDF_TARGET_ESP32C6
 #ifndef SIMULACRA_EXT_ANTENNA
 #define SIMULACRA_EXT_ANTENNA 1   // 1 = external U.FL (fitted on this build), 0 = onboard ceramic
 #endif
@@ -124,10 +127,13 @@ static void xiao_c6_select_antenna(void)
     gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_14, SIMULACRA_EXT_ANTENNA ? 1 : 0);  // 1 = external U.FL, 0 = onboard
 }
+#endif
 
 void app_main(void)
 {
+#if CONFIG_IDF_TARGET_ESP32C6
     xiao_c6_select_antenna();
+#endif
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

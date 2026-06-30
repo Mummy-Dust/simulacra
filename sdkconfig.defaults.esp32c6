@@ -9,3 +9,7 @@ CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=4
 # passively scan the ambient BLE environment. The default decoy build is broadcaster-only
 # and never scans; enabling observer here is inert for it (just links scan support in).
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+
+# M8: software coexistence so the Wi-Fi and BT controllers run concurrently and
+# esp_coex arbitrates radio access. Our Wi-Fi use is injection-only (no AP association).
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y

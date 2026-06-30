@@ -9,6 +9,7 @@
 #include "generate.h"
 #include "probe.h"
 #include "drift.h"
+#include "coexist.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -432,6 +433,33 @@ static void test_drift(void)
     ST_CHECK(!drift_exceeds(0.1f, 0.5f), "drift_exceeds false below threshold");
 }
 
+static void test_scheduler_budget(void)
+{
+    const coexist_persona_t *p = coexist_persona();
+    ST_CHECK(p->wifi_period_ms > 0 && p->reprofile_period_ms > 0, "persona has positive cadences");
+    ST_CHECK(p->reprofile_period_ms > p->wifi_period_ms, "re-profile is rarer than Wi-Fi bursts");
+
+    // Drive a 250 ms tick (= CHURN_TICK_MS) over one hour; count fired slots.
+    uint32_t lw = 0, lr = 0; int wifi = 0, repro = 0;
+    for (uint32_t t = 0; t <= 3600000u; t += 250) {
+        coexist_due_t d = coexist_due(p, t, &lw, &lr);
+        if (d.fire_wifi)      wifi++;
+        if (d.fire_reprofile) repro++;
+    }
+    int exp_wifi  = (int)(3600000u / p->wifi_period_ms);
+    int exp_repro = (int)(3600000u / p->reprofile_period_ms);
+    ST_CHECK(wifi  >= exp_wifi  - 1 && wifi  <= exp_wifi  + 1, "Wi-Fi bursts fire at the persona cadence");
+    ST_CHECK(repro >= exp_repro - 1 && repro <= exp_repro + 1, "re-profile fires at the persona cadence");
+
+#if CONFIG_IDF_TARGET_ESP32C5
+    ST_CHECK(p->use_5g,                  "Ward (C5) schedules 5 GHz excursions");
+    ST_CHECK(p->drift_threshold >= 1.0f, "Ward drift threshold effectively off (stationary)");
+#else
+    ST_CHECK(!p->use_5g,                 "Shade (C6) is 2.4 GHz only");
+    ST_CHECK(p->drift_threshold < 1.0f,  "Shade drift threshold active (anti-entourage)");
+#endif
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -472,6 +500,7 @@ int churn_selftest_run(void)
     test_probe_frame();
     test_drift();
     test_accel_rotation();
+    test_scheduler_budget();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

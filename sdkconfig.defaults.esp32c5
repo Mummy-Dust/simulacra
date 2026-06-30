@@ -19,3 +19,7 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 # re-enumerate when the chip resets, so flashing and logging are reliable (esp. in
 # a VM). The bridge's RTS/DTR drive EN/GPIO9 for auto-reset.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# M8: software coexistence so the Wi-Fi and BT controllers run concurrently and
+# esp_coex arbitrates radio access. Our Wi-Fi use is injection-only (no AP association).
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y

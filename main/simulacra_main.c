@@ -7,12 +7,21 @@
 // roster.* (identity pool) and churn.* (active-set / cooldown / time-slice); this
 // file is the slim entry point.
 //
-// Two build modes, selected by CHURN_SELFTEST below:
-//   * CHURN_SELFTEST=0 (normal, shipped): drive the decoy population — churn_tick
-//     advances the state machine every CHURN_TICK_MS and applies identity changes
-//     to the 4 ext-adv radios via the NimBLE adapter (churn_adv_apply).
-//   * CHURN_SELFTEST=1 (M3 dev): run the on-target logic self-test with the radio
-//     idle, loop-printing PASS/FAIL over serial. No advertising.
+// DEFAULT build (all flags below = 0): combined BLE + Wi-Fi coexist decoy (M8).
+//   BLE ext-adv and Wi-Fi synthetic probe-request injection run concurrently via
+//   ESP-IDF SW coexistence. The coexist coordinator (coexist.c) live-re-profiles the
+//   room every ~10 min (Ward/C5) or ~5 min (Shade/C6): it observes the ambient BLE
+//   environment, updates the rf_model, and reshapes the synthetic population without
+//   a reflash. On Shade (C6), a high drift score triggers anti-entourage: accelerated
+//   churn (3× speed) that decays linearly back to normal over ~2 min.
+//   BLE-only fallback if Wi-Fi init fails.
+//
+// Dev / verification flags (set exactly one to 1 to override the default):
+//   SIMULACRA_PROBE=1   Wi-Fi-only probe injector (NimBLE not started)
+//   SIMULACRA_SNIFF=1   Wi-Fi probe sniffer — promiscuous capture, log counts
+//                       (verification tool / M9 observe seed)
+//   SIMULACRA_OBSERVE=1 BLE-only ambient observe + model (never advertises)
+//   CHURN_SELFTEST=1    On-target host-logic self-test; radio idle, PASS/FAIL serial
 //
 // Decoy guardrails (see decoy_vendors.h): advertising is NON-CONNECTABLE and the
 // payload is never shaped like Apple Continuity / Microsoft Swift Pair / Google

@@ -142,6 +142,41 @@ itself a fingerprint). Persona-tuned (defaults from the chip target): Ward ~8 fa
 Shade ~4 on 2.4 GHz with faster MAC rotation. NimBLE is not started in this mode. Synthetic for now —
 Wi-Fi observe→match is a later milestone, and **BLE + Wi-Fi coexistence is M8**.
 
+### M8 — BLE + Wi-Fi coexistence (default)
+
+The default build (all flags 0) is now the **combined coexist decoy**: BLE ext-adv and
+Wi-Fi synthetic probe-request injection run **concurrently** via ESP-IDF SW coexistence,
+with no additional hardware needed. You see decoy BLE devices *and* randomised probe
+requests simultaneously, sustained, on a single ESP32.
+
+**Live re-profiling.** The coexist coordinator scans the ambient BLE environment for ~15 s
+every ~10 min (Ward/C5) or ~5 min (Shade/C6), updates the rf\_model in place, and
+reshapes the synthetic population — crowd size, vendor mix, intervals — to match the
+new room, with no reflash required. If the environment is too sparse (< 50 observations)
+the update is skipped and the current population is kept.
+
+**Anti-entourage (Shade/C6 only).** After each re-profile, if the drift score between
+the old and new model exceeds 0.45, Shade triggers accelerated churn (3× normal speed)
+so the decoy crowd turns over quickly when the real environment changes. The acceleration
+decays linearly back to 1× over ~2 min.
+
+**Partition layout.** The combined binary (~1.2 MB) exceeds the default 1 MB factory
+partition. Both `sdkconfig.defaults.esp32c6` and `sdkconfig.defaults.esp32c5` set
+`CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y` — no manual Kconfig change needed.
+
+**Build modes (all flags default 0):**
+
+| Flag | Behavior |
+|------|----------|
+| *(none set)* | Combined coexist decoy — BLE + Wi-Fi together **(new default)** |
+| `SIMULACRA_PROBE=1` | Wi-Fi-only probe injector (dev / bench) |
+| `SIMULACRA_SNIFF=1` | Wi-Fi probe sniffer — promiscuous capture, log counts (verification / M9 seed) |
+| `SIMULACRA_OBSERVE=1` | BLE-only ambient observe + model (never advertises) |
+| `CHURN_SELFTEST=1` | On-target host-logic self-test; radio idle, PASS/FAIL serial |
+
+**M9** (next milestone): Wi-Fi observe → model → match: sniff the 802.11 probe environment,
+build a probe-request rf\_model, and generate synthetic probe MACs/SSIDs that match the room.
+
 ### Antenna (XIAO ESP32-C6)
 
 The firmware drives the XIAO C6 RF switch at boot: GPIO3 low enables the switch, GPIO14 selects the

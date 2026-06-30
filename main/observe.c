@@ -135,7 +135,7 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
 
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
-    observe_ingest(&s_model, d->addr.val, now, company, d->rssi, d->legacy_event_type);
+    observe_ingest(&s_model, d->addr.val, now, company, d->rssi, d->legacy_event_type);  // MAC dropped inside
     if (!s_window_mode) observe_maybe_close_sweep(now);      // window mode closes explicitly
     return 0;
 }
@@ -170,7 +170,9 @@ void observe_window(uint32_t duration_ms)
     s_sweep_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
     observe_start_scan();                                    // EXT_DISC reports -> observe_gap_event
     vTaskDelay(pdMS_TO_TICKS(duration_ms));
-    ble_gap_disc_cancel();                                   // stop scanning; advertising continues
+    int cancel_rc = ble_gap_disc_cancel();
+    if (cancel_rc != 0) ESP_LOGW(TAG, "observe_window: disc_cancel rc=%d", cancel_rc);
+    vTaskDelay(pdMS_TO_TICKS(50));     // let queued reports drain on the host task before closing the sweep
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     observe_end_sweep(&s_model, now - s_sweep_start_ms);
     s_window_mode = false;

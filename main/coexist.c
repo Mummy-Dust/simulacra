@@ -97,7 +97,7 @@ static void coexist_reprofile(const coexist_persona_t *p)
     uint8_t at = generate_active_target(cur);
     churn_set_active_target(at);                            // resize to the new population
     ESP_LOGW(TAG, "reprofile: drift=%.3f active_target=%u", score, (unsigned)at);
-    coexist_handle_drift(p, score);                         // Layer 3 (Task 7); no-op on Ward
+    if (prev.sweeps > 0) coexist_handle_drift(p, score);   // skip day-one false trigger (empty prev model)
 }
 
 static void coexist_decay_accel(void)

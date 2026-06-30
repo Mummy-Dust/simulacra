@@ -376,6 +376,39 @@ static void test_probe_frame(void)
     ST_CHECK(memcmp(a,b,6)!=0, "random MAC varies across calls");
 }
 
+static void test_accel_rotation(void)
+{
+    roster_init();
+    churn_set_apply(noop_apply);
+    churn_set_accel(1.0f);
+    churn_init(0);
+
+    // With 3x accel, every freshly-promoted dwell is bounded by ~MAX/3.
+    churn_set_accel(3.0f);
+    uint32_t accel_max = 0, now = 10000;
+    for (int k = 0; k < 20; k++) {
+        ((identity_t *)churn_active_at(0))->active_until_ms = now;     // force-retire slot 0
+        churn_tick(now);
+        const identity_t *p = churn_active_at(0);
+        if (p) { uint32_t d = p->active_until_ms - now; if (d > accel_max) accel_max = d; }
+        now += 1000;
+    }
+    ST_CHECK(accel_max <= CHURN_DWELL_MAX_MS / 3 + 1, "accel(3.0) bounds dwell to ~MAX/3");
+    ST_CHECK(accel_max >= CHURN_DWELL_MIN_MS / 3,     "accel(3.0) dwell still >= MIN/3");
+
+    // Decay back to 1.0 restores the full dwell range (some sample exceeds MAX/3).
+    churn_set_accel(1.0f);
+    uint32_t base_max = 0;
+    for (int k = 0; k < 20; k++) {
+        ((identity_t *)churn_active_at(0))->active_until_ms = now;
+        churn_tick(now);
+        const identity_t *p = churn_active_at(0);
+        if (p) { uint32_t d = p->active_until_ms - now; if (d > base_max) base_max = d; }
+        now += 1000;
+    }
+    ST_CHECK(base_max > CHURN_DWELL_MAX_MS / 3, "accel decays to 1.0 -> full dwell range restored");
+}
+
 static void test_drift(void)
 {
     rf_model_t a; rf_model_reset(&a);                  // 100% Apple
@@ -438,6 +471,7 @@ int churn_selftest_run(void)
     test_roster_generate_path();
     test_probe_frame();
     test_drift();
+    test_accel_rotation();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

@@ -24,6 +24,9 @@ void   churn_set_apply(churn_apply_fn fn);
 // Set how many active slots churn fills/manages (1..CHURN_ACTIVE_SET). Call before churn_init.
 // Defaults to CHURN_ACTIVE_SET. This is the population-match knob (M6).
 void   churn_set_active_target(uint8_t n);
+// M8: runtime retirement-rate boost. mult >= 1.0 shortens the dwell window of newly
+// promoted identities (mult=1.0 = default behavior). The coordinator decays it back to 1.0.
+void   churn_set_accel(float mult);
 void   churn_init(uint32_t now_ms);
 void   churn_tick(uint32_t now_ms);
 size_t churn_active_count(void);                 // non-NULL active slots

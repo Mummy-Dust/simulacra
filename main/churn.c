@@ -13,6 +13,7 @@ static uint32_t      s_phase;
 static uint32_t      s_last_slice_ms;
 static churn_apply_fn s_apply;
 static uint8_t        s_active_target = CHURN_ACTIVE_SET;  // M6: runtime population-match size
+static float          s_accel = 1.0f;             // M8: dwell shortening multiplier (>= 1.0)
 
 void churn_set_active_target(uint8_t n)
 {
@@ -24,6 +25,15 @@ void churn_set_active_target(uint8_t n)
 static uint32_t rnd_range(uint32_t lo, uint32_t hi)
 {
     return lo + (esp_random() % (hi - lo + 1));
+}
+
+void churn_set_accel(float mult) { s_accel = (mult < 1.0f) ? 1.0f : mult; }
+
+static uint32_t dwell_ms(void)
+{
+    uint32_t d = rnd_range(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+    if (s_accel > 1.0f) d = (uint32_t)((float)d / s_accel);
+    return d;
 }
 
 void churn_set_apply(churn_apply_fn fn) { s_apply = fn; }
@@ -54,7 +64,7 @@ void churn_tick(uint32_t now_ms)
             s_active[s] = c;
             if (c) {
                 c->state = ID_ACTIVE;
-                c->active_until_ms = now_ms + rnd_range(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+                c->active_until_ms = now_ms + dwell_ms();
             }
         }
     }

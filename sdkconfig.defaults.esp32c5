@@ -9,6 +9,11 @@
 CONFIG_BT_NIMBLE_EXT_ADV=y
 CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=4
 
+# Observe mode (M5 / the Ward persona): enable the NimBLE observer (scanning) role so
+# ble_gap_ext_disc() can passively profile the ambient environment. The C6 hit this exact
+# gap during M5 — without it, scanning silently returns no reports.
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+
 # Console on UART0: we flash/monitor through the DevKit's UART bridge port
 # (a CH343 USB-serial chip), which — unlike the native USB-Serial-JTAG — does not
 # re-enumerate when the chip resets, so flashing and logging are reliable (esp. in

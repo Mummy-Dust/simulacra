@@ -10,6 +10,7 @@
 #include "probe.h"
 #include "drift.h"
 #include "coexist.h"
+#include "detect.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -460,6 +461,49 @@ static void test_scheduler_budget(void)
 #endif
 }
 
+static void test_detect_epochs(void)
+{
+    detect_reset();
+    // Same device (hash 0xAAAA), 2 sightings each across 3 distinct epochs -> CONFIRM on the 3rd.
+    detect_result_t r = DETECT_NONE;
+    for (uint16_t e = 1; e <= 3; e++) {
+        detect_on_epoch_change(e);
+        r = detect_observe(0xAAAA, -50, 0x0075, e);   // sighting 1: credit pending
+        detect_result_t r2 = detect_observe(0xAAAA, -50, 0x0075, e); // sighting 2: credit
+        if (e < 3) ST_CHECK(r == DETECT_NONE && r2 == DETECT_NONE, "no confirm before 3 epochs");
+        else       ST_CHECK(r2 == DETECT_CONFIRM, "confirm on the 3rd distinct epoch");
+    }
+    ST_CHECK(detect_threat_count() == 1, "one confirmed threat recorded");
+    detect_threat_t t;
+    ST_CHECK(detect_threat_at(0, &t) && t.hash == 0xAAAA && t.epochs >= DETECT_EPOCH_STRIKES,
+             "threat record carries the hash + >=3 epochs");
+    // A subsequent sighting of a confirmed threat returns KNOWN, not CONFIRM.
+    ST_CHECK(detect_observe(0xAAAA, -40, 0x0075, 4) == DETECT_KNOWN, "confirmed threat -> KNOWN");
+}
+
+static void test_detect_presence(void)
+{
+    detect_reset();
+    // A single sighting per epoch never earns a credit -> never confirms.
+    for (uint16_t e = 1; e <= 6; e++) {
+        detect_on_epoch_change(e);
+        ST_CHECK(detect_observe(0xBBBB, -50, 0, e) == DETECT_NONE, "single-sighting epoch earns no credit");
+    }
+    ST_CHECK(detect_threat_count() == 0, "no confirm without meaningful presence");
+}
+
+static void test_detect_no_false_confirm(void)
+{
+    detect_reset();
+    // Many one-shot devices, one sighting each in one epoch: a drive-by pattern, never confirms.
+    detect_on_epoch_change(1);
+    for (uint32_t h = 0; h < 20; h++) ST_CHECK(detect_observe(0x1000 + h, -60, 0, 1) == DETECT_NONE,
+                                               "drive-by device does not confirm");
+    // Two credited sightings but only in ONE epoch: still below the strike bar.
+    detect_observe(0x2222, -50, 0, 1); detect_observe(0x2222, -50, 0, 1);
+    ST_CHECK(detect_threat_count() == 0, "presence in a single epoch is not a follower");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -501,6 +545,9 @@ int churn_selftest_run(void)
     test_drift();
     test_accel_rotation();
     test_scheduler_budget();
+    test_detect_epochs();
+    test_detect_presence();
+    test_detect_no_false_confirm();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

@@ -1,0 +1,39 @@
+<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Simulacra</title><style>
+body{font:15px system-ui;margin:0;background:#0b0e14;color:#c9d1d9}
+h1{font-size:18px;padding:14px 16px;margin:0;background:#161b22}
+.card{background:#161b22;margin:10px;padding:12px 14px;border-radius:8px}
+.k{color:#8b949e}.v{float:right;font-variant-numeric:tabular-nums}
+button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;
+padding:8px 12px;margin:4px 4px 0 0;font-size:14px}
+.t{border-top:1px solid #30363d;padding:6px 0;font-size:13px}
+</style></head><body>
+<h1>Simulacra &mdash; decoy console</h1>
+<div class=card id=stat>loading&hellip;</div>
+<div class=card>
+<button onclick=ctl('detect_toggle')>Toggle detection</button>
+<button onclick=ctl('churn_toggle')>Toggle churn</button>
+<button onclick=ctl('clear_threats')>Clear threats</button>
+<button onclick=ctl('reboot')>Reboot</button>
+</div>
+<div class=card><b>Threat radar</b><div id=threats>&mdash;</div></div>
+<script>
+function row(k,v){return '<div><span class=k>'+k+'</span><span class=v>'+v+'</span></div>'}
+async function tick(){
+ let s=await (await fetch('/api/status')).json();
+ document.getElementById('stat').innerHTML=
+  row('uptime',s.uptime_s+'s')+row('decoy',s.decoy_paused?'PAUSED':'churning')+
+  row('fake devices',s.active_devices+' / '+s.roster_size)+
+  row('active target',s.active_target)+row('probes sent',s.probes_sent)+
+  row('location epoch',s.epoch)+row('observed pop',s.pop_ewma)+
+  row('observations',s.total_obs);
+ let t=s.threats.map(x=>'<div class=t>'+x.hash+' · vendor 0x'+
+  x.vendor.toString(16)+' · '+x.rssi+'dBm · '+x.epochs+' epochs</div>').join('');
+ document.getElementById('threats').innerHTML=t||'no confirmed followers';
+}
+async function ctl(a){await fetch('/api/control',{method:'POST',
+ headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
+ setTimeout(tick,300);}
+tick();setInterval(tick,2000);
+</script></body></html>

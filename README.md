@@ -173,8 +173,37 @@ partition. Both `sdkconfig.defaults.esp32c6` and `sdkconfig.defaults.esp32c5` se
 | `SIMULACRA_OBSERVE=1` | BLE-only ambient observe + model (never advertises) |
 | `CHURN_SELFTEST=1` | On-target host-logic self-test; radio idle, PASS/FAIL serial |
 
-**M9** (next milestone): Wi-Fi observe → model → match: sniff the 802.11 probe environment,
-build a probe-request rf\_model, and generate synthetic probe MACs/SSIDs that match the room.
+### M9 — Passive tracker / follower detection ("Threat Radar")
+
+The default decoy now also **watches for a device that is following you**. While it decoys,
+Simulacra taps the same re-profile scans it already runs and flags a **stable-identity device
+seen with you across multiple distinct RF environments** — a behavioral "this device moves with
+me" signal, not a fingerprint. Detection is **on by default** (`SIMULACRA_DETECT`; build with
+`SIMULACRA_DETECT=0` to compile it out) and adds **no** extra radio or coexistence load — it
+reuses the M8 re-profile windows and drift metric.
+
+- a **location-epoch** advances when a re-profile measures a materially changed environment
+  (drift > 0.45) — an RF-neighbourhood proxy, not GPS;
+- a device seen with **meaningful presence across 3 distinct location-epochs** is a **confirmed
+  follower**;
+- alerts are serial `THREAT confirmed …` (carrying the device's live MAC so you can locate it)
+  plus RSSI-throttled `THREAT locate …` "getting-warmer" updates, and an optional board-gated LED
+  (`SIMULACRA_DETECT_LED_GPIO`, unset = off);
+- **data discipline:** candidates stay hashed in RAM; only **confirmed** threats persist to NVS and
+  retain a live MAC. A **per-install** salt (distinct from observe's per-boot salt) makes the hash
+  stable across sweeps/reboots so "same device across places" is meaningful. The decoy **never
+  flags its own** advertised MACs.
+
+**Honest scope.** M9 catches **non-rotating** followers (e.g. a fixed-MAC beacon slipped into a
+bag). MAC-rotating commercial tags (AirTag / SmartTag / Tile rotate their addresses) are **not**
+caught by this behavioral layer — that is known-tracker fingerprinting, the planned **M10**
+detection layer. "Location" is an RF-drift proxy, and a benign device you are often near may
+occasionally flag (an allowlist is planned). It is a behavioral follower-detector, not a universal
+tracker scanner.
+
+**Deferred:** Wi-Fi observe → model → match — sniff the 802.11 probe environment, build a
+probe-request rf\_model, and generate synthetic probe MACs/SSIDs that match the room (as M5/M6 did
+for BLE; the `SIMULACRA_SNIFF` tool is the seed).
 
 ### Antenna (XIAO ESP32-C6)
 

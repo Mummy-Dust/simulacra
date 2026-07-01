@@ -527,13 +527,15 @@ static void test_detect_ageout(void)
 
 static void test_detect_locate_throttle(void)
 {
-    // Elapsed >= MIN_MS -> due regardless of RSSI.
+    // Elapsed >= MIN_MS -> due regardless of RSSI (periodic heartbeat).
     ST_CHECK(detect_locate_due(-50, -50, DETECT_LOCATE_MIN_MS, 0), "locate due after min interval");
-    // Small RSSI move within the interval -> not due.
-    ST_CHECK(!detect_locate_due(-50, -47, 1000, 0), "small RSSI move within interval is throttled");
-    // Big RSSI move within the interval -> due (getting-warmer).
-    ST_CHECK(detect_locate_due(-40, -50, 1000, 0), "RSSI delta >= threshold emits immediately");
-    ST_CHECK(detect_locate_due(-60, -50, 1000, 0), "RSSI delta is symmetric (getting colder counts)");
+    // Below the hard floor -> never due, even on a big RSSI swing (kills per-packet spam).
+    ST_CHECK(!detect_locate_due(-40, -80, 500, 0), "big RSSI move below floor is rate-capped");
+    // Small RSSI move above the floor but within MIN -> not due.
+    ST_CHECK(!detect_locate_due(-50, -47, DETECT_LOCATE_FLOOR_MS, 0), "small RSSI move above floor is throttled");
+    // Big RSSI move above the floor (but within MIN) -> due (getting-warmer).
+    ST_CHECK(detect_locate_due(-40, -50, DETECT_LOCATE_FLOOR_MS, 0), "RSSI delta above floor emits");
+    ST_CHECK(detect_locate_due(-60, -50, DETECT_LOCATE_FLOOR_MS, 0), "RSSI delta is symmetric (getting colder counts)");
 }
 
 static void test_detect_self_exclude(void)

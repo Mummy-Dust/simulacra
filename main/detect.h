@@ -23,7 +23,10 @@
 #define DETECT_LOCATE_RSSI_DELTA 6      // dB change that emits a locate update
 #endif
 #ifndef DETECT_LOCATE_MIN_MS
-#define DETECT_LOCATE_MIN_MS     10000  // min interval between locate updates
+#define DETECT_LOCATE_MIN_MS     10000  // periodic locate heartbeat interval
+#endif
+#ifndef DETECT_LOCATE_FLOOR_MS
+#define DETECT_LOCATE_FLOOR_MS   1500   // hard rate cap: never emit a locate faster than this per threat
 #endif
 
 typedef enum { DETECT_NONE = 0, DETECT_CONFIRM, DETECT_KNOWN } detect_result_t;

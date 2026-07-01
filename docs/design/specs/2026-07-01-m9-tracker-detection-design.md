@@ -216,8 +216,12 @@ pyserial readers. Two event types:
   ```
   THREAT locate id=3f9c rssi=-42 seen=+12s
   ```
-  Rate-limited: emitted only when RSSI moves ≥ `DETECT_LOCATE_RSSI_DELTA` (6 dB) **or** every
-  `DETECT_LOCATE_MIN_MS` (10 s), whichever first — no per-packet spam.
+  Rate-limited: emitted on the periodic `DETECT_LOCATE_MIN_MS` (10 s) heartbeat, **or** when
+  RSSI moves ≥ `DETECT_LOCATE_RSSI_DELTA` (6 dB) — but never faster than a hard floor
+  `DETECT_LOCATE_FLOOR_MS` (1.5 s) per threat. The floor is required: hardware acceptance showed
+  that without it, an RSSI-noisy device (±20 dB packet-to-packet) trips the delta trigger on
+  nearly every packet, producing per-packet spam. The floor caps locate output to ≤1 line / 1.5 s
+  per threat while keeping "getting-warmer" responsiveness.
 
 **Status LED (optional, board-gated).** Off by default; `SIMULACRA_DETECT_LED_GPIO` unset →
 no LED code compiled. Idle = off; ≥1 active confirmed threat = slow blink. Board-gated for the
@@ -241,8 +245,9 @@ interactive input path; the monitor is read-only via pyserial). Build with
 | Constant | Default | Meaning |
 |---|---|---|
 | `SIMULACRA_DETECT` | 1 | compile-time master enable (detection default-on) |
-| `DETECT_LOCATE_RSSI_DELTA` | 6 dB | min RSSI change to emit a `locate` update |
-| `DETECT_LOCATE_MIN_MS` | 10000 | min interval between `locate` updates |
+| `DETECT_LOCATE_RSSI_DELTA` | 6 dB | RSSI change that emits a `locate` update (above the floor) |
+| `DETECT_LOCATE_MIN_MS` | 10000 | periodic `locate` heartbeat interval |
+| `DETECT_LOCATE_FLOOR_MS` | 1500 | hard rate cap per threat (no per-packet spam; added post-acceptance) |
 | `SIMULACRA_DETECT_LED_GPIO` | *(unset)* | board LED pin; unset = no LED compiled |
 
 ## Error handling

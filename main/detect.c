@@ -126,10 +126,12 @@ void detect_on_epoch_change(uint16_t epoch)
 
 bool detect_locate_due(int8_t rssi, int8_t last_rssi, uint32_t now_ms, uint32_t last_ms)
 {
-    if ((uint32_t)(now_ms - last_ms) >= DETECT_LOCATE_MIN_MS) return true;
+    uint32_t elapsed = (uint32_t)(now_ms - last_ms);
+    if (elapsed >= DETECT_LOCATE_MIN_MS)   return true;    // periodic heartbeat
+    if (elapsed <  DETECT_LOCATE_FLOOR_MS) return false;   // hard rate cap -> no per-packet spam
     int d = (int)rssi - (int)last_rssi;
     if (d < 0) d = -d;
-    return d >= DETECT_LOCATE_RSSI_DELTA;
+    return d >= DETECT_LOCATE_RSSI_DELTA;                  // "getting warmer", but rate-capped
 }
 
 bool detect_mac_in_set(const uint8_t mac[6], const uint8_t set[][6], size_t n)

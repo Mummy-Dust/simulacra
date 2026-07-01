@@ -62,9 +62,10 @@ static const uint8_t CH_24[] = { 1, 6, 11 };
 static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
 #endif
 
-static uint8_t s_macs[PROBE_MAX_PHONES][6];
-static int     s_n;
-static int     s_hop;
+static uint8_t  s_macs[PROBE_MAX_PHONES][6];
+static int      s_n;
+static int      s_hop;
+static uint32_t s_probes_sent;   // cumulative probe requests injected (dashboard telemetry)
 
 int probe_wifi_init(void)
 {
@@ -109,12 +110,15 @@ int probe_inject_burst(uint8_t channel)
         uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
         probe_build_request(s_macs[i], channel, f, &n);
         rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, true);
+        s_probes_sent++;
     }
     if ((esp_random() % PROBE_ROTATE_EVERY) == 0)               // retire one fake phone -> fresh MAC
         probe_random_mac(s_macs[esp_random() % s_n]);
     ESP_LOGW(TAG, "burst ch=%u phones=%d set_ch_rc=%d tx_rc=%d", channel, s_n, crc, rc);
     return rc;
 }
+
+uint32_t probe_total_sent(void) { return s_probes_sent; }
 
 // Dev mode (SIMULACRA_PROBE): forever-loop wrapper over the scheduler core.
 static uint8_t next_channel(void)

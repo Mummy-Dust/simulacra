@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdbool.h>
 #include "churn.h"
 #include "roster.h"
 #include "esp_random.h"
@@ -13,6 +14,7 @@ static uint32_t      s_phase;
 static uint32_t      s_last_slice_ms;
 static churn_apply_fn s_apply;
 static uint8_t        s_active_target = CHURN_ACTIVE_SET;  // M6: runtime population-match size
+static bool           s_paused;                            // webui: pause the churn rotation
 static float          s_accel = 1.0f;             // M8: dwell shortening multiplier (>= 1.0)
 
 void churn_set_active_target(uint8_t n)
@@ -21,6 +23,10 @@ void churn_set_active_target(uint8_t n)
     if (n > CHURN_ACTIVE_SET) n = CHURN_ACTIVE_SET;
     s_active_target = n;
 }
+
+uint8_t churn_active_target(void) { return s_active_target; }
+void    churn_set_paused(bool paused) { s_paused = paused; }
+bool    churn_paused(void) { return s_paused; }
 
 static uint32_t rnd_range(uint32_t lo, uint32_t hi)
 {
@@ -55,6 +61,7 @@ void churn_init(uint32_t now_ms)
 
 void churn_tick(uint32_t now_ms)
 {
+    if (s_paused) return;                          // webui pause: hold the current on-air set
     for (int s = 0; s < s_active_target; s++) {
         identity_t *id = s_active[s];
         if (id && now_ms >= id->active_until_ms) {

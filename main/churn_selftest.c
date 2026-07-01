@@ -581,6 +581,39 @@ static void test_detect_nvs(void)
     ST_CHECK(s1 == s2 && s1 != 0, "per-install salt is stable and non-zero");
 }
 
+static void test_churn_pause(void)
+{
+    roster_init();
+    churn_set_apply(noop_apply);
+    churn_set_paused(false);
+    churn_init(0);
+    // Force slot 0 to expire, but pause first: a paused tick must NOT rotate it.
+    const identity_t *before = churn_active_at(0);
+    ((identity_t *)before)->active_until_ms = 1000;
+    churn_set_paused(true);
+    churn_tick(2000);
+    ST_CHECK(churn_active_at(0) == before, "paused churn does not rotate identities");
+    ST_CHECK(churn_paused(), "pause flag reads back true");
+    // Resume: the expired identity now gets replaced.
+    churn_set_paused(false);
+    churn_tick(3000);
+    ST_CHECK(churn_active_at(0) != before, "resumed churn rotates the expired identity");
+}
+
+static void test_detect_clear(void)
+{
+    detect_reset();
+    for (uint16_t e = 1; e <= 3; e++) { detect_on_epoch_change(e);
+        detect_observe(0xFEED, -44, 0x004C, e); detect_observe(0xFEED, -44, 0x004C, e); }
+    ST_CHECK(detect_threat_count() == 1, "threat confirmed before clear");
+    detect_save_nvs();
+    detect_clear_threats();
+    ST_CHECK(detect_threat_count() == 0, "clear empties the RAM threat table");
+    detect_reset();
+    detect_load_nvs();   // blob was erased -> returns non-zero; the point is nothing is restored
+    ST_CHECK(detect_threat_count() == 0, "cleared threats do not come back from NVS");
+}
+
 static void test_webui_json(void)
 {
     webui_status_t st = {0};
@@ -650,6 +683,7 @@ int churn_selftest_run(void)
     test_probe_frame();
     test_drift();
     test_accel_rotation();
+    test_churn_pause();
     test_scheduler_budget();
     test_detect_epochs();
     test_detect_presence();
@@ -658,6 +692,7 @@ int churn_selftest_run(void)
     test_detect_locate_throttle();
     test_detect_self_exclude();
     test_detect_nvs();
+    test_detect_clear();
     test_webui_json();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",

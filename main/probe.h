@@ -24,6 +24,8 @@ void   probe_pool_init(void);
 int    probe_inject_burst(uint8_t channel);
 // Number of fake phones in the pool (persona-sized).
 int    probe_phone_count(void);
+// Cumulative count of probe requests injected since boot (dashboard telemetry).
+uint32_t probe_total_sent(void);
 // Channel hop sets for the scheduler: fills *out, returns count. 5g returns 0 on 2.4-only personas.
 size_t probe_channels_24(const uint8_t **out);
 size_t probe_channels_5g(const uint8_t **out);

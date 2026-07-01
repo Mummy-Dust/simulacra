@@ -155,6 +155,18 @@ bool detect_threat_at(size_t i, detect_threat_t *out)
 #define DETECT_KEY_THR   "detect_thr"
 #define DETECT_THR_MAGIC 0x4D394454u       // 'M9DT'
 
+void detect_clear_threats(void)
+{
+    memset(s_threat, 0, sizeof(s_threat));
+    s_threat_n = 0;
+    nvs_handle_t h;                          // wipe the persisted blob; keep the salt key
+    if (nvs_open(DETECT_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_key(h, DETECT_KEY_THR);    // NOT_FOUND is fine (nothing persisted yet)
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
 bool detect_drain_pending(detect_threat_t *out)
 {
     if (!s_pending) return false;

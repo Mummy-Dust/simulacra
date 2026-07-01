@@ -59,5 +59,7 @@ bool            detect_threat_at(size_t i, detect_threat_t *out);
 uint32_t        detect_load_salt(void);        // load-or-create the per-install detection salt
 int             detect_save_nvs(void);         // persist confirmed threats; 0 = ok
 int             detect_load_nvs(void);         // restore confirmed threats; 0 = ok
+// Clear the RAM threat table AND wipe the persisted threats (keeps the salt).
+void            detect_clear_threats(void);
 // Drain the newly-confirmed-threat flag (coexist_task): true + *out once per confirmation.
 bool            detect_drain_pending(detect_threat_t *out);

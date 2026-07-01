@@ -51,6 +51,7 @@
 #include "probe.h"
 #include "sniff.h"
 #include "coexist.h"
+#include "detect.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -65,6 +66,11 @@
 // (never advertises). Takes precedence over CHURN_SELFTEST when set.
 #ifndef SIMULACRA_OBSERVE
 #define SIMULACRA_OBSERVE 0
+#endif
+
+// Threat Radar (M9): passive follower detection alongside the decoy. Default ON.
+#ifndef SIMULACRA_DETECT
+#define SIMULACRA_DETECT 1
 #endif
 
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
@@ -112,6 +118,8 @@ static void simulacra_task(void *arg)
     }
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
+    detect_reset();
+    detect_set_enabled(SIMULACRA_DETECT);   // M9 master enable (default on); coexist wires the rest
     coexist_start();
     for (;;) {                                          // this task idles; coexist runs the show
         ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());

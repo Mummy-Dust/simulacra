@@ -54,12 +54,19 @@ static uint32_t s_wifi_ctr;
 static uint32_t s_accel_until_ms;         // 0 = not accelerating
 
 #if CONFIG_IDF_TARGET_ESP32C5
-// C5 hard exclusion: tuning to 5 GHz means BLE (2.4 GHz) cannot TX. Batch a quick sweep
-// across the 5 GHz set, then immediately retune to 2.4 GHz so BLE adv resumes.
+// C5 hard exclusion: tuning to 5 GHz means BLE (2.4 GHz) cannot TX. Inject a small ROTATING
+// subset of the 5 GHz set per excursion (injecting all 8 back-to-back floods the Wi-Fi TX
+// buffer -> ESP_ERR_NO_MEM/257 on the later channels), draining between channels, then retune
+// to 2.4 GHz so BLE adv resumes. Full 5 GHz coverage rolls over several excursions (still sparse).
+#define COEX_5G_PER_EXCURSION 2
 static void coexist_5g_excursion(void)
 {
     const uint8_t *ch5; size_t n5 = probe_channels_5g(&ch5);
-    for (size_t i = 0; i < n5; i++) probe_inject_burst(ch5[i]);
+    static size_t idx;
+    for (int k = 0; k < COEX_5G_PER_EXCURSION && n5; k++, idx++) {
+        if (k) vTaskDelay(pdMS_TO_TICKS(3));   // let the TX buffer drain between channels
+        probe_inject_burst(ch5[idx % n5]);
+    }
     const uint8_t *ch24; size_t n24 = probe_channels_24(&ch24);
     if (n24) esp_wifi_set_channel(ch24[0], WIFI_SECOND_CHAN_NONE);   // back to 2.4 GHz
 }

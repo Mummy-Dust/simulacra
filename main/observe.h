@@ -33,3 +33,9 @@ void              observe_reprofile_init(uint32_t boot_salt);
 void              observe_window(uint32_t duration_ms);
 // The current persistent model (RAM).
 const rf_model_t *observe_model(void);
+
+// --- report tap (M9): observe publishes each raw report before hashing it away ---
+typedef void (*observe_report_cb_t)(const uint8_t mac[6], int8_t rssi, uint16_t company_id);
+// Register a callback fired for every scan report (mac, rssi, company) BEFORE the MAC is
+// hashed/dropped. NULL disables. Observe stays decoupled from any consumer.
+void observe_set_report_cb(observe_report_cb_t cb);

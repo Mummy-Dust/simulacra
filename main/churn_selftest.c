@@ -11,6 +11,7 @@
 #include "drift.h"
 #include "coexist.h"
 #include "detect.h"
+#include "webui.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -580,6 +581,35 @@ static void test_detect_nvs(void)
     ST_CHECK(s1 == s2 && s1 != 0, "per-install salt is stable and non-zero");
 }
 
+static void test_webui_json(void)
+{
+    webui_status_t st = {0};
+    st.uptime_s = 123; st.decoy_paused = false; st.wifi_config_mode = true;
+    st.active_devices = 5; st.roster_size = 64; st.probes_sent = 4096;
+    st.epoch = 7; st.pop_ewma = 12; st.total_obs = 999; st.active_target = 9;
+    st.threat_count = 1;
+    st.threats[0].hash = 0xD00D; st.threats[0].vendor = 0x004C;
+    st.threats[0].best_rssi = -44; st.threats[0].epochs = 3;
+    st.threats[0].first_epoch = 2; st.threats[0].last_epoch = 7;
+
+    char buf[1024];
+    int n = webui_build_status_json(buf, sizeof(buf), &st);
+    ST_CHECK(n > 0, "status json serializes");
+    ST_CHECK(strstr(buf, "\"uptime_s\":123") != NULL, "json carries uptime");
+    ST_CHECK(strstr(buf, "\"active_devices\":5") != NULL, "json carries active count");
+    ST_CHECK(strstr(buf, "\"probes_sent\":4096") != NULL, "json carries probe count");
+    ST_CHECK(strstr(buf, "\"pop_ewma\":12") != NULL, "json carries population aggregate");
+    ST_CHECK(strstr(buf, "\"threat_count\":1") != NULL, "json carries threat count");
+    ST_CHECK(strstr(buf, "d00d") != NULL || strstr(buf, "D00D") != NULL,
+             "json carries the threat hash");
+    ST_CHECK(strstr(buf, ":") != NULL && buf[0] == '{', "json is an object");
+
+    // Truncation: an undersized buffer must fail cleanly (no overrun, returns -1).
+    char tiny[16];
+    ST_CHECK(webui_build_status_json(tiny, sizeof(tiny), &st) == -1,
+             "undersized buffer reports truncation");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -628,6 +658,7 @@ int churn_selftest_run(void)
     test_detect_locate_throttle();
     test_detect_self_exclude();
     test_detect_nvs();
+    test_webui_json();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

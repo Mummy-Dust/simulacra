@@ -52,6 +52,7 @@
 #include "sniff.h"
 #include "coexist.h"
 #include "detect.h"
+#include "webui.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -71,6 +72,12 @@
 // Threat Radar (M9): passive follower detection alongside the decoy. Default ON.
 #ifndef SIMULACRA_DETECT
 #define SIMULACRA_DETECT 1
+#endif
+
+// Web UI: on-demand open config AP for ~2 min at boot, then hand Wi-Fi to the decoy.
+// Local MVP (open AP, no auth) -- default ON for now.
+#ifndef SIMULACRA_WEBUI
+#define SIMULACRA_WEBUI 1
 #endif
 
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
@@ -120,7 +127,14 @@ static void simulacra_task(void *arg)
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
     detect_reset();
     detect_set_enabled(SIMULACRA_DETECT);   // M9 master enable (default on); coexist wires the rest
+#if SIMULACRA_WEBUI
+    coexist_set_wifi_enabled(false);   // keep Wi-Fi free for the config AP
+    coexist_start();                    // BLE churn + detection start now
+    webui_run_config_window(120000);    // open AP + dashboard for 2 min (BLE keeps churning)
+    coexist_set_wifi_enabled(true);     // AP down -> Wi-Fi STA up, probe injection resumes
+#else
     coexist_start();
+#endif
     for (;;) {                                          // this task idles; coexist runs the show
         ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());
         vTaskDelay(pdMS_TO_TICKS(5000));

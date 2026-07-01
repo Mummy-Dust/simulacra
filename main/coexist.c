@@ -52,6 +52,7 @@ static const char *TAG = "coexist";
 #define SHADE_ACCEL_DECAY_MS 120000u       // ~2 min linear decay back to 1.0
 
 static bool     s_wifi_ok;
+static bool     s_wifi_allowed = true;    // webui: false defers Wi-Fi (STA) so the config AP can own it
 static uint32_t s_wifi_ctr;
 static uint32_t s_accel_until_ms;         // 0 = not accelerating
 
@@ -250,12 +251,28 @@ static void coexist_task(void *arg)
     }
 }
 
+void coexist_set_wifi_enabled(bool en)
+{
+    if (en && !s_wifi_ok) {                       // bring Wi-Fi (STA) up now that the AP is down
+        int rc = probe_wifi_init();
+        s_wifi_ok = (rc == 0);
+        if (s_wifi_ok) probe_pool_init();
+        ESP_LOGW(TAG, "coexist: wifi enabled post-config rc=%d", rc);
+    }
+    s_wifi_allowed = en;
+}
+
 void coexist_start(void)
 {
-    int rc = probe_wifi_init();
-    s_wifi_ok = (rc == 0);
-    if (s_wifi_ok) { probe_pool_init(); ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
-    else           { ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
+    if (s_wifi_allowed) {
+        int rc = probe_wifi_init();
+        s_wifi_ok = (rc == 0);
+        if (s_wifi_ok) { probe_pool_init(); ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
+        else           { ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
+    } else {
+        s_wifi_ok = false;
+        ESP_LOGW(TAG, "coexist: wifi deferred (config window) -> BLE-only for now");
+    }
     observe_reprofile_init(esp_random());
     s_detect_salt = detect_load_salt();          // M9: stable per-install salt
     detect_load_nvs();                            // restore previously-confirmed threats (best-effort)

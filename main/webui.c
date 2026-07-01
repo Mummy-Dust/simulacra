@@ -148,8 +148,16 @@ static void dns_task(void *arg)   // answer every A-query with 192.168.4.1 (capt
 
 void webui_run_config_window(uint32_t timeout_ms)
 {
+    // --- Wi-Fi/netif/event init: coexist deferred its STA bring-up, so we own the stack
+    //     here and fully deinit on teardown, leaving it clean for probe_wifi_init (STA). ---
+    esp_netif_init();
+    esp_event_loop_create_default();            // ESP_ERR_INVALID_STATE if already up: fine
+    esp_netif_t *ap_if = esp_netif_create_default_wifi_ap();
+    wifi_init_config_t icfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&icfg));
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);     // don't persist AP config to NVS
+
     // --- open SoftAP, randomized SSID suffix so multiple units don't collide ---
-    esp_netif_create_default_wifi_ap();
     wifi_config_t ap = {0};
     int sl = snprintf((char*)ap.ap.ssid, sizeof(ap.ap.ssid),
                       "simulacra-%04x", (unsigned)(esp_random() & 0xFFFF));
@@ -158,7 +166,7 @@ void webui_run_config_window(uint32_t timeout_ms)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGW(WTAG, "config AP up: SSID=%s http://192.168.4.1/ (%u s window)",
+    ESP_LOGW(WTAG, "config AP up: SSID=%s http://192.168.4.1/ (%u s idle timeout, stays up while connected)",
              ap.ap.ssid, (unsigned)(timeout_ms/1000));
 
     s_dns_run = true;
@@ -174,16 +182,26 @@ void webui_run_config_window(uint32_t timeout_ms)
         httpd_register_uri_handler(srv, &(httpd_uri_t){ .uri="/*", .method=HTTP_GET, .handler=h_redirect });
     }
 
+    // Stay up while a client is connected; only apply timeout_ms as an *idle* timeout, so a
+    // connected session is never torn down mid-use (re-arm the countdown on each connect).
     uint32_t start = (uint32_t)(esp_timer_get_time()/1000);
     s_window_done = false;
-    while (!s_window_done && (uint32_t)(esp_timer_get_time()/1000) - start < timeout_ms)
+    for (;;) {
+        uint32_t now = (uint32_t)(esp_timer_get_time()/1000);
+        wifi_sta_list_t sta = {0};
+        esp_wifi_ap_get_sta_list(&sta);
+        if (sta.num > 0) start = now;              // a client is connected -> keep the window open
+        if (s_window_done) break;
+        if (now - start >= timeout_ms) break;      // idle for timeout_ms -> hand Wi-Fi to the decoy
         vTaskDelay(pdMS_TO_TICKS(200));
+    }
 
-    // --- teardown: HTTP, DNS, AP, netif ---
+    // --- teardown: HTTP, DNS, then fully deinit Wi-Fi so probe_wifi_init can re-init to STA ---
     if (srv) httpd_stop(srv);
     s_dns_run = false;
     vTaskDelay(pdMS_TO_TICKS(1200));            // let dns_task hit its recv timeout and exit
     esp_wifi_stop();
-    esp_wifi_set_mode(WIFI_MODE_NULL);
+    esp_wifi_deinit();                          // leave nothing inited (probe_wifi_init re-inits fresh)
+    esp_netif_destroy_default_wifi(ap_if);
     ESP_LOGW(WTAG, "config window closed -> handing Wi-Fi to the decoy");
 }

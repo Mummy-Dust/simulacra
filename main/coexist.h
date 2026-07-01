@@ -7,6 +7,11 @@
 // BLE roster/churn are initialized and the NimBLE host is synced.
 void coexist_start(void);
 
+// Defer/allow the Wi-Fi (STA) side of the decoy. Call with false BEFORE coexist_start to
+// keep the Wi-Fi interface free for the config AP; call true afterwards to bring up
+// probe_wifi_init (STA) and resume probe bursts. BLE churn is unaffected either way.
+void coexist_set_wifi_enabled(bool en);
+
 // --- testable scheduler core (pure; no radio) ---
 typedef struct {
     uint32_t wifi_period_ms;        // Wi-Fi burst cadence

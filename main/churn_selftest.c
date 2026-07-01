@@ -504,6 +504,80 @@ static void test_detect_no_false_confirm(void)
     ST_CHECK(detect_threat_count() == 0, "presence in a single epoch is not a follower");
 }
 
+static void test_detect_ageout(void)
+{
+    detect_reset();
+    // Device seen once at epoch 1, then absent. After AGE_OUT_EPOCHS it must be forgotten,
+    // so a later re-appearance starts fresh (never accumulates a stale credit).
+    detect_on_epoch_change(1);
+    detect_observe(0xCAFE, -50, 0, 1); detect_observe(0xCAFE, -50, 0, 1);   // credited epoch 1
+    for (uint16_t e = 2; e <= 1 + DETECT_AGE_OUT_EPOCHS; e++) detect_on_epoch_change(e);
+    // Now re-appear: because it was aged out, it must take a full fresh run to confirm.
+    uint16_t e0 = 2 + DETECT_AGE_OUT_EPOCHS;
+    detect_result_t r = DETECT_NONE;
+    for (uint16_t e = e0; e < e0 + 2; e++) { detect_on_epoch_change(e);
+        detect_observe(0xCAFE, -50, 0, e); r = detect_observe(0xCAFE, -50, 0, e); }
+    ST_CHECK(r == DETECT_NONE, "aged-out candidate does not carry its old epoch credit");
+
+    // LRU bound: pushing many distinct devices never overflows the table.
+    detect_reset();
+    for (uint32_t h = 0; h < DETECT_MAX_CANDIDATES * 3u; h++) detect_observe(0x8000 + h, -60, 0, 1);
+    ST_CHECK(detect_threat_count() == 0, "LRU churn of distinct one-shot devices confirms nothing");
+}
+
+static void test_detect_locate_throttle(void)
+{
+    // Elapsed >= MIN_MS -> due regardless of RSSI.
+    ST_CHECK(detect_locate_due(-50, -50, DETECT_LOCATE_MIN_MS, 0), "locate due after min interval");
+    // Small RSSI move within the interval -> not due.
+    ST_CHECK(!detect_locate_due(-50, -47, 1000, 0), "small RSSI move within interval is throttled");
+    // Big RSSI move within the interval -> due (getting-warmer).
+    ST_CHECK(detect_locate_due(-40, -50, 1000, 0), "RSSI delta >= threshold emits immediately");
+    ST_CHECK(detect_locate_due(-60, -50, 1000, 0), "RSSI delta is symmetric (getting colder counts)");
+}
+
+static void test_detect_self_exclude(void)
+{
+    const uint8_t set[3][6] = {
+        {0x01,0x02,0x03,0x04,0x05,0xC0},
+        {0x11,0x12,0x13,0x14,0x15,0xC1},
+        {0x21,0x22,0x23,0x24,0x25,0xC2},
+    };
+    const uint8_t self_mac[6] = {0x11,0x12,0x13,0x14,0x15,0xC1};
+    const uint8_t other[6]    = {0xAA,0xBB,0xCC,0xDD,0xEE,0xC3};
+    ST_CHECK(detect_mac_in_set(self_mac, set, 3), "our own active MAC is recognized (excluded)");
+    ST_CHECK(!detect_mac_in_set(other, set, 3),   "a foreign MAC is not excluded");
+    ST_CHECK(!detect_mac_in_set(self_mac, set, 0), "empty set excludes nothing");
+}
+
+static void test_detect_nvs(void)
+{
+    detect_reset();
+    // Confirm a threat, then round-trip the threat table through NVS.
+    for (uint16_t e = 1; e <= 3; e++) { detect_on_epoch_change(e);
+        detect_observe(0xD00D, -44, 0x004C, e); detect_observe(0xD00D, -44, 0x004C, e); }
+    ST_CHECK(detect_threat_count() == 1, "threat confirmed before persist");
+
+    // Pending-confirm drains exactly once.
+    detect_threat_t p;
+    ST_CHECK(detect_drain_pending(&p) && p.hash == 0xD00D, "pending confirm drains the new threat");
+    ST_CHECK(!detect_drain_pending(&p), "pending flag clears after draining");
+
+    ST_CHECK(detect_save_nvs() == 0, "threats save to NVS");
+    detect_reset();
+    ST_CHECK(detect_threat_count() == 0, "reset clears RAM threats");
+    ST_CHECK(detect_load_nvs() == 0, "threats load from NVS");
+    ST_CHECK(detect_threat_count() == 1, "one threat restored");
+    detect_threat_t t;
+    ST_CHECK(detect_threat_at(0, &t) && t.hash == 0xD00D && t.vendor == 0x004C && t.epochs >= 3,
+             "restored threat round-trips hash/vendor/epochs");
+
+    // Salt persists (stable across a load), so cross-boot hashes are stable by design.
+    uint32_t s1 = detect_load_salt();
+    uint32_t s2 = detect_load_salt();
+    ST_CHECK(s1 == s2 && s1 != 0, "per-install salt is stable and non-zero");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -548,6 +622,10 @@ int churn_selftest_run(void)
     test_detect_epochs();
     test_detect_presence();
     test_detect_no_false_confirm();
+    test_detect_ageout();
+    test_detect_locate_throttle();
+    test_detect_self_exclude();
+    test_detect_nvs();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

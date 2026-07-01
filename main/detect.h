@@ -44,6 +44,17 @@ void            detect_set_enabled(bool en);
 bool            detect_enabled(void);
 detect_result_t detect_observe(uint32_t hash, int8_t rssi, uint16_t vendor, uint16_t epoch);
 void            detect_on_epoch_change(uint16_t epoch);
+// Locate-throttle (pure): should a `THREAT locate` line be emitted for this sighting?
+bool            detect_locate_due(int8_t rssi, int8_t last_rssi, uint32_t now_ms, uint32_t last_ms);
+// Self-exclusion (pure): is `mac` present in the given set of `n` 6-byte MACs?
+bool            detect_mac_in_set(const uint8_t mac[6], const uint8_t set[][6], size_t n);
 
 size_t          detect_threat_count(void);
 bool            detect_threat_at(size_t i, detect_threat_t *out);
+
+// --- persistence (NVS namespace "splinter"; called by the coordinator, not the decision path) ---
+uint32_t        detect_load_salt(void);        // load-or-create the per-install detection salt
+int             detect_save_nvs(void);         // persist confirmed threats; 0 = ok
+int             detect_load_nvs(void);         // restore confirmed threats; 0 = ok
+// Drain the newly-confirmed-threat flag (coexist_task): true + *out once per confirmation.
+bool            detect_drain_pending(detect_threat_t *out);

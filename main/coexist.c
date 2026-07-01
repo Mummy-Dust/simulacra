@@ -164,6 +164,27 @@ static void coexist_on_report(const uint8_t mac[6], int8_t rssi, uint16_t compan
     }
 }
 
+// Optional status LED: slow-blink while >=1 confirmed threat is active. Board-gated -- compiled
+// out unless SIMULACRA_DETECT_LED_GPIO is defined (LED wiring differs across boards).
+#ifdef SIMULACRA_DETECT_LED_GPIO
+#include "driver/gpio.h"
+static void coexist_detect_led_init(void)
+{
+    gpio_reset_pin((gpio_num_t)SIMULACRA_DETECT_LED_GPIO);
+    gpio_set_direction((gpio_num_t)SIMULACRA_DETECT_LED_GPIO, GPIO_MODE_OUTPUT);
+}
+static void coexist_detect_led_tick(uint32_t now_ms)
+{
+    static uint32_t last; static int on;
+    if (detect_threat_count() == 0) { gpio_set_level((gpio_num_t)SIMULACRA_DETECT_LED_GPIO, 0); return; }
+    if (now_ms - last >= 500) { on = !on; last = now_ms;                 // slow blink = threat active
+        gpio_set_level((gpio_num_t)SIMULACRA_DETECT_LED_GPIO, on); }
+}
+#else
+static inline void coexist_detect_led_init(void) {}
+static inline void coexist_detect_led_tick(uint32_t now_ms) { (void)now_ms; }
+#endif
+
 static void coexist_reprofile(const coexist_persona_t *p)
 {
     rf_model_t prev = *observe_model();                     // snapshot pre-update
@@ -217,6 +238,7 @@ static void coexist_task(void *arg)
             int rc = detect_save_nvs();
             ESP_LOGW(TAG, "THREAT persisted id=%04x rc=%d", (unsigned)(nt.hash & 0xFFFF), rc);
         }
+        coexist_detect_led_tick(now);
         coexist_due_t d = coexist_due(p, now, &last_wifi, &last_repro);
         if (d.fire_wifi && s_wifi_ok) {
             const uint8_t *ch24; size_t n24 = probe_channels_24(&ch24);
@@ -238,6 +260,7 @@ void coexist_start(void)
     s_detect_salt = detect_load_salt();          // M9: stable per-install salt
     detect_load_nvs();                            // restore previously-confirmed threats (best-effort)
     observe_set_report_cb(coexist_on_report);     // subscribe the detector to raw reports
+    coexist_detect_led_init();
     BaseType_t ok = xTaskCreate(coexist_task, "coexist", 8192, NULL, 5, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "coexist_task create failed -> BLE-only emergency loop");

@@ -41,6 +41,8 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "roster.h"
 #include "rf_model.h"
 #include "esp_random.h"
+#include "detect.h"
+#include <string.h>
 
 static const char *TAG = "coexist";
 #define OBS_REPROFILE_MS   15000
@@ -52,6 +54,16 @@ static const char *TAG = "coexist";
 static bool     s_wifi_ok;
 static uint32_t s_wifi_ctr;
 static uint32_t s_accel_until_ms;         // 0 = not accelerating
+
+// --- M9 detection wiring ---
+#define DETECT_EPOCH_DRIFT 0.45f           // detection-owned; separate from anti-entourage thresh
+#define COEX_SELF_MAX      16              // max decoy active-set MACs to self-exclude (Ward ceiling)
+static uint16_t s_epoch;                   // location-epoch counter
+static uint32_t s_detect_salt;             // per-install salt (stable across sweeps/reboots)
+static struct { uint32_t hash; int8_t last_rssi; uint32_t last_ms; bool used; }
+       s_locate[DETECT_MAX_THREATS];       // per-confirmed-threat locate-throttle state
+
+uint16_t coexist_current_epoch(void) { return s_epoch; }
 
 #if CONFIG_IDF_TARGET_ESP32C5
 // C5 hard exclusion: tuning to 5 GHz means BLE (2.4 GHz) cannot TX. Inject a small ROTATING
@@ -89,6 +101,69 @@ static void coexist_handle_drift(const coexist_persona_t *p, float score)
 #endif
 }
 
+// --- M9 detector wiring adapter (impure glue; keeps detect.c pure) ---
+
+// Build the self-exclusion set from the churn active identities (our own live decoy MACs).
+static size_t coexist_self_macs(uint8_t out[][6], size_t max)
+{
+    size_t n = 0;
+    for (size_t s = 0; s < churn_active_count() && n < max; s++) {
+        const identity_t *id = churn_active_at(s);
+        if (id) memcpy(out[n++], id->addr, 6);
+    }
+    return n;
+}
+
+// M9 per-install-salted FNV-1a over the MAC (stable across sweeps/reboots -- deliberate).
+static uint32_t coexist_detect_hash(const uint8_t mac[6])
+{
+    uint32_t h = 2166136261u ^ s_detect_salt;
+    for (int i = 0; i < 6; i++) { h ^= mac[i]; h *= 16777619u; }
+    return h;
+}
+
+static void coexist_locate_emit(uint32_t hash, uint32_t id_prefix, int8_t rssi, uint32_t now_ms)
+{
+    int slot = -1;
+    for (size_t i = 0; i < DETECT_MAX_THREATS; i++) {
+        if (s_locate[i].used && s_locate[i].hash == hash) { slot = (int)i; break; }
+        if (slot < 0 && !s_locate[i].used) slot = (int)i;
+    }
+    if (slot < 0) return;
+    if (!s_locate[slot].used) {                       // first sighting since confirm -> emit + seed
+        s_locate[slot].used = true; s_locate[slot].hash = hash;
+        s_locate[slot].last_rssi = rssi; s_locate[slot].last_ms = now_ms;
+        ESP_LOGW(TAG, "THREAT locate id=%04x rssi=%d seen=+0s", (unsigned)id_prefix, rssi);
+        return;
+    }
+    if (detect_locate_due(rssi, s_locate[slot].last_rssi, now_ms, s_locate[slot].last_ms)) {
+        ESP_LOGW(TAG, "THREAT locate id=%04x rssi=%d seen=+%us", (unsigned)id_prefix, rssi,
+                 (unsigned)((now_ms - s_locate[slot].last_ms) / 1000));
+        s_locate[slot].last_rssi = rssi; s_locate[slot].last_ms = now_ms;
+    }
+}
+
+// Registered on observe: fires for every raw report (NimBLE host-task context).
+static void coexist_on_report(const uint8_t mac[6], int8_t rssi, uint16_t company)
+{
+    if (!detect_enabled()) return;
+    uint8_t self[COEX_SELF_MAX][6]; size_t nself = coexist_self_macs(self, COEX_SELF_MAX);
+    if (detect_mac_in_set(mac, self, nself)) return;        // never flag our own decoys
+
+    uint32_t hash = coexist_detect_hash(mac);
+    uint16_t epoch = s_epoch;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    detect_result_t r = detect_observe(hash, rssi, company, epoch);
+    if (r == DETECT_CONFIRM) {
+        ESP_LOGW(TAG, "THREAT confirmed id=%04x vendor=0x%04x epochs=%u rssi=%d "
+                      "mac=%02X:%02X:%02X:%02X:%02X:%02X",
+                 (unsigned)(hash & 0xFFFF), company, DETECT_EPOCH_STRIKES, rssi,
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else if (r == DETECT_KNOWN) {
+        coexist_locate_emit(hash, hash & 0xFFFF, rssi, now);
+    }
+}
+
 static void coexist_reprofile(const coexist_persona_t *p)
 {
     rf_model_t prev = *observe_model();                     // snapshot pre-update
@@ -100,6 +175,11 @@ static void coexist_reprofile(const coexist_persona_t *p)
         return;
     }
     float score = drift_score(&prev, cur);
+    if (prev.sweeps > 0 && score > DETECT_EPOCH_DRIFT) {    // materially new room -> new location-epoch
+        s_epoch++;
+        detect_on_epoch_change(s_epoch);
+        ESP_LOGW(TAG, "epoch -> %u (drift=%.3f)", (unsigned)s_epoch, score);
+    }
     roster_reseed_idle(cur);                                // fresh identities into the IDLE pool
     uint8_t at = generate_active_target(cur);
     churn_set_active_target(at);                            // resize to the new population
@@ -132,6 +212,11 @@ static void coexist_task(void *arg)
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         churn_tick(now);                                // BLE ext-adv runs continuously under coex
         coexist_decay_accel();
+        detect_threat_t nt;
+        if (detect_drain_pending(&nt)) {                // persist a new confirmation off the BLE callback
+            int rc = detect_save_nvs();
+            ESP_LOGW(TAG, "THREAT persisted id=%04x rc=%d", (unsigned)(nt.hash & 0xFFFF), rc);
+        }
         coexist_due_t d = coexist_due(p, now, &last_wifi, &last_repro);
         if (d.fire_wifi && s_wifi_ok) {
             const uint8_t *ch24; size_t n24 = probe_channels_24(&ch24);
@@ -150,6 +235,9 @@ void coexist_start(void)
     if (s_wifi_ok) { probe_pool_init(); ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
     else           { ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
     observe_reprofile_init(esp_random());
+    s_detect_salt = detect_load_salt();          // M9: stable per-install salt
+    detect_load_nvs();                            // restore previously-confirmed threats (best-effort)
+    observe_set_report_cb(coexist_on_report);     // subscribe the detector to raw reports
     BaseType_t ok = xTaskCreate(coexist_task, "coexist", 8192, NULL, 5, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "coexist_task create failed -> BLE-only emergency loop");

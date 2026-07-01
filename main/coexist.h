@@ -24,3 +24,6 @@ typedef struct { bool fire_wifi; bool fire_reprofile; } coexist_due_t;
 // fires. Pure (no radio); shared by the coordinator task and the self-test.
 coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
                           uint32_t *last_wifi_ms, uint32_t *last_reprofile_ms);
+
+// Current location-epoch (M9): advanced when a re-profile measures a materially changed room.
+uint16_t coexist_current_epoch(void);

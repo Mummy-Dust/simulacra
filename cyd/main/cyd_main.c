@@ -156,7 +156,7 @@ static bool touched(void){
 // CYD-side freshness overlay: drawn as one extra band over the top of the just-rendered view,
 // so the shared renderer stays untouched. Not shown while data is fresh (<=5s old).
 static void draw_freshness_overlay(uint16_t *band, uint32_t now){
-    if (s_status_ms != 0 && (uint32_t)(now - s_status_ms) <= 5000) return;
+    if (s_status_ms != 0 && (uint32_t)(now - s_status_ms) <= 8000) return;
     radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
     radar_gfx_clear(&g, 0x0000);
     if (s_status_ms == 0) radar_gfx_text(&g, 56, 16, "SEARCHING...", 0xFFFF);
@@ -179,7 +179,7 @@ void app_main(void)
         uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
         if (touched()) { radar_ui_on_input(&ui, now); send_request(); last_req=now; }
         // keep asking every ~3s while the screen is awake so data stays fresh
-        if (ui.backlight_on && now-last_req > 3000) { send_request(); last_req=now; }
+        if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
         radar_ui_on_tick(&ui, now, s_status.threat_count);
         if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
         if (ui.backlight_on){

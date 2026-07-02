@@ -3,11 +3,24 @@
 #include "esp_lcd_ili9341.h"        // swap to esp_lcd_panel_st7789 if Step 1 says ST7789
 #include "driver/spi_master.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "radar_render.h"
+#include "radar_gfx.h"
+#include "radar_wire.h"
+#include "radar_ui.h"
+#include "radar_key.h"
+#include "esp_wifi.h"
+#include "esp_now.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+#include <string.h>
 
 #define PIN_MOSI 13
 #define PIN_SCK  14
@@ -17,6 +30,8 @@
 #define PIN_BL   21
 #define LCD_W    240
 #define LCD_H    320
+#define TOUCH_IRQ_GPIO 36           // XPT2046 T_IRQ, active-LOW on press (pulled high externally)
+#define ESPNOW_CH 1
 static const char *TAG = "cyd";
 static esp_lcd_panel_handle_t s_panel;
 static SemaphoreHandle_t s_flush_done;
@@ -69,16 +84,109 @@ static bool cyd_panel_init(esp_lcd_panel_handle_t *out)
     return true;
 }
 
+static void set_backlight(bool on)
+{
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? 255 : 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
+// ---- ESP-NOW radar link (STA on a fixed channel, broadcast, AES-GCM via radar_wire) ----
+static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+static radar_wire_status_t s_status;             // last good status
+static volatile uint32_t   s_status_ms;          // when it arrived (0 = never)
+static radar_replay_t      s_replay;
+static uint8_t  s_salt[4]; static uint64_t s_ctr;
+
+static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
+    (void)info;
+    uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
+    if (radar_wire_open(data,(size_t)len,SIMULACRA_ESPNOW_KEY,&type,pl,&plen,salt,&ctr)!=0) return;
+    if (type!=RADAR_TYPE_STATUS || plen!=sizeof(radar_wire_status_t)) return;
+    if (!radar_replay_ok(&s_replay,salt,ctr)) return;
+    memcpy(&s_status, pl, sizeof s_status);
+    s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
+    ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
+             (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,
+             (unsigned long)s_status.uptime_s);
+}
+static void send_request(void){
+    uint8_t nonce[4]; esp_fill_random(nonce,4);
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+    if (radar_wire_seal(frame,&flen,RADAR_TYPE_REQUEST,nonce,4,SIMULACRA_ESPNOW_KEY,s_salt,++s_ctr)==0)
+        for (int i=0;i<4;i++) esp_now_send(BCAST,frame,flen);
+}
+static void net_init(void){
+    esp_netif_init(); esp_event_loop_create_default();
+    wifi_init_config_t c=WIFI_INIT_CONFIG_DEFAULT(); esp_wifi_init(&c);
+    esp_wifi_set_storage(WIFI_STORAGE_RAM); esp_wifi_set_mode(WIFI_MODE_STA); esp_wifi_start();
+    esp_wifi_set_channel(ESPNOW_CH, WIFI_SECOND_CHAN_NONE);
+    esp_now_init();
+    esp_now_peer_info_t p={0}; memcpy(p.peer_addr,BCAST,6); p.channel=ESPNOW_CH; p.ifidx=WIFI_IF_STA;
+    esp_now_add_peer(&p); esp_now_register_recv_cb(on_recv);
+    esp_fill_random(s_salt,4);
+    ESP_LOGW(TAG, "espnow up (ch=%d), requesting...", ESPNOW_CH);
+}
+
+// ---- Touch: press-detection only (no coordinates). XPT2046 T_IRQ is active-LOW on contact;
+// the CYD pulls it high externally when idle. Debounce a HIGH->LOW edge (~200ms). ----
+static void touch_init(void){
+    gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << TOUCH_IRQ_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,     // GPIO34-39 are input-only, no internal pulls anyway
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&cfg);
+}
+static bool touched(void){
+    static int last_level = 1;         // idle = HIGH (external pull-up, not pressed)
+    static uint32_t last_edge_ms = 0;
+    int level = gpio_get_level(TOUCH_IRQ_GPIO);
+    uint32_t now = (uint32_t)(esp_timer_get_time()/1000);
+    bool fresh_press = false;
+    if (last_level == 1 && level == 0 && (uint32_t)(now - last_edge_ms) > 200) {
+        fresh_press = true;
+        last_edge_ms = now;
+    }
+    last_level = level;
+    return fresh_press;
+}
+
+// CYD-side freshness overlay: drawn as one extra band over the top of the just-rendered view,
+// so the shared renderer stays untouched. Not shown while data is fresh (<=5s old).
+static void draw_freshness_overlay(uint16_t *band, uint32_t now){
+    if (s_status_ms != 0 && (uint32_t)(now - s_status_ms) <= 5000) return;
+    radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
+    radar_gfx_clear(&g, 0x0000);
+    if (s_status_ms == 0) radar_gfx_text(&g, 56, 16, "SEARCHING...", 0xFFFF);
+    else                  radar_gfx_text(&g, 68, 16, "NO DECOY", 0x7BEF);
+    cyd_flush(0, 40, band, NULL);
+}
+
 void app_main(void)
 {
     nvs_flash_init();
     if (!cyd_panel_init(&s_panel)) { ESP_LOGE(TAG, "panel init failed"); return; }
+    touch_init();
+    net_init();
 
-    static uint16_t band[LCD_W * 40];
-    radar_wire_status_t demo = {0};
-    demo.active_devices = 7; demo.uptime_s = 83; demo.threat_count = 2;
-    demo.threats[0].hash = 0x1234; demo.threats[0].best_rssi = -41; demo.threats[0].epochs = 6;
-    demo.threats[1].hash = 0x9abc; demo.threats[1].best_rssi = -66; demo.threats[1].epochs = 2;
-    radar_render_view(RADAR_VIEW_RADAR, &demo, 45, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
-    ESP_LOGW(TAG, "panel up: static radar demo drawn");
+    radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
+    static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;
+    bool bl_was_on = true;
+    ESP_LOGW(TAG, "panel up: live radar loop starting");
+    for(;;){
+        uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
+        if (touched()) { radar_ui_on_input(&ui, now); send_request(); last_req=now; }
+        // keep asking every ~3s while the screen is awake so data stays fresh
+        if (ui.backlight_on && now-last_req > 3000) { send_request(); last_req=now; }
+        radar_ui_on_tick(&ui, now, s_status.threat_count);
+        if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
+        if (ui.backlight_on){
+            radar_render_view(ui.view, &s_status, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+            draw_freshness_overlay(band, now);
+            sweep=(uint16_t)((sweep+12)%360);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }

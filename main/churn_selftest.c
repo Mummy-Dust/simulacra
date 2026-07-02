@@ -12,6 +12,7 @@
 #include "coexist.h"
 #include "detect.h"
 #include "webui.h"
+#include "radar_geom.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -643,6 +644,25 @@ static void test_webui_json(void)
              "undersized buffer reports truncation");
 }
 
+static void test_radar_geometry(void)
+{
+    uint16_t near = radar_rssi_to_radius(-40, 10, 100);
+    uint16_t mid  = radar_rssi_to_radius(-60, 10, 100);
+    uint16_t far  = radar_rssi_to_radius(-80, 10, 100);
+    ST_CHECK(near < mid && mid < far, "radar radius grows with distance");
+    ST_CHECK(near >= 10 && far <= 100, "radar radius within clamp");
+    ST_CHECK(radar_rssi_to_radius(-20, 10, 100) == near, "very strong clamps near");
+    ST_CHECK(radar_rssi_to_radius(-99, 10, 100) == far,  "very weak clamps far");
+    ST_CHECK(radar_hash_to_angle(0xABCD1234) == radar_hash_to_angle(0xABCD1234),
+             "angle stable per hash");
+    ST_CHECK(radar_hash_to_angle(0xFFFFFFFF) < 360, "angle in range");
+    int x, y;
+    radar_polar_to_xy(120, 160, 50, 0, &x, &y);
+    ST_CHECK(x == 170 && y == 160, "0deg due east");
+    radar_polar_to_xy(120, 160, 50, 90, &x, &y);
+    ST_CHECK(x >= 119 && x <= 121 && y >= 109 && y <= 111, "90deg due north");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -694,6 +714,7 @@ int churn_selftest_run(void)
     test_detect_nvs();
     test_detect_clear();
     test_webui_json();
+    test_radar_geometry();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

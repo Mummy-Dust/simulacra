@@ -55,6 +55,7 @@ static bool     s_wifi_ok;
 static bool     s_wifi_allowed = true;    // webui: false defers Wi-Fi (STA) so the config AP can own it
 static uint32_t s_wifi_ctr;
 static uint32_t s_accel_until_ms;         // 0 = not accelerating
+static int      s_listen_ch = -1;         // espnow: >=0 -> park Wi-Fi on this channel between bursts to listen
 
 // --- M9 detection wiring ---
 #define DETECT_EPOCH_DRIFT 0.45f           // detection-owned; separate from anti-entourage thresh
@@ -247,8 +248,15 @@ static void coexist_task(void *arg)
             if (p->use_5g && (++s_wifi_ctr % COEX_5G_EVERY == 0)) coexist_5g_excursion();
         }
         if (d.fire_reprofile) coexist_reprofile(p);
+        if (s_listen_ch >= 0 && s_wifi_ok)                       // espnow: park on the listen channel between bursts
+            esp_wifi_set_channel((uint8_t)s_listen_ch, WIFI_SECOND_CHAN_NONE);
         vTaskDelay(pdMS_TO_TICKS(COEX_TICK_MS));
     }
+}
+
+void coexist_set_listen_channel(int ch)
+{
+    s_listen_ch = ch;      // -1 disables; >=0 makes the coexist tick return the radio here between bursts
 }
 
 void coexist_set_wifi_enabled(bool en)

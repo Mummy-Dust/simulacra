@@ -29,6 +29,7 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "radar_key.h"
+#include "coexist.h"
 
 #ifndef SIMULACRA_ESPNOW_CHANNEL
 #define SIMULACRA_ESPNOW_CHANNEL 1
@@ -83,6 +84,7 @@ void esp_now_link_start(void)
     memcpy(peer.peer_addr, BCAST, 6); peer.channel = SIMULACRA_ESPNOW_CHANNEL; peer.ifidx = WIFI_IF_STA;
     esp_now_add_peer(&peer);
     esp_now_register_recv_cb(on_recv);
+    coexist_set_listen_channel(SIMULACRA_ESPNOW_CHANNEL);  // park the radio on ch1 between probe bursts
     xTaskCreate(espnow_task, "espnow", 4096, NULL, 3, NULL);
     ESP_LOGW(ETAG, "responder up (ch=%d, listen-only until requested)", SIMULACRA_ESPNOW_CHANNEL);
 }

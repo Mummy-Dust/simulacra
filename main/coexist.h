@@ -12,6 +12,11 @@ void coexist_start(void);
 // probe_wifi_init (STA) and resume probe bursts. BLE churn is unaffected either way.
 void coexist_set_wifi_enabled(bool en);
 
+// espnow: park the Wi-Fi radio on channel `ch` between probe bursts so the ESP-NOW responder
+// can hear requests there (the injector otherwise leaves it on the last burst channel). Pass
+// -1 to disable. Call after coexist is running (e.g. from esp_now_link_start).
+void coexist_set_listen_channel(int ch);
+
 // --- testable scheduler core (pure; no radio) ---
 typedef struct {
     uint32_t wifi_period_ms;        // Wi-Fi burst cadence

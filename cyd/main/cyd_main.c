@@ -29,9 +29,14 @@ static bool on_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_d
 // Synchronous flush: blocks until the SPI color transfer completes before returning, so the
 // caller (radar_render_view) can safely reuse/mutate its single scratch band buffer for the
 // next band. Without this, esp_lcd_panel_draw_bitmap's async transfer races the next clear.
+static uint16_t s_txbuf[LCD_W * 40];               // byte-swap scratch (>= one band)
 void cyd_flush(int y0, int h, const uint16_t *buf, void *ctx){
     (void)ctx;
-    esp_lcd_panel_draw_bitmap(s_panel, 0, y0, LCD_W, y0 + h, (void*)buf);
+    // This CYD's ILI9341 wants big-endian RGB565; our band buffer is native little-endian,
+    // so swap each pixel's bytes into the tx scratch before sending.
+    int n = LCD_W * h;
+    for (int i = 0; i < n; i++) s_txbuf[i] = __builtin_bswap16(buf[i]);
+    esp_lcd_panel_draw_bitmap(s_panel, 0, y0, LCD_W, y0 + h, s_txbuf);
     xSemaphoreTake(s_flush_done, portMAX_DELAY);
 }
 
@@ -59,6 +64,7 @@ static bool cyd_panel_init(esp_lcd_panel_handle_t *out)
     if (esp_lcd_new_panel_ili9341(io, &pc, out) != ESP_OK) return false;   // or _st7789
     esp_lcd_panel_reset(*out); esp_lcd_panel_init(*out);
     esp_lcd_panel_invert_color(*out, false);       // flip if colors look inverted
+    esp_lcd_panel_mirror(*out, true, false);       // this CYD's ILI9341 default is X-mirrored -> un-mirror text
     esp_lcd_panel_disp_on_off(*out, true);
     return true;
 }

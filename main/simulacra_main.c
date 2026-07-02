@@ -53,6 +53,7 @@
 #include "coexist.h"
 #include "detect.h"
 #include "webui.h"
+#include "esp_now_link.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -78,6 +79,11 @@
 // Local MVP (open AP, no auth) -- default ON for now.
 #ifndef SIMULACRA_WEBUI
 #define SIMULACRA_WEBUI 1
+#endif
+
+// Remote ESP-NOW radar link (answers a CYD's telemetry requests). Default 0.
+#ifndef SIMULACRA_ESPNOW
+#define SIMULACRA_ESPNOW 0
 #endif
 
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
@@ -134,6 +140,9 @@ static void simulacra_task(void *arg)
     coexist_set_wifi_enabled(true);     // AP down -> Wi-Fi STA up, probe injection resumes
 #else
     coexist_start();
+#endif
+#if SIMULACRA_ESPNOW
+    esp_now_link_start();   // listen-only responder; answers CYD requests over ESP-NOW
 #endif
     for (;;) {                                          // this task idles; coexist runs the show
         ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());

@@ -14,6 +14,8 @@
 #include "webui.h"
 #include "radar_geom.h"
 #include "radar_ui.h"
+#include "radar_wire.h"
+#include "radar_key.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -681,6 +683,39 @@ static void test_radar_ui(void)
     ST_CHECK(ui.backlight_on && ui.view == RADAR_VIEW_RADAR, "new follower wakes + radar");
 }
 
+static void test_radar_wire(void)
+{
+    radar_wire_status_t st; memset(&st, 0, sizeof st);
+    st.uptime_s = 4242; st.active_devices = 7; st.threat_count = 1;
+    st.threats[0].hash = 0xDEADBEEF; st.threats[0].best_rssi = -44; st.threats[0].epochs = 5;
+
+    uint8_t salt[4] = { 0xAA,0xBB,0xCC,0xDD };
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen = 0;
+    int rc = radar_wire_seal(frame, &flen, RADAR_TYPE_STATUS,
+                             (uint8_t*)&st, sizeof st, SIMULACRA_ESPNOW_KEY, salt, 100);
+    ST_CHECK(rc == 0 && flen == RADAR_HDR_LEN + RADAR_NONCE_LEN + sizeof(st) + RADAR_TAG_LEN,
+             "seal produces a full frame");
+    ST_CHECK(frame[0] == RADAR_MAGIC0 && frame[3] == RADAR_TYPE_STATUS, "header intact");
+
+    uint8_t type, pl[RADAR_FRAME_MAX], osalt[4]; size_t plen = 0; uint64_t ctr = 0;
+    rc = radar_wire_open(frame, flen, SIMULACRA_ESPNOW_KEY, &type, pl, &plen, osalt, &ctr);
+    ST_CHECK(rc == 0 && type == RADAR_TYPE_STATUS && plen == sizeof(st) && ctr == 100,
+             "open round-trips");
+    ST_CHECK(memcmp(pl, &st, sizeof st) == 0, "payload survives round-trip");
+
+    frame[flen - 1] ^= 0x01;                                   // tamper the tag
+    ST_CHECK(radar_wire_open(frame, flen, SIMULACRA_ESPNOW_KEY, &type, pl, &plen, osalt, &ctr) < 0,
+             "tampered frame rejected");
+
+    radar_replay_t rp = {0};
+    ST_CHECK(radar_replay_ok(&rp, salt, 100), "first counter accepted");
+    ST_CHECK(!radar_replay_ok(&rp, salt, 100), "replay of same counter rejected");
+    ST_CHECK(!radar_replay_ok(&rp, salt, 99),  "older counter rejected");
+    ST_CHECK(radar_replay_ok(&rp, salt, 101),  "newer counter accepted");
+    uint8_t salt2[4] = { 1,2,3,4 };
+    ST_CHECK(radar_replay_ok(&rp, salt2, 1),   "reboot (new salt) resets + accepts");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -734,6 +769,7 @@ int churn_selftest_run(void)
     test_webui_json();
     test_radar_geometry();
     test_radar_ui();
+    test_radar_wire();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

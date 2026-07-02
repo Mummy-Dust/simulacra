@@ -13,6 +13,7 @@
 #include "detect.h"
 #include "webui.h"
 #include "radar_geom.h"
+#include "radar_ui.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -663,6 +664,23 @@ static void test_radar_geometry(void)
     ST_CHECK(x >= 119 && x <= 121 && y >= 109 && y <= 111, "90deg due north");
 }
 
+static void test_radar_ui(void)
+{
+    radar_ui_t ui;
+    radar_ui_reset(&ui, 1000, 0);
+    ST_CHECK(ui.view == RADAR_VIEW_RADAR && ui.backlight_on, "reset: radar + bl on");
+    radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL, "input 1 -> detail");
+    radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,  "input 2 -> stats");
+    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_RADAR,  "input 3 -> wraps");
+    radar_ui_on_input(&ui, 2000); radar_ui_on_input(&ui, 2000);          // -> stats
+    radar_ui_on_tick(&ui, 2000 + RADAR_VIEW_IDLE_MS + 1, 0);
+    ST_CHECK(ui.view == RADAR_VIEW_RADAR, "idle returns to radar");
+    radar_ui_on_tick(&ui, 2000 + RADAR_BL_IDLE_MS + 2, 0);
+    ST_CHECK(!ui.backlight_on, "clear + idle sleeps backlight");
+    radar_ui_on_tick(&ui, 999999, 1);
+    ST_CHECK(ui.backlight_on && ui.view == RADAR_VIEW_RADAR, "new follower wakes + radar");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -715,6 +733,7 @@ int churn_selftest_run(void)
     test_detect_clear();
     test_webui_json();
     test_radar_geometry();
+    test_radar_ui();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

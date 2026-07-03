@@ -2,6 +2,7 @@
 #include "sdkconfig.h"
 #include "learn.h"
 #include "law3.h"
+#include "learn_wire.h"     // learn_merge (shared)
 #include "esp_random.h"
 #include "esp_log.h"
 #include "nvs.h"
@@ -102,21 +103,7 @@ bool learn_strip(const uint8_t *ad, uint8_t len, uint16_t company,
 
 static const char *SYN_NAMES[] = { "Buds","Watch","Band","Beat","Sensor","Tag","Speaker","Fit" };
 
-uint32_t learn_shape_hash(const learned_template_t *t)
-{
-    uint32_t h = 2166136261u;
-    #define FNV(b) do { h ^= (uint8_t)(b); h *= 16777619u; } while (0)
-    FNV(t->family); FNV(t->company_id); FNV(t->company_id >> 8);
-    FNV(t->svc_uuid); FNV(t->svc_uuid >> 8);
-    for (uint8_t i = 0; i + 1 < t->ad_len; ) {           // type/length sequence only
-        uint8_t l = t->ad[i];
-        if (l == 0 || i + 1 + l > t->ad_len) break;
-        FNV(l); FNV(t->ad[i + 1]);
-        i += 1 + l;
-    }
-    #undef FNV
-    return h;
-}
+// learn_shape_hash now lives in the shared component (learn_wire.c).
 
 int learn_render(const learned_template_t *t, uint8_t out[31],
                  uint8_t *out_len, uint16_t *out_itvl_ms)
@@ -144,46 +131,14 @@ void   learn_reset(void)
 size_t learn_count(void) { return s_count; }
 const learned_template_t *learn_at(size_t i) { return (i < s_count) ? &s_store[i] : NULL; }
 
-static int find_shape(uint32_t hash)
-{
-    for (size_t i = 0; i < s_count; i++) if (s_store[i].shape_hash == hash) return (int)i;
-    return -1;
-}
-static size_t weakest(void)   // lowest reinforce_count, tie -> oldest last_seen
-{
-    size_t w = 0;
-    for (size_t i = 1; i < s_count; i++) {
-        if (s_store[i].reinforce_count < s_store[w].reinforce_count ||
-            (s_store[i].reinforce_count == s_store[w].reinforce_count &&
-             s_store[i].last_seen_sweep < s_store[w].last_seen_sweep)) w = i;
-    }
-    return w;
-}
-
 bool learn_store_add(const learned_template_t *t, uint16_t sweep_no)
 {
-    int idx = find_shape(t->shape_hash);
-    if (idx >= 0) {                                    // reinforce existing
-        learned_template_t *e = &s_store[idx];
-        if (e->reinforce_count < 0xFFFF) e->reinforce_count++;
-        e->last_seen_sweep = sweep_no;
-        if (t->itvl_min_ms < e->itvl_min_ms) e->itvl_min_ms = t->itvl_min_ms;
-        if (t->itvl_max_ms > e->itvl_max_ms) e->itvl_max_ms = t->itvl_max_ms;
-        return true;
-    }
-    if (s_count < LEARN_CAP) {                          // free slot
-        s_store[s_count] = *t;
-        s_store[s_count].last_seen_sweep = sweep_no;
-        s_count++;
+    size_t before = s_count;
+    bool ok = learn_merge(s_store, &s_count, LEARN_CAP, t, sweep_no);   // shared idempotent merge
+    if (ok && s_count > before)
         ESP_LOGW(TAG, "+shape company=0x%04X svc=0x%04X count=%u",
                  t->company_id, t->svc_uuid, (unsigned)s_count);
-        return true;
-    }
-    size_t w = weakest();                               // full: evict weakest if new is >=
-    if (t->reinforce_count < s_store[w].reinforce_count) return false;
-    s_store[w] = *t;
-    s_store[w].last_seen_sweep = sweep_no;
-    return true;
+    return ok;
 }
 
 void learn_age_out(uint16_t sweep_no)

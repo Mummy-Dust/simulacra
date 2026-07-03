@@ -21,6 +21,11 @@
 #include "esp_netif.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "driver/sdspi_host.h"
+#include <sys/stat.h>
+#include <stdio.h>
 #include <string.h>
 
 #define PIN_MOSI 13
@@ -89,6 +94,32 @@ static void set_backlight(bool on)
 {
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? 255 : 0);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
+// ---- microSD on its own SPI host (SPI3), separate from the display's SPI2 (E2) ----
+#define SD_HOST     SPI3_HOST
+#define PIN_SD_MOSI 23
+#define PIN_SD_MISO 19
+#define PIN_SD_SCK  18
+#define PIN_SD_CS    5
+#define SD_MOUNT_POINT "/sdcard"
+static bool s_sd_ok;
+static sdmmc_card_t *s_card;
+
+static bool sd_mount(void)
+{
+    spi_bus_config_t bus = { .mosi_io_num=PIN_SD_MOSI, .miso_io_num=PIN_SD_MISO,
+        .sclk_io_num=PIN_SD_SCK, .quadwp_io_num=-1, .quadhd_io_num=-1, .max_transfer_sz=4096 };
+    if (spi_bus_initialize(SD_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK) { ESP_LOGW(TAG,"sd: bus init fail"); return false; }
+    sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev.gpio_cs = PIN_SD_CS; dev.host_id = SD_HOST;
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT(); host.slot = SD_HOST;
+    esp_vfs_fat_sdmmc_mount_config_t mnt = { .format_if_mount_failed=false, .max_files=4,
+        .allocation_unit_size=16*1024 };
+    esp_err_t e = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &mnt, &s_card);
+    if (e != ESP_OK) { ESP_LOGW(TAG, "sd: absent/unmountable (0x%x) -> RAM-only librarian", e); return false; }
+    ESP_LOGW(TAG, "sd: mounted (%lluMB)", ((uint64_t)s_card->csd.capacity)*s_card->csd.sector_size/(1024*1024));
+    return true;
 }
 
 // ---- ESP-NOW radar link (STA on a fixed channel, broadcast, AES-GCM via radar_wire) ----
@@ -212,6 +243,14 @@ void app_main(void)
     if (!cyd_panel_init(&s_panel)) { ESP_LOGE(TAG, "panel init failed"); return; }
     touch_init();
     net_init();
+
+    s_sd_ok = sd_mount();
+    if (s_sd_ok) {                                   // one-shot probe: mkdir + write + read-back
+        mkdir(SD_MOUNT_POINT "/simulacra", 0777);
+        FILE *f = fopen(SD_MOUNT_POINT "/simulacra/probe.txt", "w");
+        if (f) { fputs("ok", f); fclose(f); ESP_LOGW(TAG, "sd: probe write ok"); }
+        else ESP_LOGW(TAG, "sd: probe write FAILED");
+    }
 
     radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
     static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;

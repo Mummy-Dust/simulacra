@@ -17,6 +17,7 @@
 #include "radar_wire.h"
 #include "radar_key.h"
 #include "esp_now_link.h"
+#include "law3.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -141,12 +142,29 @@ static const device_template_t *find_family(fmt_family_t fam)
 
 // Refined Law 3: a payload must never carry an Apple Continuity pop-up subtype
 // (0x07 proximity pairing, 0x0F nearby action) or Find My (0x12). iBeacon (0x02) is fine.
-static bool has_apple_popup_subtype(const uint8_t *p, uint8_t len)
+// has_apple_popup_subtype + law3_forbidden now live in law3.{h,c} (shared with learn.c).
+static void test_law3(void)
 {
-    for (int i = 0; i + 2 < len; i++)
-        if (p[i] == 0x4C && p[i+1] == 0x00 &&
-            (p[i+2] == 0x07 || p[i+2] == 0x0F || p[i+2] == 0x12)) return true;
-    return false;
+    // Apple Continuity nearby-action (0x0F) mfg-data: 4C 00 0F .. -> forbidden
+    uint8_t nearby[] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
+    ST_CHECK(law3_forbidden(nearby, sizeof nearby), "law3: Apple nearby-action forbidden");
+
+    // iBeacon (0x02) is allowed
+    uint8_t ibeacon[] = { 0x02,0x01,0x06, 0x1A,0xFF,0x4C,0x00,0x02,0x15,
+                          0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0, 0,0, 0xC5 };
+    ST_CHECK(!law3_forbidden(ibeacon, sizeof ibeacon), "law3: iBeacon allowed");
+
+    // Microsoft Swift Pair: mfg len 5 (type + company 0006 + subtype) -> forbidden
+    uint8_t swift[] = { 0x05,0xFF,0x06,0x00,0x03,0x00 };
+    ST_CHECK(law3_forbidden(swift, sizeof swift), "law3: Swift Pair forbidden");
+
+    // Google Fast Pair: svc-data len 5 (type + UUID 0xFE2C + payload) -> forbidden
+    uint8_t fastpair[] = { 0x03,0x03,0x2C,0xFE, 0x05,0x16,0x2C,0xFE,0x00,0x00 };
+    ST_CHECK(law3_forbidden(fastpair, sizeof fastpair), "law3: Fast Pair forbidden");
+
+    // Plain vendor-mfg (Samsung 0x0075) -> allowed
+    uint8_t vendor[] = { 0x06,0xFF,0x75,0x00,0x01,0x02,0x03 };
+    ST_CHECK(!law3_forbidden(vendor, sizeof vendor), "law3: plain vendor allowed");
 }
 
 static void test_ibeacon(void)
@@ -761,6 +779,7 @@ int churn_selftest_run(void)
 
     // --- M4 templates ---
     test_templates();
+    test_law3();
     test_ibeacon();
     test_eddystone();
     test_tracker();

@@ -87,6 +87,13 @@
 #define SIMULACRA_ESPNOW 0
 #endif
 
+// Self-learning templates: harvest ambient device advert shapes into learned
+// archetypes that feed the churn/roster engine (structure only, never identity).
+// Owned by observe.c; default ON. Set 0 to build the harvester out.
+#ifndef SIMULACRA_LEARN
+#define SIMULACRA_LEARN 1
+#endif
+
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
 #ifndef SIMULACRA_PROBE
 #define SIMULACRA_PROBE 0

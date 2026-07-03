@@ -196,6 +196,10 @@ static void test_learn_strip(void)
              "strip: company id not masked");
     uint8_t nearby[] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
     ST_CHECK(!learn_strip(nearby, sizeof nearby, 0x004C, &t), "strip: forbidden rejected");
+
+    // Zero-padded AD (common on real reports): trailing zeros are end-of-AD, not a reject.
+    uint8_t padded[] = { 0x02,0x01,0x06, 0x05,0xFF,0x75,0x00,0xAB,0xCD, 0x00,0x00,0x00 };
+    ST_CHECK(learn_strip(padded, sizeof padded, 0x0075, &t), "strip: zero-padded AD accepted");
 }
 
 static void test_learn_render(void)

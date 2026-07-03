@@ -1,6 +1,12 @@
 #include <string.h>
 #include "observe.h"
+#include "learn.h"
 #include "esp_log.h"
+
+// Self-learning template harvester: default ON, gated so it can be built out.
+#ifndef SIMULACRA_LEARN
+#define SIMULACRA_LEARN 1
+#endif
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
@@ -62,6 +68,13 @@ void observe_end_sweep(rf_model_t *m, uint32_t window_ms)
     memset(s_tbl, 0, sizeof(s_tbl));       // wipe ephemeral identifiers
     s_arrivals = 0;
     s_saturated = false;
+#if SIMULACRA_LEARN
+    // Advance the learn sweep (age-out + wipe transient candidates) and persist
+    // the learned library periodically (debounced to spare NVS wear).
+    static uint16_t s_learn_sweep, s_learn_persist;
+    learn_end_sweep(++s_learn_sweep);
+    if (++s_learn_persist >= 8) { s_learn_persist = 0; learn_save_nvs(); }
+#endif
 }
 
 size_t observe_ephemeral_count(void)
@@ -137,6 +150,9 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
     if (s_report_cb) s_report_cb(d->addr.val, d->rssi, company);   // M9 tap: raw MAC still live here
+#if SIMULACRA_LEARN
+    learn_offer(observe_hash_mac(d->addr.val), d->data, d->length_data, company, now);
+#endif
     observe_ingest(&s_model, d->addr.val, now, company, d->rssi, d->legacy_event_type);  // MAC dropped inside
     if (!s_window_mode) observe_maybe_close_sweep(now);      // window mode closes explicitly
     return 0;
@@ -148,6 +164,10 @@ void observe_start(uint32_t boot_salt)
 {
     observe_reset_ephemeral(boot_salt);
     if (rf_model_load_nvs(&s_model) != 0) rf_model_reset(&s_model);
+#if SIMULACRA_LEARN
+    learn_reset();
+    learn_load_nvs();          // resume the learned library across reboots (empty if none)
+#endif
     s_sweep_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
     s_persist_ctr = 0;
     observe_start_scan();
@@ -165,6 +185,10 @@ void observe_reprofile_init(uint32_t boot_salt)
 {
     observe_reset_ephemeral(boot_salt);                      // sets the per-boot salt
     if (rf_model_load_nvs(&s_model) != 0) rf_model_reset(&s_model);
+#if SIMULACRA_LEARN
+    learn_reset();
+    learn_load_nvs();          // resume the learned library across reboots (empty if none)
+#endif
 }
 
 void observe_window(uint32_t duration_ms)

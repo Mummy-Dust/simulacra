@@ -3,7 +3,10 @@
 #include "learn.h"
 #include "law3.h"
 #include "esp_random.h"
+#include "esp_log.h"
 #include "nvs.h"
+
+static const char *TAG = "learn";
 
 // AD type constants
 #define AD_FLAGS        0x01
@@ -52,7 +55,8 @@ bool learn_strip(const uint8_t *ad, uint8_t len, uint16_t company,
 
     for (uint8_t i = 0; i + 1 < len; ) {
         uint8_t l = ad[i];
-        if (l == 0 || i + 1 + l > len) return false;     // malformed => reject
+        if (l == 0) break;                               // trailing zero padding: end of AD
+        if (i + 1 + l > len) return false;               // overrun => genuinely malformed, reject
         uint8_t type = ad[i + 1];
         uint8_t vfrom = i + 2;                            // first value byte
         uint8_t vto   = i + 1 + l;                        // one past last
@@ -171,6 +175,8 @@ bool learn_store_add(const learned_template_t *t, uint16_t sweep_no)
         s_store[s_count] = *t;
         s_store[s_count].last_seen_sweep = sweep_no;
         s_count++;
+        ESP_LOGW(TAG, "+shape company=0x%04X svc=0x%04X count=%u",
+                 t->company_id, t->svc_uuid, (unsigned)s_count);
         return true;
     }
     size_t w = weakest();                               // full: evict weakest if new is >=

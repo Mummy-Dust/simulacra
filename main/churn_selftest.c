@@ -406,6 +406,34 @@ static void test_learn_db_key(void)
     ST_CHECK(memcmp(k1, k3, 32) != 0, "db key: depends on PSK");
 }
 
+static void test_learn_db_blob(void)
+{
+    uint8_t key[32]; learn_db_derive_key(SIMULACRA_ESPNOW_KEY, key);
+    learned_template_t in[3];
+    for (int i = 0; i < 3; i++) { mk_shape(&in[i], (uint16_t)(0x0075 + i)); in[i].reinforce_count = (uint16_t)(i+1); }
+
+    static uint8_t blob[sizeof(learn_db_hdr_t) + 3*sizeof(learned_template_t)]; size_t blen;
+    ST_CHECK(learn_db_seal(blob, &blen, in, 3, key) == 0, "db blob: seal ok");
+    ST_CHECK(blen == sizeof(learn_db_hdr_t) + 3*sizeof(learned_template_t), "db blob: length exact");
+
+    learned_template_t out[3]; uint16_t n = 0;
+    ST_CHECK(learn_db_open(blob, blen, out, &n, key) == 0 && n == 3, "db blob: open round-trips count");
+    ST_CHECK(memcmp(in, out, 3*sizeof(learned_template_t)) == 0, "db blob: records identical");
+
+    // Tamper one ciphertext byte -> tag must fail.
+    static uint8_t bad[sizeof(blob)]; memcpy(bad, blob, blen);
+    bad[sizeof(learn_db_hdr_t) + 4] ^= 0xFF;
+    ST_CHECK(learn_db_open(bad, blen, out, &n, key) < 0, "db blob: tamper rejected");
+
+    // Wrong key (foreign card) -> tag must fail.
+    uint8_t wrong[32]; memcpy(wrong, key, 32); wrong[0] ^= 0xFF;
+    ST_CHECK(learn_db_open(blob, blen, out, &n, wrong) < 0, "db blob: foreign key rejected");
+
+    // Bad magic -> rejected.
+    static uint8_t nomagic[sizeof(blob)]; memcpy(nomagic, blob, blen); nomagic[0] ^= 0xFF;
+    ST_CHECK(learn_db_open(nomagic, blen, out, &n, key) < 0, "db blob: bad magic rejected");
+}
+
 static void test_ibeacon(void)
 {
     const device_template_t *t = find_family(FMT_IBEACON);
@@ -1030,6 +1058,7 @@ int churn_selftest_run(void)
     test_learn_merge_wire();
     test_learn_snapshot_ingest();
     test_learn_db_key();
+    test_learn_db_blob();
     test_ibeacon();
     test_eddystone();
     test_tracker();

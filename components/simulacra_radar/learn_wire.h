@@ -13,6 +13,14 @@ bool learn_merge(learned_template_t *store, size_t *count, size_t cap,
 bool learn_merge_wire(learned_template_t *store, size_t *count, size_t cap,
                       const learned_template_t *rec, uint16_t sweep_no);
 
+#ifndef LEARN_SYNC_TOP_N
+#define LEARN_SYNC_TOP_N 64          // smallest decoy store (Shade/C6) — a full-down fits every decoy
+#endif
+
+// Copy the n strongest records (by reinforce_count, ties: newer last_seen_sweep) into out.
+// Does not mutate store. Returns min(count, n).
+size_t learn_top_n(const learned_template_t *store, size_t count, learned_template_t *out, size_t n);
+
 // --- wire chunk framing for the ESP-NOW fleet sync (Phase 2) ---
 #define RADAR_TYPE_LEARN_OFFER 3     // decoy -> Vigil: newly learned/reinforced records
 #define RADAR_TYPE_LEARN_SYNC  4     // Vigil -> all: merged library chunk

@@ -222,21 +222,21 @@ static void send_request(void){
 static void broadcast_library(void){
     if (s_lib_count == 0) return;
     s_lib_sweep++;
-    // top-N by reinforce_count: simple selection into a send buffer (N == whole lib here, cap fits chunks)
-    uint8_t chunks = (uint8_t)((s_lib_count + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
+    static learned_template_t sel[LEARN_SYNC_TOP_N];
+    size_t n = learn_top_n(s_lib, s_lib_count, sel, LEARN_SYNC_TOP_N);
+    uint8_t chunks = (uint8_t)((n + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
     for (uint8_t ci = 0; ci < chunks; ci++) {
         size_t off = (size_t)ci * LEARN_WIRE_RECS_PER_CHUNK;
-        uint8_t nrec = (uint8_t)((s_lib_count - off < LEARN_WIRE_RECS_PER_CHUNK)
-                                 ? (s_lib_count - off) : LEARN_WIRE_RECS_PER_CHUNK);
+        uint8_t nrec = (uint8_t)((n - off < LEARN_WIRE_RECS_PER_CHUNK) ? (n - off) : LEARN_WIRE_RECS_PER_CHUNK);
         uint8_t pl[RADAR_FRAME_MAX]; size_t plen;
-        if (learn_wire_pack(pl, &plen, &s_lib[off], nrec, 1, ci, chunks) != 0) continue;
+        if (learn_wire_pack(pl, &plen, &sel[off], nrec, 1, ci, chunks) != 0) continue;
         uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
         if (radar_wire_seal(frame, &flen, RADAR_TYPE_LEARN_SYNC, pl, plen,
                             SIMULACRA_ESPNOW_KEY, s_salt, ++s_ctr) == 0)
             esp_now_send(BCAST, frame, flen);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    ESP_LOGW(TAG, "broadcast library (%u recs)", (unsigned)s_lib_count);
+    ESP_LOGW(TAG, "broadcast top-%u of %u recs", (unsigned)n, (unsigned)s_lib_count);
 }
 static void net_init(void){
     esp_netif_init(); esp_event_loop_create_default();

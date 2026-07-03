@@ -434,6 +434,20 @@ static void test_learn_db_blob(void)
     ST_CHECK(learn_db_open(nomagic, blen, out, &n, key) < 0, "db blob: bad magic rejected");
 }
 
+static void test_learn_top_n(void)
+{
+    learned_template_t s[5];
+    for (int i = 0; i < 5; i++) { mk_shape(&s[i], (uint16_t)(0x0070+i)); s[i].reinforce_count = (uint16_t)(i); }
+    // reinforce_count = 0,1,2,3,4 ; top-3 should be the 4,3,2 set.
+    learned_template_t out[3];
+    size_t n = learn_top_n(s, 5, out, 3);
+    ST_CHECK(n == 3, "top_n: returns n when count>=n");
+    ST_CHECK(out[0].reinforce_count == 4 && out[1].reinforce_count == 3 && out[2].reinforce_count == 2,
+             "top_n: strongest first");
+    // n larger than count -> returns count.
+    ST_CHECK(learn_top_n(s, 5, out, 3) == 3 && learn_top_n(s, 2, out, 3) == 2, "top_n: clamps to count");
+}
+
 static void test_ibeacon(void)
 {
     const device_template_t *t = find_family(FMT_IBEACON);
@@ -1059,6 +1073,7 @@ int churn_selftest_run(void)
     test_learn_snapshot_ingest();
     test_learn_db_key();
     test_learn_db_blob();
+    test_learn_top_n();
     test_ibeacon();
     test_eddystone();
     test_tracker();

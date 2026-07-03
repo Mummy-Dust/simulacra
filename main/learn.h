@@ -4,24 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "templates.h"       // fmt_family_t
-
-// A learned archetype: identity-stripped AD skeleton + metadata. Flat POD so it
-// is directly serializable (Phase 2 ships it over the wire unchanged).
-typedef struct {
-    uint8_t  ad[31];          // identity-stripped skeleton (serialized AD bytes)
-    uint8_t  ad_len;
-    uint8_t  name_off;        // offset of local-name VALUE in ad[] (0 = no name)
-    uint8_t  name_len;        // length of local-name value (0 = no name)
-    uint32_t rand_mask;       // bit i set => rewrite ad[i] with esp_random() per render
-    uint16_t company_id;      // 0 if none
-    uint16_t svc_uuid;        // 0 if none
-    uint8_t  family;          // fmt_family_t best-effort classification
-    uint16_t itvl_min_ms;
-    uint16_t itvl_max_ms;
-    uint32_t shape_hash;
-    uint16_t reinforce_count;
-    uint16_t last_seen_sweep;
-} learned_template_t;
+#include "learn_record.h"    // learned_template_t + learn_shape_hash (shared component)
 
 // --- store sizing / lifecycle tunables ---
 #if CONFIG_IDF_TARGET_ESP32C5
@@ -48,9 +31,7 @@ typedef struct {
 bool learn_strip(const uint8_t *ad, uint8_t len, uint16_t company,
                  learned_template_t *out);
 
-// FNV-1a over family + company_id + svc_uuid + the AD-type/length sequence
-// (NOT value bytes) -> dedup key.
-uint32_t learn_shape_hash(const learned_template_t *t);
+// (learn_shape_hash is declared in learn_record.h — shared with the Vigil librarian.)
 
 // Copy skeleton, rewrite rand_mask bytes with esp_random(), overwrite the name
 // region with a synthetic name, sample an interval in [itvl_min,itvl_max].

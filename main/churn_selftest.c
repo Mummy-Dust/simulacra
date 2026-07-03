@@ -19,6 +19,7 @@
 #include "esp_now_link.h"
 #include "law3.h"
 #include "learn.h"
+#include "learn_wire.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -304,6 +305,52 @@ static void test_learn_generate(void)
     ST_CHECK(clean, "gen: learned-inclusive roster payloads clean & in-budget");
     ST_CHECK(bound, "gen: archetype_idx within static+learned range");
     learn_reset();   // leave the global store empty for subsequent tests
+}
+
+static void test_learn_wire(void)
+{
+    // Build a 4-record set (distinct shapes).
+    learned_template_t set[4];
+    for (int i = 0; i < 4; i++) { mk_shape(&set[i], (uint16_t)(0x0070 + i)); }
+
+    // Pack as two chunks: [0..3) and [3..4).
+    uint8_t p0[218], p1[218]; size_t l0, l1;
+    ST_CHECK(learn_wire_pack(p0, &l0, &set[0], 3, 1, 0, 2) == 0 && l0 <= 218, "wire: chunk0 packs");
+    ST_CHECK(learn_wire_pack(p1, &l1, &set[3], 1, 1, 1, 2) == 0 && l1 <= 218, "wire: chunk1 packs");
+
+    // Reassemble via merge into a fresh store; out-of-order + a duplicate chunk0 must be harmless.
+    learned_template_t store[8]; size_t cnt = 0; learn_chunk_hdr_t h;
+    learned_template_t rx[LEARN_WIRE_RECS_PER_CHUNK]; uint8_t n;
+    ST_CHECK(learn_wire_unpack(p1, l1, rx, &n, &h) == 0 && n == 1 && h.chunk_count == 2, "wire: unpack c1");
+    for (uint8_t i = 0; i < n; i++) learn_merge(store, &cnt, 8, &rx[i], 1);
+    ST_CHECK(learn_wire_unpack(p0, l0, rx, &n, &h) == 0 && n == 3, "wire: unpack c0");
+    for (uint8_t i = 0; i < n; i++) learn_merge(store, &cnt, 8, &rx[i], 1);
+    ST_CHECK(learn_wire_unpack(p0, l0, rx, &n, &h) == 0, "wire: unpack dup c0");
+    for (uint8_t i = 0; i < n; i++) learn_merge(store, &cnt, 8, &rx[i], 1);   // idempotent
+    ST_CHECK(cnt == 4, "wire: reassembly complete + idempotent (4 records)");
+
+    ST_CHECK(learn_wire_pack(p0, &l0, set, LEARN_WIRE_RECS_PER_CHUNK + 1, 1, 0, 1) != 0,
+             "wire: over-capacity pack rejected");
+}
+
+static void test_learn_regate(void)
+{
+    learned_template_t ok; mk_shape(&ok, 0x0075);
+    ST_CHECK(learn_regate(&ok), "regate: clean record accepted");
+
+    // Tampered: inject an Apple nearby-action subtype into the skeleton.
+    learned_template_t evil = ok;
+    evil.ad_len = 9;
+    uint8_t bad[9] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
+    memcpy(evil.ad, bad, 9);
+    evil.shape_hash = learn_shape_hash(&evil);   // even with a valid hash, law3 must reject
+    ST_CHECK(!learn_regate(&evil), "regate: forbidden subtype rejected");
+
+    learned_template_t big = ok; big.ad_len = 32;
+    ST_CHECK(!learn_regate(&big), "regate: over-budget ad_len rejected");
+
+    learned_template_t liar = ok; liar.shape_hash ^= 0xFFFFFFFFu;
+    ST_CHECK(!learn_regate(&liar), "regate: shape_hash mismatch rejected");
 }
 
 static void test_ibeacon(void)
@@ -925,6 +972,8 @@ int churn_selftest_run(void)
     test_learn_pipeline();
     test_learn_nvs();
     test_learn_generate();
+    test_learn_wire();
+    test_learn_regate();
     test_ibeacon();
     test_eddystone();
     test_tracker();

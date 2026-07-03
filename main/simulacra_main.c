@@ -136,7 +136,9 @@ static void simulacra_task(void *arg)
 #if SIMULACRA_WEBUI
     coexist_set_wifi_enabled(false);   // keep Wi-Fi free for the config AP
     coexist_start();                    // BLE churn + detection start now
-    webui_run_config_window(120000);    // open AP + dashboard for 2 min (BLE keeps churning)
+    webui_run_config_window(30000);     // idle timeout: hand Wi-Fi to the decoy after 30 s if no phone
+                                        // connects (a connected session re-arms it). Keeps the ESP-NOW
+                                        // responder's deaf-at-boot window short for display-paired units.
     coexist_set_wifi_enabled(true);     // AP down -> Wi-Fi STA up, probe injection resumes
 #else
     coexist_start();

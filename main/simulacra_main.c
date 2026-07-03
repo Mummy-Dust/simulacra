@@ -50,9 +50,11 @@
 #include "generate.h"
 #include "probe.h"
 #include "sniff.h"
+#include "espnow_sniff.h"
 #include "coexist.h"
 #include "detect.h"
 #include "webui.h"
+#include "esp_now_link.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -80,9 +82,19 @@
 #define SIMULACRA_WEBUI 1
 #endif
 
+// Remote ESP-NOW radar link (answers a CYD's telemetry requests). Default 0.
+#ifndef SIMULACRA_ESPNOW
+#define SIMULACRA_ESPNOW 0
+#endif
+
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
 #ifndef SIMULACRA_PROBE
 #define SIMULACRA_PROBE 0
+#endif
+
+// ESP-NOW opsec sniffer (Task 9): Wi-Fi-only ch1 promiscuous verifier for the radar link. Default 0.
+#ifndef SIMULACRA_ESPNOW_SNIFF
+#define SIMULACRA_ESPNOW_SNIFF 0
 #endif
 
 // Sniff mode (verification / Wi-Fi-observe seed): promiscuous-capture probe requests, log counts.
@@ -130,10 +142,15 @@ static void simulacra_task(void *arg)
 #if SIMULACRA_WEBUI
     coexist_set_wifi_enabled(false);   // keep Wi-Fi free for the config AP
     coexist_start();                    // BLE churn + detection start now
-    webui_run_config_window(120000);    // open AP + dashboard for 2 min (BLE keeps churning)
+    webui_run_config_window(30000);     // idle timeout: hand Wi-Fi to the decoy after 30 s if no phone
+                                        // connects (a connected session re-arms it). Keeps the ESP-NOW
+                                        // responder's deaf-at-boot window short for display-paired units.
     coexist_set_wifi_enabled(true);     // AP down -> Wi-Fi STA up, probe injection resumes
 #else
     coexist_start();
+#endif
+#if SIMULACRA_ESPNOW
+    esp_now_link_start();   // listen-only responder; answers CYD requests over ESP-NOW
 #endif
     for (;;) {                                          // this task idles; coexist runs the show
         ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());
@@ -207,6 +224,11 @@ void app_main(void)
 #if SIMULACRA_SNIFF
     // Wi-Fi-only verification mode: promiscuous-capture probe requests, log counts. NimBLE idle.
     sniff_start();
+    return;
+#endif
+#if SIMULACRA_ESPNOW_SNIFF
+    // Wi-Fi-only opsec verifier (Task 9): ch1 promiscuous ESP-NOW decode, log REQ/STATUS + src MAC.
+    espnow_sniff_start();
     return;
 #endif
 

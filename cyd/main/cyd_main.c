@@ -1,0 +1,196 @@
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_ili9341.h"        // swap to esp_lcd_panel_st7789 if Step 1 says ST7789
+#include "driver/spi_master.h"
+#include "driver/ledc.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "radar_render.h"
+#include "radar_gfx.h"
+#include "radar_wire.h"
+#include "radar_ui.h"
+#include "radar_key.h"
+#include "esp_wifi.h"
+#include "esp_now.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+#include <string.h>
+
+#define PIN_MOSI 13
+#define PIN_SCK  14
+#define PIN_CS   15
+#define PIN_DC    2
+#define PIN_RST  (-1)
+#define PIN_BL   21
+#define LCD_W    240
+#define LCD_H    320
+#define TOUCH_IRQ_GPIO 36           // XPT2046 T_IRQ, active-LOW on press (pulled high externally)
+#define ESPNOW_CH 1
+static const char *TAG = "cyd";
+static esp_lcd_panel_handle_t s_panel;
+static SemaphoreHandle_t s_flush_done;
+
+static bool on_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *e, void *ctx){
+    (void)io; (void)e; (void)ctx;
+    BaseType_t hp = pdFALSE; xSemaphoreGiveFromISR(s_flush_done, &hp); return hp == pdTRUE;
+}
+
+// Synchronous flush: blocks until the SPI color transfer completes before returning, so the
+// caller (radar_render_view) can safely reuse/mutate its single scratch band buffer for the
+// next band. Without this, esp_lcd_panel_draw_bitmap's async transfer races the next clear.
+static uint16_t s_txbuf[LCD_W * 40];               // byte-swap scratch (>= one band)
+void cyd_flush(int y0, int h, const uint16_t *buf, void *ctx){
+    (void)ctx;
+    // This CYD's ILI9341 wants big-endian RGB565; our band buffer is native little-endian,
+    // so swap each pixel's bytes into the tx scratch before sending.
+    int n = LCD_W * h;
+    for (int i = 0; i < n; i++) s_txbuf[i] = __builtin_bswap16(buf[i]);
+    esp_lcd_panel_draw_bitmap(s_panel, 0, y0, LCD_W, y0 + h, s_txbuf);
+    xSemaphoreTake(s_flush_done, portMAX_DELAY);
+}
+
+static bool cyd_panel_init(esp_lcd_panel_handle_t *out)
+{
+    s_flush_done = xSemaphoreCreateBinary();
+
+    ledc_timer_config_t lt = { .speed_mode=LEDC_LOW_SPEED_MODE, .duty_resolution=LEDC_TIMER_8_BIT,
+                               .timer_num=LEDC_TIMER_0, .freq_hz=5000, .clk_cfg=LEDC_AUTO_CLK };
+    ledc_timer_config(&lt);
+    ledc_channel_config_t lc = { .gpio_num=PIN_BL, .speed_mode=LEDC_LOW_SPEED_MODE,
+                                 .channel=LEDC_CHANNEL_0, .timer_sel=LEDC_TIMER_0, .duty=255 };
+    ledc_channel_config(&lc);
+
+    spi_bus_config_t bus = { .mosi_io_num=PIN_MOSI, .sclk_io_num=PIN_SCK, .miso_io_num=-1,
+                             .quadwp_io_num=-1, .quadhd_io_num=-1, .max_transfer_sz=LCD_W*40*2+8 };
+    if (spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK) return false;
+    esp_lcd_panel_io_handle_t io = NULL;
+    esp_lcd_panel_io_spi_config_t io_cfg = { .dc_gpio_num=PIN_DC, .cs_gpio_num=PIN_CS,
+        .pclk_hz=40*1000*1000, .lcd_cmd_bits=8, .lcd_param_bits=8, .spi_mode=0, .trans_queue_depth=10,
+        .on_color_trans_done=on_trans_done };
+    if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_cfg, &io) != ESP_OK) return false;
+    esp_lcd_panel_dev_config_t pc = { .reset_gpio_num=PIN_RST, .rgb_ele_order=LCD_RGB_ELEMENT_ORDER_BGR,
+                                      .bits_per_pixel=16 };
+    if (esp_lcd_new_panel_ili9341(io, &pc, out) != ESP_OK) return false;   // or _st7789
+    esp_lcd_panel_reset(*out); esp_lcd_panel_init(*out);
+    esp_lcd_panel_invert_color(*out, false);       // flip if colors look inverted
+    esp_lcd_panel_mirror(*out, true, false);       // this CYD's ILI9341 default is X-mirrored -> un-mirror text
+    esp_lcd_panel_disp_on_off(*out, true);
+    return true;
+}
+
+static void set_backlight(bool on)
+{
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, on ? 255 : 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
+// ---- ESP-NOW radar link (STA on a fixed channel, broadcast, AES-GCM via radar_wire) ----
+static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+static radar_wire_status_t s_status;             // last good status
+static volatile uint32_t   s_status_ms;          // when it arrived (0 = never)
+static radar_replay_t      s_replay;
+static uint8_t  s_salt[4]; static uint64_t s_ctr;
+
+static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
+    (void)info;
+    uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
+    if (radar_wire_open(data,(size_t)len,SIMULACRA_ESPNOW_KEY,&type,pl,&plen,salt,&ctr)!=0) return;
+    if (type!=RADAR_TYPE_STATUS || plen!=sizeof(radar_wire_status_t)) return;
+    if (!radar_replay_ok(&s_replay,salt,ctr)) return;
+    memcpy(&s_status, pl, sizeof s_status);
+    if (s_status.threat_count > RADAR_MAX_THREATS)      // never trust the wire field: threats[] is fixed-size
+        s_status.threat_count = RADAR_MAX_THREATS;      // (a conforming decoy already clamps; this guards the renderer regardless)
+    s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
+    ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
+             (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,
+             (unsigned long)s_status.uptime_s);
+}
+static void send_request(void){
+    uint8_t nonce[4]; esp_fill_random(nonce,4);
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+    if (radar_wire_seal(frame,&flen,RADAR_TYPE_REQUEST,nonce,4,SIMULACRA_ESPNOW_KEY,s_salt,++s_ctr)==0)
+        for (int i=0;i<4;i++) esp_now_send(BCAST,frame,flen);
+}
+static void net_init(void){
+    esp_netif_init(); esp_event_loop_create_default();
+    wifi_init_config_t c=WIFI_INIT_CONFIG_DEFAULT(); esp_wifi_init(&c);
+    esp_wifi_set_storage(WIFI_STORAGE_RAM); esp_wifi_set_mode(WIFI_MODE_STA); esp_wifi_start();
+    esp_wifi_set_channel(ESPNOW_CH, WIFI_SECOND_CHAN_NONE);
+    esp_now_init();
+    esp_now_peer_info_t p={0}; memcpy(p.peer_addr,BCAST,6); p.channel=ESPNOW_CH; p.ifidx=WIFI_IF_STA;
+    esp_now_add_peer(&p); esp_now_register_recv_cb(on_recv);
+    esp_fill_random(s_salt,4);
+    ESP_LOGW(TAG, "espnow up (ch=%d), requesting...", ESPNOW_CH);
+}
+
+// ---- Touch: press-detection only (no coordinates). XPT2046 T_IRQ is active-LOW on contact;
+// the CYD pulls it high externally when idle. Debounce a HIGH->LOW edge (~200ms). ----
+static void touch_init(void){
+    gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << TOUCH_IRQ_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,     // GPIO34-39 are input-only, no internal pulls anyway
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&cfg);
+}
+static bool touched(void){
+    static int last_level = 1;         // idle = HIGH (external pull-up, not pressed)
+    static uint32_t last_edge_ms = 0;
+    int level = gpio_get_level(TOUCH_IRQ_GPIO);
+    uint32_t now = (uint32_t)(esp_timer_get_time()/1000);
+    bool fresh_press = false;
+    if (last_level == 1 && level == 0 && (uint32_t)(now - last_edge_ms) > 200) {
+        fresh_press = true;
+        last_edge_ms = now;
+    }
+    last_level = level;
+    return fresh_press;
+}
+
+// CYD-side freshness overlay: drawn as one extra band over the top of the just-rendered view,
+// so the shared renderer stays untouched. Not shown while data is fresh (<=15s old).
+// The window is wide relative to the ~1s request cadence so an occasional lost
+// ESP-NOW broadcast (BLE+Wi-Fi coexist) doesn't flash a spurious "NO DECOY".
+static void draw_freshness_overlay(uint16_t *band, uint32_t now){
+    if (s_status_ms != 0 && (uint32_t)(now - s_status_ms) <= 15000) return;
+    radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
+    radar_gfx_clear(&g, 0x0000);
+    if (s_status_ms == 0) radar_gfx_text(&g, 56, 16, "SEARCHING...", 0xFFFF);
+    else                  radar_gfx_text(&g, 68, 16, "NO DECOY", 0x7BEF);
+    cyd_flush(0, 40, band, NULL);
+}
+
+void app_main(void)
+{
+    nvs_flash_init();
+    if (!cyd_panel_init(&s_panel)) { ESP_LOGE(TAG, "panel init failed"); return; }
+    touch_init();
+    net_init();
+
+    radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
+    static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;
+    bool bl_was_on = true;
+    ESP_LOGW(TAG, "panel up: live radar loop starting");
+    for(;;){
+        uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
+        if (touched()) { radar_ui_on_input(&ui, now); send_request(); last_req=now; }
+        // keep asking every ~1s while the screen is awake so data stays fresh
+        if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
+        radar_ui_on_tick(&ui, now, s_status.threat_count);
+        if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
+        if (ui.backlight_on){
+            radar_render_view(ui.view, &s_status, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+            draw_freshness_overlay(band, now);
+            sweep=(uint16_t)((sweep+12)%360);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}

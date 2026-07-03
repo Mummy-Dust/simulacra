@@ -12,6 +12,11 @@
 #include "coexist.h"
 #include "detect.h"
 #include "webui.h"
+#include "radar_geom.h"
+#include "radar_ui.h"
+#include "radar_wire.h"
+#include "radar_key.h"
+#include "esp_now_link.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -643,6 +648,92 @@ static void test_webui_json(void)
              "undersized buffer reports truncation");
 }
 
+static void test_radar_geometry(void)
+{
+    uint16_t near = radar_rssi_to_radius(-40, 10, 100);
+    uint16_t mid  = radar_rssi_to_radius(-60, 10, 100);
+    uint16_t far  = radar_rssi_to_radius(-80, 10, 100);
+    ST_CHECK(near < mid && mid < far, "radar radius grows with distance");
+    ST_CHECK(near >= 10 && far <= 100, "radar radius within clamp");
+    ST_CHECK(radar_rssi_to_radius(-20, 10, 100) == near, "very strong clamps near");
+    ST_CHECK(radar_rssi_to_radius(-99, 10, 100) == far,  "very weak clamps far");
+    ST_CHECK(radar_hash_to_angle(0xABCD1234) == radar_hash_to_angle(0xABCD1234),
+             "angle stable per hash");
+    ST_CHECK(radar_hash_to_angle(0xFFFFFFFF) < 360, "angle in range");
+    int x, y;
+    radar_polar_to_xy(120, 160, 50, 0, &x, &y);
+    ST_CHECK(x == 170 && y == 160, "0deg due east");
+    radar_polar_to_xy(120, 160, 50, 90, &x, &y);
+    ST_CHECK(x >= 119 && x <= 121 && y >= 109 && y <= 111, "90deg due north");
+}
+
+static void test_radar_ui(void)
+{
+    radar_ui_t ui;
+    radar_ui_reset(&ui, 1000, 0);
+    ST_CHECK(ui.view == RADAR_VIEW_RADAR && ui.backlight_on, "reset: radar + bl on");
+    radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL, "input 1 -> detail");
+    radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,  "input 2 -> stats");
+    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_RADAR,  "input 3 -> wraps");
+    radar_ui_on_input(&ui, 2000); radar_ui_on_input(&ui, 2000);          // -> stats
+    radar_ui_on_tick(&ui, 2000 + RADAR_VIEW_IDLE_MS + 1, 0);
+    ST_CHECK(ui.view == RADAR_VIEW_RADAR, "idle returns to radar");
+    radar_ui_on_tick(&ui, 2000 + RADAR_BL_IDLE_MS + 2, 0);
+    ST_CHECK(!ui.backlight_on, "clear + idle sleeps backlight");
+    radar_ui_on_tick(&ui, 999999, 1);
+    ST_CHECK(ui.backlight_on && ui.view == RADAR_VIEW_RADAR, "new follower wakes + radar");
+}
+
+static void test_radar_wire(void)
+{
+    radar_wire_status_t st; memset(&st, 0, sizeof st);
+    st.uptime_s = 4242; st.active_devices = 7; st.threat_count = 1;
+    st.threats[0].hash = 0xDEADBEEF; st.threats[0].best_rssi = -44; st.threats[0].epochs = 5;
+
+    uint8_t salt[4] = { 0xAA,0xBB,0xCC,0xDD };
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen = 0;
+    int rc = radar_wire_seal(frame, &flen, RADAR_TYPE_STATUS,
+                             (uint8_t*)&st, sizeof st, SIMULACRA_ESPNOW_KEY, salt, 100);
+    ST_CHECK(rc == 0 && flen == RADAR_HDR_LEN + RADAR_NONCE_LEN + sizeof(st) + RADAR_TAG_LEN,
+             "seal produces a full frame");
+    ST_CHECK(frame[0] == RADAR_MAGIC0 && frame[3] == RADAR_TYPE_STATUS, "header intact");
+
+    uint8_t type, pl[RADAR_FRAME_MAX], osalt[4]; size_t plen = 0; uint64_t ctr = 0;
+    rc = radar_wire_open(frame, flen, SIMULACRA_ESPNOW_KEY, &type, pl, &plen, osalt, &ctr);
+    ST_CHECK(rc == 0 && type == RADAR_TYPE_STATUS && plen == sizeof(st) && ctr == 100,
+             "open round-trips");
+    ST_CHECK(memcmp(pl, &st, sizeof st) == 0, "payload survives round-trip");
+
+    frame[flen - 1] ^= 0x01;                                   // tamper the tag
+    ST_CHECK(radar_wire_open(frame, flen, SIMULACRA_ESPNOW_KEY, &type, pl, &plen, osalt, &ctr) < 0,
+             "tampered frame rejected");
+
+    radar_replay_t rp = {0};
+    ST_CHECK(radar_replay_ok(&rp, salt, 100), "first counter accepted");
+    ST_CHECK(!radar_replay_ok(&rp, salt, 100), "replay of same counter rejected");
+    ST_CHECK(!radar_replay_ok(&rp, salt, 99),  "older counter rejected");
+    ST_CHECK(radar_replay_ok(&rp, salt, 101),  "newer counter accepted");
+    uint8_t salt2[4] = { 1,2,3,4 };
+    ST_CHECK(radar_replay_ok(&rp, salt2, 1),   "reboot (new salt) resets + accepts");
+}
+
+static void test_espnow_convert(void)
+{
+    webui_status_t w; memset(&w, 0, sizeof w);
+    w.uptime_s = 61; w.decoy_paused = true; w.active_devices = 6; w.roster_size = 64;
+    w.probes_sent = 2048; w.epoch = 3; w.pop_ewma = 9; w.total_obs = 500;
+    w.active_target = 6; w.threat_count = 1;
+    w.threats[0].hash = 0xC0FFEE; w.threats[0].vendor = 0x004C;
+    w.threats[0].best_rssi = -50; w.threats[0].epochs = 4;
+
+    radar_wire_status_t r; espnow_status_from_webui(&r, &w);
+    ST_CHECK(r.uptime_s == 61 && r.active_devices == 6 && r.probes_sent == 2048,
+             "scalars copied");
+    ST_CHECK((r.flags & 0x1) != 0, "paused flag packed");
+    ST_CHECK(r.threat_count == 1 && r.threats[0].hash == 0xC0FFEE &&
+             r.threats[0].best_rssi == -50, "threat copied hash-only");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -694,6 +785,10 @@ int churn_selftest_run(void)
     test_detect_nvs();
     test_detect_clear();
     test_webui_json();
+    test_radar_geometry();
+    test_radar_ui();
+    test_radar_wire();
+    test_espnow_convert();
 
     ESP_LOGW(TAG, "SELFTEST: %s (%d/%d)", s_fail ? "FAIL" : "PASS",
              s_total - s_fail, s_total);

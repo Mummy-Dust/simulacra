@@ -46,6 +46,10 @@ const learned_template_t *learn_at(size_t i);
 bool   learn_store_add(const learned_template_t *t, uint16_t sweep_no);
 void   learn_age_out(uint16_t sweep_no);
 
+// Fleet sync (Phase 2b): export/import library records.
+size_t learn_snapshot(learned_template_t *out, size_t max);   // copy up to max records; returns count
+bool   learn_ingest_wire(const learned_template_t *rec);      // regate + max-merge a received record
+
 // --- candidate pipeline (observe hook) ---
 void learn_offer(uint32_t mac_hash, const uint8_t *ad, uint8_t len,
                  uint16_t company, uint32_t now_ms);

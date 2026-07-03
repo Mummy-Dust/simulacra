@@ -141,6 +141,19 @@ bool learn_store_add(const learned_template_t *t, uint16_t sweep_no)
     return ok;
 }
 
+size_t learn_snapshot(learned_template_t *out, size_t max)
+{
+    size_t n = (s_count < max) ? s_count : max;
+    memcpy(out, s_store, n * sizeof(learned_template_t));
+    return n;
+}
+
+bool learn_ingest_wire(const learned_template_t *rec)
+{
+    if (!learn_regate(rec)) return false;
+    return learn_merge_wire(s_store, &s_count, LEARN_CAP, rec, s_sweep);
+}
+
 void learn_age_out(uint16_t sweep_no)
 {
     for (size_t i = 0; i < s_count; ) {

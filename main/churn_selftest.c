@@ -371,6 +371,28 @@ static void test_learn_merge_wire(void)
     ST_CHECK(store[0].reinforce_count == 9, "merge_wire: max raises weight");
 }
 
+static void test_learn_snapshot_ingest(void)
+{
+    learn_reset();
+    // Ingest two clean records as if received over the wire.
+    learned_template_t a; mk_shape(&a, 0x0075); a.reinforce_count = 3;
+    learned_template_t b; mk_shape(&b, 0x009E); b.reinforce_count = 1;
+    ST_CHECK(learn_ingest_wire(&a) && learn_ingest_wire(&b), "ingest: two clean records accepted");
+    ST_CHECK(learn_count() == 2, "ingest: store holds both");
+
+    // A tampered record (forbidden subtype) is rejected by the re-gate.
+    learned_template_t evil = a; uint8_t bad[9] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
+    memcpy(evil.ad, bad, 9); evil.ad_len = 9; evil.shape_hash = learn_shape_hash(&evil);
+    ST_CHECK(!learn_ingest_wire(&evil), "ingest: forbidden record rejected");
+    ST_CHECK(learn_count() == 2, "ingest: store unchanged after reject");
+
+    // Snapshot exports what is held.
+    learned_template_t out[8];
+    size_t n = learn_snapshot(out, 8);
+    ST_CHECK(n == 2, "snapshot: exports the stored count");
+    learn_reset();
+}
+
 static void test_ibeacon(void)
 {
     const device_template_t *t = find_family(FMT_IBEACON);
@@ -993,6 +1015,7 @@ int churn_selftest_run(void)
     test_learn_wire();
     test_learn_regate();
     test_learn_merge_wire();
+    test_learn_snapshot_ingest();
     test_ibeacon();
     test_eddystone();
     test_tracker();

@@ -14,6 +14,7 @@
 #include "radar_wire.h"
 #include "radar_ui.h"
 #include "radar_key.h"
+#include "learn_wire.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_event.h"
@@ -97,25 +98,62 @@ static volatile uint32_t   s_status_ms;          // when it arrived (0 = never)
 static radar_replay_t      s_replay;
 static uint8_t  s_salt[4]; static uint64_t s_ctr;
 
+#define VIGIL_LIB_CAP 128
+static learned_template_t s_lib[VIGIL_LIB_CAP];
+static size_t             s_lib_count;
+static radar_replay_t     s_offer_replay;   // reject replayed LEARN_OFFER
+static uint16_t           s_lib_sweep;      // local "time" for merges/age (monotonic tick)
+
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
     (void)info;
     uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
     if (radar_wire_open(data,(size_t)len,SIMULACRA_ESPNOW_KEY,&type,pl,&plen,salt,&ctr)!=0) return;
-    if (type!=RADAR_TYPE_STATUS || plen!=sizeof(radar_wire_status_t)) return;
-    if (!radar_replay_ok(&s_replay,salt,ctr)) return;
-    memcpy(&s_status, pl, sizeof s_status);
-    if (s_status.threat_count > RADAR_MAX_THREATS)      // never trust the wire field: threats[] is fixed-size
-        s_status.threat_count = RADAR_MAX_THREATS;      // (a conforming decoy already clamps; this guards the renderer regardless)
-    s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
-    ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
-             (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,
-             (unsigned long)s_status.uptime_s);
+    if (type==RADAR_TYPE_STATUS && plen==sizeof(radar_wire_status_t)) {
+        if (!radar_replay_ok(&s_replay,salt,ctr)) return;
+        memcpy(&s_status, pl, sizeof s_status);
+        if (s_status.threat_count > RADAR_MAX_THREATS)      // never trust the wire field: threats[] is fixed-size
+            s_status.threat_count = RADAR_MAX_THREATS;      // (a conforming decoy already clamps; this guards the renderer regardless)
+        s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
+        ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
+                 (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,
+                 (unsigned long)s_status.uptime_s);
+        return;
+    }
+    if (type==RADAR_TYPE_LEARN_OFFER) {
+        if (!radar_replay_ok(&s_offer_replay, salt, ctr)) return;
+        learn_chunk_hdr_t h; learned_template_t rx[LEARN_WIRE_RECS_PER_CHUNK]; uint8_t nr;
+        if (learn_wire_unpack(pl, plen, rx, &nr, &h) != 0) return;
+        for (uint8_t i = 0; i < nr; i++)
+            if (learn_regate(&rx[i]))
+                learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rx[i], s_lib_sweep);
+        ESP_LOGW(TAG, "offer rx: +%u recs, lib=%u", (unsigned)nr, (unsigned)s_lib_count);
+        return;
+    }
 }
 static void send_request(void){
     uint8_t nonce[4]; esp_fill_random(nonce,4);
     uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
     if (radar_wire_seal(frame,&flen,RADAR_TYPE_REQUEST,nonce,4,SIMULACRA_ESPNOW_KEY,s_salt,++s_ctr)==0)
         for (int i=0;i<4;i++) esp_now_send(BCAST,frame,flen);
+}
+static void broadcast_library(void){
+    if (s_lib_count == 0) return;
+    s_lib_sweep++;
+    // top-N by reinforce_count: simple selection into a send buffer (N == whole lib here, cap fits chunks)
+    uint8_t chunks = (uint8_t)((s_lib_count + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
+    for (uint8_t ci = 0; ci < chunks; ci++) {
+        size_t off = (size_t)ci * LEARN_WIRE_RECS_PER_CHUNK;
+        uint8_t nrec = (uint8_t)((s_lib_count - off < LEARN_WIRE_RECS_PER_CHUNK)
+                                 ? (s_lib_count - off) : LEARN_WIRE_RECS_PER_CHUNK);
+        uint8_t pl[RADAR_FRAME_MAX]; size_t plen;
+        if (learn_wire_pack(pl, &plen, &s_lib[off], nrec, 1, ci, chunks) != 0) continue;
+        uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+        if (radar_wire_seal(frame, &flen, RADAR_TYPE_LEARN_SYNC, pl, plen,
+                            SIMULACRA_ESPNOW_KEY, s_salt, ++s_ctr) == 0)
+            esp_now_send(BCAST, frame, flen);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    ESP_LOGW(TAG, "broadcast library (%u recs)", (unsigned)s_lib_count);
 }
 static void net_init(void){
     esp_netif_init(); esp_event_loop_create_default();
@@ -184,6 +222,8 @@ void app_main(void)
         if (touched()) { radar_ui_on_input(&ui, now); send_request(); last_req=now; }
         // keep asking every ~1s while the screen is awake so data stays fresh
         if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
+        static uint32_t last_sync = 0;
+        if (now - last_sync > 20000) { last_sync = now; broadcast_library(); }   // every 20 s
         radar_ui_on_tick(&ui, now, s_status.threat_count);
         if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
         if (ui.backlight_on){

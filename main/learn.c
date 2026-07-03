@@ -1,0 +1,272 @@
+#include <string.h>
+#include "sdkconfig.h"
+#include "learn.h"
+#include "law3.h"
+#include "esp_random.h"
+#include "nvs.h"
+
+// AD type constants
+#define AD_FLAGS        0x01
+#define AD_UUID16_INC   0x02
+#define AD_UUID16_CMP   0x03
+#define AD_NAME_SHORT   0x08
+#define AD_NAME_CMP     0x09
+#define AD_TXPOWER      0x0A
+#define AD_APPEARANCE   0x19
+#define AD_SVCDATA16    0x16
+#define AD_MFG          0xFF
+
+// --- state ---
+static learned_template_t s_store[LEARN_CAP];
+static size_t             s_count;
+
+typedef struct {
+    uint32_t          mac_hash;
+    uint32_t          last_ms;
+    uint16_t          sightings;
+    bool              used;
+    bool              promoted;
+    uint16_t          itvl_min_ms, itvl_max_ms;
+    learned_template_t skel;      // stripped once on first sighting
+    bool              valid;      // strip succeeded
+} learn_cand_t;
+
+static learn_cand_t s_cand[LEARN_CAND_SLOTS];
+static uint16_t     s_sweep;
+
+// ============================ identity-strip =============================
+
+static void mask_range(uint32_t *m, uint8_t from, uint8_t to)  // [from,to)
+{ for (uint8_t i = from; i < to && i < 31; i++) *m |= (1u << i); }
+
+bool learn_strip(const uint8_t *ad, uint8_t len, uint16_t company,
+                 learned_template_t *out)
+{
+    if (!ad || len == 0 || len > 31) return false;
+    if (law3_forbidden(ad, len)) return false;
+
+    memset(out, 0, sizeof(*out));
+    memcpy(out->ad, ad, len);
+    out->ad_len = len;
+    out->company_id = company;
+
+    for (uint8_t i = 0; i + 1 < len; ) {
+        uint8_t l = ad[i];
+        if (l == 0 || i + 1 + l > len) return false;     // malformed => reject
+        uint8_t type = ad[i + 1];
+        uint8_t vfrom = i + 2;                            // first value byte
+        uint8_t vto   = i + 1 + l;                        // one past last
+        switch (type) {
+            case AD_FLAGS: case AD_UUID16_INC: case AD_UUID16_CMP:
+            case AD_TXPOWER: case AD_APPEARANCE:
+                break;                                    // keep verbatim
+            case AD_NAME_SHORT: case AD_NAME_CMP:
+                out->name_off = vfrom;                    // replaced at render, not masked
+                out->name_len = (uint8_t)(vto - vfrom);
+                break;
+            case AD_MFG:
+                if (vto - vfrom >= 2) {                   // keep company id, mask blob
+                    // iBeacon: keep 4C 00 02 15 prefix, mask the rest
+                    if (ad[vfrom] == 0x4C && ad[vfrom+1] == 0x00 &&
+                        (vto - vfrom) >= 4 && ad[vfrom+2] == 0x02 && ad[vfrom+3] == 0x15)
+                        mask_range(&out->rand_mask, vfrom + 4, vto);
+                    else
+                        mask_range(&out->rand_mask, vfrom + 2, vto);
+                } else return false;
+                break;
+            case AD_SVCDATA16:
+                if (vto - vfrom >= 2) {
+                    out->svc_uuid = (uint16_t)(ad[vfrom] | (ad[vfrom+1] << 8));
+                    mask_range(&out->rand_mask, vfrom + 2, vto);
+                } else return false;
+                break;
+            default:                                      // unknown: keep shape, mask value
+                mask_range(&out->rand_mask, vfrom, vto);
+                break;
+        }
+        i += 1 + l;
+    }
+    // best-effort family (metadata for generation matching)
+    if (company == 0x004C) out->family = FMT_IBEACON;
+    else if (out->svc_uuid == 0xFEAA) out->family = FMT_EDDYSTONE_UID;
+    else if (out->svc_uuid == 0xFEED) out->family = FMT_SVC_TRACKER;
+    else out->family = FMT_VENDOR_MFG;
+    return true;
+}
+
+// ============================ hash + render =============================
+
+static const char *SYN_NAMES[] = { "Buds","Watch","Band","Beat","Sensor","Tag","Speaker","Fit" };
+
+uint32_t learn_shape_hash(const learned_template_t *t)
+{
+    uint32_t h = 2166136261u;
+    #define FNV(b) do { h ^= (uint8_t)(b); h *= 16777619u; } while (0)
+    FNV(t->family); FNV(t->company_id); FNV(t->company_id >> 8);
+    FNV(t->svc_uuid); FNV(t->svc_uuid >> 8);
+    for (uint8_t i = 0; i + 1 < t->ad_len; ) {           // type/length sequence only
+        uint8_t l = t->ad[i];
+        if (l == 0 || i + 1 + l > t->ad_len) break;
+        FNV(l); FNV(t->ad[i + 1]);
+        i += 1 + l;
+    }
+    #undef FNV
+    return h;
+}
+
+int learn_render(const learned_template_t *t, uint8_t out[31],
+                 uint8_t *out_len, uint16_t *out_itvl_ms)
+{
+    memcpy(out, t->ad, t->ad_len);
+    for (uint8_t i = 0; i < t->ad_len && i < 31; i++)
+        if (t->rand_mask & (1u << i)) out[i] = (uint8_t)(esp_random() & 0xff);
+    if (t->name_len) {                                   // synthetic name, fit to length
+        const char *nm = SYN_NAMES[esp_random() % (sizeof(SYN_NAMES)/sizeof(SYN_NAMES[0]))];
+        uint8_t nl = (uint8_t)strlen(nm);
+        for (uint8_t i = 0; i < t->name_len; i++)
+            out[t->name_off + i] = (i < nl) ? (uint8_t)nm[i] : (uint8_t)('0' + (esp_random() % 10));
+    }
+    *out_len = t->ad_len;
+    uint16_t lo = t->itvl_min_ms, hi = t->itvl_max_ms;
+    if (hi < lo) hi = lo;
+    *out_itvl_ms = lo + (hi > lo ? (uint16_t)(esp_random() % (hi - lo + 1)) : 0);
+    return 0;
+}
+
+// ============================== store ==================================
+
+void   learn_reset(void)
+{ memset(s_store, 0, sizeof(s_store)); s_count = 0; memset(s_cand, 0, sizeof(s_cand)); s_sweep = 0; }
+size_t learn_count(void) { return s_count; }
+const learned_template_t *learn_at(size_t i) { return (i < s_count) ? &s_store[i] : NULL; }
+
+static int find_shape(uint32_t hash)
+{
+    for (size_t i = 0; i < s_count; i++) if (s_store[i].shape_hash == hash) return (int)i;
+    return -1;
+}
+static size_t weakest(void)   // lowest reinforce_count, tie -> oldest last_seen
+{
+    size_t w = 0;
+    for (size_t i = 1; i < s_count; i++) {
+        if (s_store[i].reinforce_count < s_store[w].reinforce_count ||
+            (s_store[i].reinforce_count == s_store[w].reinforce_count &&
+             s_store[i].last_seen_sweep < s_store[w].last_seen_sweep)) w = i;
+    }
+    return w;
+}
+
+bool learn_store_add(const learned_template_t *t, uint16_t sweep_no)
+{
+    int idx = find_shape(t->shape_hash);
+    if (idx >= 0) {                                    // reinforce existing
+        learned_template_t *e = &s_store[idx];
+        if (e->reinforce_count < 0xFFFF) e->reinforce_count++;
+        e->last_seen_sweep = sweep_no;
+        if (t->itvl_min_ms < e->itvl_min_ms) e->itvl_min_ms = t->itvl_min_ms;
+        if (t->itvl_max_ms > e->itvl_max_ms) e->itvl_max_ms = t->itvl_max_ms;
+        return true;
+    }
+    if (s_count < LEARN_CAP) {                          // free slot
+        s_store[s_count] = *t;
+        s_store[s_count].last_seen_sweep = sweep_no;
+        s_count++;
+        return true;
+    }
+    size_t w = weakest();                               // full: evict weakest if new is >=
+    if (t->reinforce_count < s_store[w].reinforce_count) return false;
+    s_store[w] = *t;
+    s_store[w].last_seen_sweep = sweep_no;
+    return true;
+}
+
+void learn_age_out(uint16_t sweep_no)
+{
+    for (size_t i = 0; i < s_count; ) {
+        if ((uint16_t)(sweep_no - s_store[i].last_seen_sweep) > LEARN_AGEOUT_SWEEPS) {
+            s_store[i] = s_store[--s_count];            // swap-remove
+        } else i++;
+    }
+}
+
+// ========================= candidate pipeline ==========================
+
+void learn_offer(uint32_t mac_hash, const uint8_t *ad, uint8_t len,
+                 uint16_t company, uint32_t now_ms)
+{
+    learn_cand_t *c = NULL, *freep = NULL;
+    for (size_t i = 0; i < LEARN_CAND_SLOTS; i++) {
+        if (s_cand[i].used && s_cand[i].mac_hash == mac_hash) { c = &s_cand[i]; break; }
+        if (!s_cand[i].used && !freep) freep = &s_cand[i];
+    }
+    if (!c) {                                        // new candidate
+        if (!freep) return;                          // table full: drop this sweep
+        c = freep;
+        memset(c, 0, sizeof(*c));
+        c->used = true; c->mac_hash = mac_hash; c->last_ms = now_ms; c->sightings = 1;
+        c->valid = learn_strip(ad, len, company, &c->skel);   // reject => valid=false
+        return;
+    }
+    // repeat sighting: interval sample + count
+    int32_t itvl = (int32_t)(now_ms - c->last_ms);
+    if (itvl > 0 && itvl < 60000) {
+        uint16_t v = (uint16_t)itvl;
+        if (c->itvl_min_ms == 0 || v < c->itvl_min_ms) c->itvl_min_ms = v;
+        if (v > c->itvl_max_ms) c->itvl_max_ms = v;
+    }
+    c->last_ms = now_ms;
+    if (c->sightings < 0xFFFF) c->sightings++;
+    if (c->valid && !c->promoted && c->sightings >= LEARN_MIN_SIGHTINGS) {
+        c->skel.itvl_min_ms = c->itvl_min_ms ? c->itvl_min_ms : 100;
+        c->skel.itvl_max_ms = c->itvl_max_ms ? c->itvl_max_ms : 200;
+        c->skel.shape_hash  = learn_shape_hash(&c->skel);
+        learn_store_add(&c->skel, s_sweep);
+        c->promoted = true;
+    }
+}
+
+void learn_end_sweep(uint16_t sweep_no)
+{
+    s_sweep = sweep_no;
+    learn_age_out(sweep_no);
+    memset(s_cand, 0, sizeof(s_cand));               // wipe transient candidates
+}
+
+// ============================== NVS ====================================
+// On-NVS layout: [uint32 magic][uint16 version][uint16 count][count * learned_template_t]
+
+int learn_save_nvs(void)
+{
+    size_t bytes = 8 + s_count * sizeof(learned_template_t);
+    static uint8_t buf[8 + LEARN_CAP * sizeof(learned_template_t)];
+    uint32_t magic = LEARN_DB_MAGIC; uint16_t ver = LEARN_DB_VERSION, cnt = (uint16_t)s_count;
+    memcpy(buf, &magic, 4); memcpy(buf + 4, &ver, 2); memcpy(buf + 6, &cnt, 2);
+    memcpy(buf + 8, s_store, s_count * sizeof(learned_template_t));
+
+    nvs_handle_t h;
+    esp_err_t e = nvs_open("splinter", NVS_READWRITE, &h);
+    if (e != ESP_OK) return (int)e;
+    e = nvs_set_blob(h, "learn_db", buf, bytes);
+    if (e == ESP_OK) e = nvs_commit(h);
+    nvs_close(h);
+    return (int)e;
+}
+
+int learn_load_nvs(void)
+{
+    static uint8_t buf[8 + LEARN_CAP * sizeof(learned_template_t)];
+    nvs_handle_t h;
+    esp_err_t e = nvs_open("splinter", NVS_READONLY, &h);
+    if (e != ESP_OK) return (int)e;
+    size_t len = sizeof(buf);
+    e = nvs_get_blob(h, "learn_db", buf, &len);
+    nvs_close(h);
+    if (e != ESP_OK || len < 8) return -1;
+    uint32_t magic; uint16_t ver, cnt;
+    memcpy(&magic, buf, 4); memcpy(&ver, buf + 4, 2); memcpy(&cnt, buf + 6, 2);
+    if (magic != LEARN_DB_MAGIC || ver != LEARN_DB_VERSION) return -1;
+    if (cnt > LEARN_CAP || len != 8u + (size_t)cnt * sizeof(learned_template_t)) return -1;
+    memcpy(s_store, buf + 8, (size_t)cnt * sizeof(learned_template_t));
+    s_count = cnt;
+    return 0;
+}

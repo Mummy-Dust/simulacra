@@ -362,14 +362,19 @@ static void test_learn_merge_wire(void)
     ST_CHECK(learn_merge_wire(store, &cnt, 4, &a, 1) && cnt == 1, "merge_wire: first insert");
     ST_CHECK(store[0].reinforce_count == 5, "merge_wire: keeps incoming weight on insert");
 
-    // Re-merging the same record must NOT inflate the weight (max, not increment).
-    learn_merge_wire(store, &cnt, 4, &a, 2);
+    // Re-merging the same record must NOT inflate the weight (max, not increment) —
+    // and a pure no-op duplicate reports "unchanged" so Vigil doesn't re-save the blob.
+    ST_CHECK(!learn_merge_wire(store, &cnt, 4, &a, 2), "merge_wire: no-op dup reports unchanged");
     ST_CHECK(cnt == 1 && store[0].reinforce_count == 5, "merge_wire: dup keeps max (no inflation)");
 
-    // A stronger copy raises it to the max.
+    // A stronger copy raises it to the max — that IS a change.
     learned_template_t a2 = a; a2.reinforce_count = 9;
-    learn_merge_wire(store, &cnt, 4, &a2, 3);
+    ST_CHECK(learn_merge_wire(store, &cnt, 4, &a2, 3), "merge_wire: max raise reports changed");
     ST_CHECK(store[0].reinforce_count == 9, "merge_wire: max raises weight");
+
+    // Widening the interval band is also a durable change.
+    learned_template_t a3 = store[0]; a3.itvl_max_ms = store[0].itvl_max_ms + 100;
+    ST_CHECK(learn_merge_wire(store, &cnt, 4, &a3, 4), "merge_wire: interval widen reports changed");
 }
 
 static void test_learn_snapshot_ingest(void)

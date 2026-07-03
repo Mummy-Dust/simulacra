@@ -10,6 +10,8 @@ bool learn_merge(learned_template_t *store, size_t *count, size_t cap,
 
 // Like learn_merge, but a duplicate takes max(reinforce_count) instead of incrementing —
 // used on the wire-receive path so re-broadcasts don't inflate a shape's weight.
+// Returns true iff the store materially changed (insert, replace, weight raise, or
+// interval widen); a pure no-op duplicate returns false so callers can gate persistence.
 bool learn_merge_wire(learned_template_t *store, size_t *count, size_t cap,
                       const learned_template_t *rec, uint16_t sweep_no);
 

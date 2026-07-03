@@ -20,6 +20,7 @@
 #include "law3.h"
 #include "learn.h"
 #include "learn_wire.h"
+#include "learn_db.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -391,6 +392,18 @@ static void test_learn_snapshot_ingest(void)
     size_t n = learn_snapshot(out, 8);
     ST_CHECK(n == 2, "snapshot: exports the stored count");
     learn_reset();
+}
+
+static void test_learn_db_key(void)
+{
+    uint8_t k1[32], k2[32];
+    learn_db_derive_key(SIMULACRA_ESPNOW_KEY, k1);
+    learn_db_derive_key(SIMULACRA_ESPNOW_KEY, k2);
+    ST_CHECK(memcmp(k1, k2, 32) == 0, "db key: deterministic");
+    ST_CHECK(memcmp(k1, SIMULACRA_ESPNOW_KEY, 32) != 0, "db key: distinct from session PSK");
+    uint8_t other[32]; memcpy(other, SIMULACRA_ESPNOW_KEY, 32); other[0] ^= 0xFF;
+    uint8_t k3[32]; learn_db_derive_key(other, k3);
+    ST_CHECK(memcmp(k1, k3, 32) != 0, "db key: depends on PSK");
 }
 
 static void test_ibeacon(void)
@@ -1016,6 +1029,7 @@ int churn_selftest_run(void)
     test_learn_regate();
     test_learn_merge_wire();
     test_learn_snapshot_ingest();
+    test_learn_db_key();
     test_ibeacon();
     test_eddystone();
     test_tracker();

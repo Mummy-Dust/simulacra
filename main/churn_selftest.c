@@ -17,6 +17,8 @@
 #include "radar_wire.h"
 #include "radar_key.h"
 #include "esp_now_link.h"
+#include "law3.h"
+#include "learn.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -141,12 +143,167 @@ static const device_template_t *find_family(fmt_family_t fam)
 
 // Refined Law 3: a payload must never carry an Apple Continuity pop-up subtype
 // (0x07 proximity pairing, 0x0F nearby action) or Find My (0x12). iBeacon (0x02) is fine.
-static bool has_apple_popup_subtype(const uint8_t *p, uint8_t len)
+// has_apple_popup_subtype + law3_forbidden now live in law3.{h,c} (shared with learn.c).
+static void test_law3(void)
 {
-    for (int i = 0; i + 2 < len; i++)
-        if (p[i] == 0x4C && p[i+1] == 0x00 &&
-            (p[i+2] == 0x07 || p[i+2] == 0x0F || p[i+2] == 0x12)) return true;
-    return false;
+    // Apple Continuity nearby-action (0x0F) mfg-data: 4C 00 0F .. -> forbidden
+    uint8_t nearby[] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
+    ST_CHECK(law3_forbidden(nearby, sizeof nearby), "law3: Apple nearby-action forbidden");
+
+    // iBeacon (0x02) is allowed
+    uint8_t ibeacon[] = { 0x02,0x01,0x06, 0x1A,0xFF,0x4C,0x00,0x02,0x15,
+                          0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0, 0,0, 0xC5 };
+    ST_CHECK(!law3_forbidden(ibeacon, sizeof ibeacon), "law3: iBeacon allowed");
+
+    // Microsoft Swift Pair: mfg len 5 (type + company 0006 + subtype) -> forbidden
+    uint8_t swift[] = { 0x05,0xFF,0x06,0x00,0x03,0x00 };
+    ST_CHECK(law3_forbidden(swift, sizeof swift), "law3: Swift Pair forbidden");
+
+    // Google Fast Pair: svc-data len 5 (type + UUID 0xFE2C + payload) -> forbidden
+    uint8_t fastpair[] = { 0x03,0x03,0x2C,0xFE, 0x05,0x16,0x2C,0xFE,0x00,0x00 };
+    ST_CHECK(law3_forbidden(fastpair, sizeof fastpair), "law3: Fast Pair forbidden");
+
+    // Plain vendor-mfg (Samsung 0x0075) -> allowed
+    uint8_t vendor[] = { 0x06,0xFF,0x75,0x00,0x01,0x02,0x03 };
+    ST_CHECK(!law3_forbidden(vendor, sizeof vendor), "law3: plain vendor allowed");
+}
+
+// ---- self-learning templates (learn.c) ----
+
+static void mk_shape(learned_template_t *t, uint16_t company)
+{
+    memset(t, 0, sizeof(*t));
+    t->ad_len = 6; t->ad[0]=0x05; t->ad[1]=0xFF;
+    t->ad[2]=(uint8_t)company; t->ad[3]=(uint8_t)(company>>8); t->ad[4]=1; t->ad[5]=2;
+    t->company_id = company; t->family = FMT_VENDOR_MFG;
+    t->itvl_min_ms = 100; t->itvl_max_ms = 200;
+    t->shape_hash = learn_shape_hash(t);
+}
+
+static void test_learn_strip(void)
+{
+    learned_template_t t;
+    // Named Samsung earbud: flags + mfg(0075 AB CD) + complete-name "Buds Pro"
+    uint8_t named[] = { 0x02,0x01,0x06,
+                        0x05,0xFF,0x75,0x00,0xAB,0xCD,
+                        0x09,0x09,'B','u','d','s',' ','P','r','o' };
+    ST_CHECK(learn_strip(named, sizeof named, 0x0075, &t), "strip: named earbud accepted");
+    ST_CHECK(t.company_id == 0x0075, "strip: company_id preserved");
+    ST_CHECK(t.name_len == 8 && t.name_off > 0, "strip: name region captured");
+    ST_CHECK((t.rand_mask & (1u << 7)) && (t.rand_mask & (1u << 8)),
+             "strip: mfg blob bytes masked");
+    ST_CHECK(!(t.rand_mask & (1u << 5)) && !(t.rand_mask & (1u << 6)),
+             "strip: company id not masked");
+    uint8_t nearby[] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
+    ST_CHECK(!learn_strip(nearby, sizeof nearby, 0x004C, &t), "strip: forbidden rejected");
+
+    // Zero-padded AD (common on real reports): trailing zeros are end-of-AD, not a reject.
+    uint8_t padded[] = { 0x02,0x01,0x06, 0x05,0xFF,0x75,0x00,0xAB,0xCD, 0x00,0x00,0x00 };
+    ST_CHECK(learn_strip(padded, sizeof padded, 0x0075, &t), "strip: zero-padded AD accepted");
+}
+
+static void test_learn_render(void)
+{
+    uint8_t named[] = { 0x02,0x01,0x06,
+                        0x05,0xFF,0x75,0x00,0xAB,0xCD,
+                        0x09,0x09,'B','u','d','s',' ','P','r','o' };
+    learned_template_t t;
+    ST_CHECK(learn_strip(named, sizeof named, 0x0075, &t), "render: strip ok");
+    t.itvl_min_ms = 100; t.itvl_max_ms = 200;
+
+    learned_template_t t2 = t; t2.company_id = 0x009E; t2.ad[2] = 0x9E;
+    t2.shape_hash = learn_shape_hash(&t2);
+    ST_CHECK(learn_shape_hash(&t) == learn_shape_hash(&t),  "hash: stable");
+    ST_CHECK(learn_shape_hash(&t) != learn_shape_hash(&t2), "hash: company changes it");
+
+    uint8_t a[31], b[31]; uint8_t la, lb; uint16_t ia, ib;
+    ST_CHECK(learn_render(&t, a, &la, &ia) == 0, "render a ok");
+    ST_CHECK(learn_render(&t, b, &lb, &ib) == 0, "render b ok");
+    ST_CHECK(la == lb && la <= 31, "render: same length, in budget");
+    ST_CHECK(!law3_forbidden(a, la), "render: Law-3 clean");
+    ST_CHECK(ia >= 100 && ia <= 200, "render: interval in band");
+    ST_CHECK(a[5] == b[5] && a[6] == b[6], "render: company id stable");
+}
+
+static void test_learn_store(void)
+{
+    learn_reset();
+    ST_CHECK(learn_count() == 0, "store: empty after reset");
+
+    learned_template_t a; mk_shape(&a, 0x0075);
+    ST_CHECK(learn_store_add(&a, 1) && learn_count() == 1, "store: first add");
+    ST_CHECK(learn_store_add(&a, 2) && learn_count() == 1, "store: dedup reinforces");
+    ST_CHECK(learn_at(0)->reinforce_count >= 1, "store: reinforce_count bumped");
+
+    learned_template_t b; mk_shape(&b, 0x009E);
+    ST_CHECK(learn_store_add(&b, 2) && learn_count() == 2, "store: distinct shape added");
+
+    learn_age_out(2 + LEARN_AGEOUT_SWEEPS + 1);
+    ST_CHECK(learn_count() < 2, "store: stale entry aged out");
+}
+
+static void test_learn_pipeline(void)
+{
+    learn_reset();
+    uint8_t buds[] = { 0x02,0x01,0x06, 0x05,0xFF,0x75,0x00,0xAB,0xCD };
+    uint32_t H = 0xBEEF1234;
+
+    for (int i = 0; i < LEARN_MIN_SIGHTINGS - 1; i++)
+        learn_offer(H, buds, sizeof buds, 0x0075, 100 * (i + 1));
+    ST_CHECK(learn_count() == 0, "pipeline: below K not learned");
+
+    learn_offer(H, buds, sizeof buds, 0x0075, 100 * LEARN_MIN_SIGHTINGS);
+    ST_CHECK(learn_count() == 1, "pipeline: reaching K promotes one template");
+
+    uint8_t nearby[] = { 0x02,0x01,0x06, 0x05,0xFF,0x4C,0x00,0x0F,0x01 };
+    for (int i = 0; i < LEARN_MIN_SIGHTINGS + 2; i++)
+        learn_offer(0xF00D, nearby, sizeof nearby, 0x004C, 50 * (i + 1));
+    ST_CHECK(learn_count() == 1, "pipeline: forbidden never promoted");
+
+    learn_end_sweep(1);
+    learn_offer(H, buds, sizeof buds, 0x0075, 10);
+    ST_CHECK(learn_count() == 1, "pipeline: post-sweep single sighting no new promote");
+}
+
+static void test_learn_nvs(void)
+{
+    learn_reset();
+    learned_template_t a; mk_shape(&a, 0x0075); learn_store_add(&a, 1);
+    learned_template_t b; mk_shape(&b, 0x009E); learn_store_add(&b, 1);
+    ST_CHECK(learn_count() == 2, "learn nvs: two before save");
+    ST_CHECK(learn_save_nvs() == 0, "learn nvs: save ok");
+
+    learn_reset();
+    ST_CHECK(learn_count() == 0, "learn nvs: reset clears RAM");
+    ST_CHECK(learn_load_nvs() == 0, "learn nvs: load ok");
+    ST_CHECK(learn_count() == 2, "learn nvs: two restored");
+    ST_CHECK(learn_at(0)->company_id == 0x0075, "learn nvs: entry round-trips");
+}
+
+static void test_learn_generate(void)
+{
+    learn_reset();
+    uint8_t buds[] = { 0x02,0x01,0x06, 0x05,0xFF,0x75,0x00,0xAB,0xCD };
+    for (int i = 0; i < LEARN_MIN_SIGHTINGS; i++)
+        learn_offer(0xABCD, buds, sizeof buds, 0x0075, 100 * (i + 1));
+    ST_CHECK(learn_count() == 1, "gen: one learned shape seeded");
+
+    rf_model_t m; rf_model_reset(&m);
+    for (int i = 0; i < 60; i++) rf_model_observe(&m, 0x0075, -50, 0, 150);
+    rf_model_end_sweep(&m, 5 /*distinct*/, 15000 /*window_ms*/, 5 /*arrivals*/);
+
+    identity_t roster[8];
+    size_t n = generate_roster(&m, roster, 8);
+    ST_CHECK(n == 8, "gen: full roster built");
+    bool clean = true, bound = true;
+    for (size_t i = 0; i < 8; i++) {
+        if (roster[i].payload_len == 0 || roster[i].payload_len > 31) clean = false;
+        if (has_apple_popup_subtype(roster[i].payload, roster[i].payload_len)) clean = false;
+        if (roster[i].archetype_idx >= templates_count() + learn_count()) bound = false;
+    }
+    ST_CHECK(clean, "gen: learned-inclusive roster payloads clean & in-budget");
+    ST_CHECK(bound, "gen: archetype_idx within static+learned range");
+    learn_reset();   // leave the global store empty for subsequent tests
 }
 
 static void test_ibeacon(void)
@@ -217,7 +374,7 @@ static void test_roster_payloads(void)
         if ((id->addr[5] & 0xc0) != 0xc0) macs_ok = false;
         if (id->payload_len == 0 || id->payload_len > 31) payload_ok = false;
         if (has_apple_popup_subtype(id->payload, id->payload_len)) no_popup = false;
-        if (id->archetype_idx >= templates_count()) archetype_ok = false;
+        if (id->archetype_idx >= templates_count() + learn_count()) archetype_ok = false;
     }
     ST_CHECK(macs_ok, "roster: all MACs random-static");
     ST_CHECK(payload_ok, "roster: all payloads non-empty and <=31B");
@@ -331,7 +488,7 @@ static void test_generate(void)
         if (roster[i].payload_len==0 || roster[i].payload_len>31) budget=false;
         if ((roster[i].addr[5]&0xc0)!=0xc0) mac=false;
         if (has_apple_popup_subtype(roster[i].payload, roster[i].payload_len)) nopop=false;
-        if (roster[i].archetype_idx >= templates_count()) arch=false;
+        if (roster[i].archetype_idx >= templates_count() + learn_count()) arch=false;
     }
     ST_CHECK(budget, "generated payloads fit 31 bytes");
     ST_CHECK(mac, "generated MACs are random-static");
@@ -358,7 +515,7 @@ static void test_roster_generate_path(void)
         identity_t *id=roster_at(i);
         if (id->payload_len==0 || id->payload_len>31) ok=false;
         if (has_apple_popup_subtype(id->payload,id->payload_len)) ok=false;
-        if (id->archetype_idx>=templates_count()) ok=false;
+        if (id->archetype_idx>=templates_count() + learn_count()) ok=false;
     }
     ST_CHECK(ok, "roster_init generate path: all payloads valid, Law-3-clean, valid archetype");
 }
@@ -761,6 +918,13 @@ int churn_selftest_run(void)
 
     // --- M4 templates ---
     test_templates();
+    test_law3();
+    test_learn_strip();
+    test_learn_render();
+    test_learn_store();
+    test_learn_pipeline();
+    test_learn_nvs();
+    test_learn_generate();
     test_ibeacon();
     test_eddystone();
     test_tracker();

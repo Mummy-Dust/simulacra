@@ -3,6 +3,7 @@
 #include "templates.h"
 #include "churn.h"          // CHURN_ACTIVE_SET
 #include "roster.h"         // make_random_static_addr_pub
+#include "learn.h"          // learned templates (self-learning)
 #include "esp_random.h"
 #include "esp_log.h"
 
@@ -48,6 +49,25 @@ static uint16_t sample_interval(const uint32_t bins[RF_ITVL_BINS])
 // otherwise a generic vendor-mfg carrying that company id.
 static int build_for_vendor(uint16_t company, uint8_t out[31], uint8_t *len, uint8_t *arch_idx)
 {
+    // Prefer a learned shape for this company when one exists (adds real-world variety).
+    // archetype_idx offset scheme: >= templates_count() means learned[idx - templates_count()].
+    if (learn_count() > 0) {
+        size_t cand[LEARN_CAP]; size_t k = 0;
+        for (size_t i = 0; i < learn_count(); i++) {
+            const learned_template_t *lt = learn_at(i);
+            bool match = (company == RF_VENDOR_UNKNOWN) ? (lt->company_id == 0)
+                                                        : (lt->company_id == company);
+            if (match) cand[k++] = i;
+        }
+        if (k > 0) {
+            size_t pick = cand[esp_random() % k];
+            uint16_t itvl;
+            if (learn_render(learn_at(pick), out, len, &itvl) == 0) {
+                *arch_idx = (uint8_t)(templates_count() + pick);
+                return 0;
+            }
+        }
+    }
     // observed Apple -> iBeacon (safe subtype; Law 3)
     if (company == 0x004C) {
         for (size_t i = 0; i < templates_count(); i++) {

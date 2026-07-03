@@ -353,6 +353,24 @@ static void test_learn_regate(void)
     ST_CHECK(!learn_regate(&liar), "regate: shape_hash mismatch rejected");
 }
 
+static void test_learn_merge_wire(void)
+{
+    learned_template_t store[4]; size_t cnt = 0;
+    learned_template_t a; mk_shape(&a, 0x0075); a.reinforce_count = 5;
+
+    ST_CHECK(learn_merge_wire(store, &cnt, 4, &a, 1) && cnt == 1, "merge_wire: first insert");
+    ST_CHECK(store[0].reinforce_count == 5, "merge_wire: keeps incoming weight on insert");
+
+    // Re-merging the same record must NOT inflate the weight (max, not increment).
+    learn_merge_wire(store, &cnt, 4, &a, 2);
+    ST_CHECK(cnt == 1 && store[0].reinforce_count == 5, "merge_wire: dup keeps max (no inflation)");
+
+    // A stronger copy raises it to the max.
+    learned_template_t a2 = a; a2.reinforce_count = 9;
+    learn_merge_wire(store, &cnt, 4, &a2, 3);
+    ST_CHECK(store[0].reinforce_count == 9, "merge_wire: max raises weight");
+}
+
 static void test_ibeacon(void)
 {
     const device_template_t *t = find_family(FMT_IBEACON);
@@ -974,6 +992,7 @@ int churn_selftest_run(void)
     test_learn_generate();
     test_learn_wire();
     test_learn_regate();
+    test_learn_merge_wire();
     test_ibeacon();
     test_eddystone();
     test_tracker();

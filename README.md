@@ -1,223 +1,229 @@
-# Simulacra
+```
+███████╗██╗███╗   ███╗██╗   ██╗██╗      █████╗  ██████╗██████╗  █████╗
+██╔════╝██║████╗ ████║██║   ██║██║     ██╔══██╗██╔════╝██╔══██╗██╔══██╗
+███████╗██║██╔████╔██║██║   ██║██║     ███████║██║     ██████╔╝███████║
+╚════██║██║██║╚██╔╝██║██║   ██║██║     ██╔══██║██║     ██╔══██╗██╔══██║
+███████║██║██║ ╚═╝ ██║╚██████╔╝███████╗██║  ██║╚██████╗██║  ██║██║  ██║
+╚══════╝╚═╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝
+```
 
 > *Raise a host that was never born.* Simulacra conjures a churning crowd of phantom
-> Bluetooth devices — copies with no originals — so a watcher cataloguing the room
-> loses your real signal among the dead.
+> Bluetooth and Wi-Fi devices — copies with no originals — so a watcher cataloguing the
+> room loses your real signal among the dead.
 
-*A fork of [Splinter](https://github.com/0xXyc/splinter) by 0xXyc (Jacob Swiz), used with permission. Splinter is the foundation this builds on.*
-
-<img width="1625" height="1077" alt="image" src="https://github.com/user-attachments/assets/b2bd80d8-875c-45b5-8e96-a5309474d132" />
+*A fork of [Splinter](https://github.com/0xXyc/splinter) by 0xXyc (Jacob Swiz), used with permission — the foundation this builds on.*
 
 ---
 
-A BLE **privacy / anti-tracking decoy** for the ESP32. It continuously fabricates a
-churning crowd of plausible-but-fake Bluetooth LE devices so that, in a space you
-control, a tracking or scanning system sees lots of ordinary-looking traffic and your
-real device(s) don't stand out.
+**Simulacra is a modular, multi-node counter-surveillance system for the ESP32.** In a space
+you control, a fleet of small cooperating nodes floods the air with a *synthetic crowd* of
+plausible-but-fake BLE and Wi-Fi devices, watches for anything that persistently follows you,
+and surfaces it all on a separate radar screen — the nodes talking to each other over an
+encrypted link. No cloud, no app, no accounts. Just radios that lie convincingly.
 
-## What it does
+It isn't a jammer and it isn't a spammer. It builds *presence*: a believable, drifting
+population that a tracker has to swim through, while your real device sits quietly in the noise.
 
-Simulacra maintains a **synthetic population** of plausible-but-fake BLE devices that
-persists and turns over like a real crowd — rather than flickering a brand-new random
-decoy every cycle. On the ESP32-C6 it runs up to **4 genuinely-concurrent** advertisers
-(BT 5 extended advertising) and time-slices a larger active set across them.
+## The system: cooperating nodes
 
-- a pre-generated **roster** of persistent identities, each with a stable
-  **random-static MAC** (what modern phones, watches and earbuds already use for privacy)
-  and a frozen, format-correct payload drawn from an **archetype library**
-  (`main/templates.c`) — vendor earbuds/fitness/sensor manufacturer-data, iBeacon,
-  Eddystone-UID/-URL, and Tile-style service data — each a coherent vendor+interval+payload bundle;
-- a **churn engine** that keeps ~`CHURN_ACTIVE_SET` identities "present" at once: each
-  dwells for a few minutes, then retires into a cooldown of tens of minutes before it may
-  **reappear with the same MAC** — so a scanner sees devices arrive, linger, leave, and
-  come back later, exactly like a real space;
-- the active set is **time-sliced** across the 4 hardware advertising instances, so the
-  crowd is larger than the radio count.
+Simulacra is built as **roles, not one monolithic gadget**. A board's job is chosen at build
+time, and boards work *together* — Ward or Shade fills the room, Vigil watches from your pocket,
+a sniffer audits the link. They coordinate over **ESP-NOW**, encrypted end-to-end with
+**AES-256-GCM** under a shared pre-shared key.
 
-A scanner watching over minutes therefore logs a stable handful of vendor-attributed
-devices with staggered arrivals/departures and gradual turnover — not one-shot flicker.
+### Decoy node — the crowd
 
-## What it deliberately does NOT do (non-intrusive BLE connections)
+The heart of the system. It fabricates and sustains a synthetic population of BLE + Wi-Fi
+devices (see [Inside the decoy](#inside-the-decoy)). It ships in two named build profiles, tuned
+to how and where it runs:
 
-Advertising is **non-connectable**, and the payload never carries the Apple subtypes that
-make bystanders' phones pop up: Continuity proximity-pairing (`0x07`), nearby-action
-(`0x0F`), or Find My (`0x12`). Plain **iBeacon** (Apple company `0x004C`, subtype `0x02`)
-*is* emitted — it is a silent location beacon that never triggers a pairing dialog.
-Microsoft Swift Pair (`0x0006`) and Google Fast Pair (`0xFE2C`) are likewise never emitted.
-A decoy needs realistic *presence*, not pop-up spam aimed at people nearby.
+- **Ward** — *the fixed guardian.* Built for a room or a vehicle: mains-powered, stationary,
+  and dense. Runs on the **ESP32-C5**, so it works **both 2.4 GHz and 5 GHz**, injects Wi-Fi
+  bursts aggressively (~2 s cadence with periodic 5 GHz excursions), and carries a heavier
+  crowd (denser active set). Because it doesn't move, its anti-drift churn is disabled — a Ward
+  holds its ground.
+- **Shade** — *the ghost that walks with you.* Built for EDC / on-body carry: lean,
+  battery-friendly, **2.4 GHz only**, on the **ESP32-C6**. Thinner Wi-Fi cadence, a smaller
+  crowd, and **anti-entourage churn**: when it detects the RF environment change sharply
+  (you've moved rooms, or someone is trailing you), it accelerates turnover ~3× for a couple of
+  minutes so the decoy crowd reshuffles as fast as the real world around it.
 
-This "refined Law 3" is enforced in two places: the iBeacon encoder hardcodes the
-`4C 00 02 15` prefix so it can never drift into a pop-up subtype, and the on-target
-self-test scans every roster payload for the forbidden subtypes.
+Both profiles are the *same firmware*; the persona is selected automatically from the chip
+target (`#if CONFIG_IDF_TARGET_ESP32C5` → Ward, otherwise Shade).
 
-This helps prevent annoying pop-ups that are seen in other "spammers" in other products and firmware variants. This is how we get around that. 
+### Vigil — the watch
 
-> Intended for privacy/anti-tracking use in a space you control. Don't point it at other
-> people's devices.
+**Vigil** is a physically separate **Cheap Yellow Display (CYD)** that renders a live **threat radar** —
+rings, sweep, follower dots placed by signal strength, and decoy/population stats — with a
+touch to page between views. It is **receiver-only** and holds no secrets of its own beyond the
+shared key: it *asks* a decoy for a status snapshot on demand, and the decoy answers with a
+short burst of **encrypted, hash-only** telemetry over ESP-NOW. The decoy stays **silent until
+asked**, so the link adds no ambient chatter. Glance at the screen; the decoy stays hidden.
+
+### Sniffer node — the audit
+
+A spare board flashed as a **channel-1 promiscuous sniffer** that decodes the link *without the
+key* — used to verify the system's own opsec: that the decoy is silent until requested, that
+telemetry on the air is ciphertext (never plaintext status), and that the decoy's source MAC is
+locally-administered, not its factory address. There's also a Wi-Fi-side probe sniffer for
+profiling the ambient 802.11 environment.
+
+> **How they cooperate.** Broadcast ESP-NOW on a fixed channel, AES-256-GCM with a per-frame
+> nonce and replay rejection, hash-only payloads (see [Design laws](#design-laws)). Roles are
+> compile-time gates (`SIMULACRA_ESPNOW`, `SIMULACRA_ESPNOW_SNIFF`, `SIMULACRA_SNIFF`,
+> `SIMULACRA_OBSERVE`, …) so one codebase flashes into whichever node you need.
+
+## Inside the decoy
+
+The decoy maintains a **synthetic population** that persists and turns over like a real crowd —
+not a brand-new random device flickering every cycle.
+
+- **Persistent roster.** A pool of stable identities (`main/roster.c`), each with a fixed
+  **random-static MAC** — exactly the privacy address type modern phones, watches and earbuds
+  already use — and a frozen, format-correct payload drawn from an **archetype library**
+  (`main/templates.c`): vendor earbuds / fitness / sensor manufacturer-data, iBeacon,
+  Eddystone-UID/-URL, and Tile-style service data. Each archetype pins a coherent
+  vendor + interval + payload bundle, so a decoy can never present an impossible combination.
+- **Churn engine.** Roughly `CHURN_ACTIVE_SET` identities are "present" at once. Each **dwells**
+  for a few minutes, then retires into a **cooldown** of tens of minutes before it may
+  **reappear with the same MAC** — so a scanner sees devices arrive, linger, leave, and return,
+  exactly like a real space.
+- **Genuinely concurrent radios.** On BT-5 chips the active set is time-sliced across up to
+  **4 hardware extended-advertising instances**, so the crowd is larger than the radio count.
+- **Wi-Fi dimension.** Alongside BLE, the decoy injects synthetic 802.11 **probe requests**
+  (`main/probe.c`) from a small set of fake "phones," each using a randomized,
+  locally-administered MAC that rotates over time. Only **broadcast / wildcard-SSID** probes are
+  ever sent — never directed probes that would leak a fake preferred-network list.
+- **Coexistence + live re-profiling.** BLE and Wi-Fi run **concurrently** via ESP-IDF software
+  coexistence (the default build). Periodically the coordinator scans the ambient BLE
+  environment for ~15 s, models it, and **reshapes the synthetic crowd** — size, vendor mix,
+  intervals — to match the room it's actually in, with no reflash.
+
+A scanner watching over minutes therefore logs a stable handful of vendor-attributed devices
+with staggered arrivals, gradual turnover, and matching Wi-Fi noise — indistinguishable from an
+ordinary busy room. Your real device is one more face in that crowd.
+
+## Threat Radar
+
+While it decoys, Simulacra also **watches for a device that is following you**. It taps the same
+ambient scans the decoy already runs and flags a **stable-identity device seen with you across
+multiple distinct RF environments** — a behavioural "this thing moves with me" signal, not a
+fingerprint.
+
+- A **location-epoch** advances whenever a re-profile measures a materially changed environment
+  — an RF-neighbourhood proxy, not GPS.
+- A device seen with meaningful presence across **3 distinct location-epochs** becomes a
+  **confirmed follower**.
+- Alerts surface three ways: serial (`THREAT confirmed …` with the live MAC so you can locate
+  it, plus RSSI-throttled "getting-warmer" updates), an optional board LED, and — the point of
+  the system — **Vigil**, the remote radar display described above.
+
+**Honest scope.** This is a *behavioural follower-detector*, not a universal tracker scanner. It
+catches **non-rotating** followers (e.g. a fixed-MAC beacon slipped into a bag). Commercial tags
+that rotate their addresses — AirTag, SmartTag, Tile — are **not** caught by this layer; that's
+known-tracker fingerprinting, a planned detection module. A device you're simply often near may
+occasionally flag (an allowlist is planned).
+
+## Design laws
+
+Three principles the whole project is held to:
+
+1. **Be non-intrusive ("Law 3").** Advertising is **non-connectable**, and the payload *never*
+   carries the subtypes that make bystanders' phones pop up pairing dialogs — Apple Continuity
+   (`0x07`), nearby-action (`0x0F`) or Find My (`0x12`), Microsoft Swift Pair (`0x0006`), Google
+   Fast Pair (`0xFE2C`). Plain **iBeacon** *is* emitted (a silent location beacon that triggers
+   nothing). This is what separates a decoy from a "spammer": realistic presence, never pop-up
+   spam aimed at people nearby. It's enforced twice over — the iBeacon encoder hardcodes a safe
+   prefix, and an on-target self-test scans every roster payload for forbidden subtypes.
+2. **Keep no more than you must.** Detection candidates live **hashed in RAM** with a per-install
+   salt; only *confirmed* threats persist, and the decoy **never flags its own** advertised MACs.
+   Telemetry between nodes is hash-only and encrypted — raw identifiers never travel the link.
+3. **Aim it at your own space.** Simulacra is for privacy and anti-tracking in an environment you
+   control. Don't point it at other people's devices.
 
 ## Hardware
 
-- **Seeed XIAO ESP32-C6** (v2 target) — BT 5 LE extended advertising, native USB-Serial-JTAG
-- **Adafruit ESP32-S3** (QT Py / Feather) — v2 portable target (dual-core; battery-ready on the Feather). Build/BOM guide: [docs/hardware/portable-feather-s3-build.md](docs/hardware/portable-feather-s3-build.md)
-- ESP32-WROVER-E (classic dual-core ESP32 with PSRAM) — original v1 single-advertiser target
+Current, supported nodes:
+
+| Node | Board | Role | Notes |
+|------|-------|------|-------|
+| **Ward** decoy | **ESP32-C5** | dense dual-band decoy | 2.4 + 5 GHz, mains, stationary |
+| **Shade** decoy | **ESP32-C6** (e.g. SparkFun Thing Plus C6) | lean mobile decoy | 2.4 GHz, battery/EDC |
+| **Vigil** display | **CYD** — ESP32-2432S028 | receiver-only screen | classic ESP32 + ILI9341 + touch |
+| **Sniffer** | any spare C5/C6 | opsec / probe audit | verification role |
+
+A decoy needs **BT-5 extended advertising** (`CONFIG_BT_NIMBLE_EXT_ADV`), which the C5/C6 have
+and the classic ESP32 does not — which is exactly why the CYD makes a perfect *display* node
+(receive-only) but never a decoy.
 
 ## Build & flash
 
-Requires ESP-IDF v5.4 (installed at `~/esp/esp-idf`).
+Two ESP-IDF projects live in this repo:
+
+- the repo root — the **decoy / sniffer** firmware (targets `esp32c5` or `esp32c6`);
+- [`cyd/`](cyd/) — the **radar display** firmware (target `esp32`).
+
+Both build with a standard ESP-IDF v5.x toolchain:
 
 ```bash
-. ~/esp/esp-idf/export.sh          # load the IDF environment into this shell
-cd ~/Projects/simulacra
-idf.py set-target esp32c6          # one-time; picks up sdkconfig.defaults.esp32c6 (ext-adv)
-# or, for an ESP32-S3 board (QT Py / Feather):  idf.py set-target esp32s3
+. ~/esp/esp-idf/export.sh          # load ESP-IDF into this shell
+idf.py set-target esp32c6          # esp32c5 (Ward) · esp32c6 (Shade) · esp32 (CYD, from cyd/)
 idf.py build
-idf.py -p /dev/ttyUSB0 flash monitor
+idf.py -p <PORT> flash monitor
 ```
 
-Flashing needs serial access — your user must be in the `dialout` group
-(`sudo usermod -aG dialout "$USER"`, then open a fresh terminal or run `newgrp dialout`).
+The default build (all flags `0`) is the **combined coexist decoy** — BLE + Wi-Fi together.
+Select a different role at build time:
+
+| Flag | Node / behaviour |
+|------|------------------|
+| *(none set)* | Combined BLE + Wi-Fi decoy — the default |
+| `SIMULACRA_ESPNOW=1` | Decoy that also answers a radar-display node over ESP-NOW |
+| `SIMULACRA_ESPNOW_SNIFF=1` | Channel-1 ESP-NOW opsec sniffer |
+| `SIMULACRA_SNIFF=1` | Wi-Fi probe sniffer (promiscuous capture) |
+| `SIMULACRA_OBSERVE=1` | BLE-only ambient observe + model (never advertises) |
+| `SIMULACRA_PROBE=1` | Wi-Fi-only probe injector (bench) |
+| `CHURN_SELFTEST=1` | On-target host-logic self-test; radio idle, PASS/FAIL serial |
+
+The combined binary exceeds the default factory partition, so the provided
+`sdkconfig.defaults.esp32c{5,6}` set `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y` — no manual
+Kconfig change needed.
 
 ## Configuration
 
-The synthetic-population tunables live in `main/churn.h`:
+The crowd's shape lives in a few tunables:
 
-| Macro | Default | Effect |
-|-------|---------|--------|
-| `CHURN_ACTIVE_SET` | 8 | How many identities are "present" at once — the crowd size / density |
-| `CHURN_TICK_MS` | 250 | Scheduler tick; each tick advances the state machine and yields |
-| `CHURN_DWELL_MIN_MS` / `CHURN_DWELL_MAX_MS` | 3 min / 10 min | How long an identity stays on air before retiring |
-| `CHURN_COOLDOWN_MIN_MS` / `CHURN_COOLDOWN_MAX_MS` | 30 min / 60 min | How long a retired identity waits before it may reappear |
-
-Identity-shape tunables live in `main/roster.h`:
-
-| Macro | Default | Effect |
-|-------|---------|--------|
+| Macro (file) | Default | Effect |
+|--------------|---------|--------|
+| `CHURN_ACTIVE_SET` (`churn.h`) | 8 | How many identities are "present" at once — crowd density |
+| `CHURN_DWELL_MIN/MAX_MS` (`churn.h`) | 3 / 10 min | How long an identity stays on air before retiring |
+| `CHURN_COOLDOWN_MIN/MAX_MS` (`churn.h`) | 30 / 60 min | How long a retired identity waits before it may reappear |
 | `CHURN_ROSTER_SIZE` (`roster.h`) | 256 | Size of the persistent identity pool |
 
-**Archetype library.** Each identity's payload is built from one of the archetype bundles in
-`main/templates.c` — vendor earbuds/fitness/sensor manufacturer-data, iBeacon,
-Eddystone-UID/-URL, and Tile-style service data. Each bundle pins a vendor/format together
-with its own interval band and (optional) device name, so a decoy can never present an
-impossible vendor+payload+timing combination. Tune the crowd by editing the table: the
-`weight` column sets each archetype's share of the mix, and the `itvl_min_ms` / `itvl_max_ms`
-columns set its advertising cadence. Keep names ≤ 12 chars to stay within the 31-byte budget.
+Tune the *mix* by editing the archetype table in `main/templates.c` — the `weight` column sets
+each archetype's share and the interval columns set its cadence (keep device names ≤ 12 chars to
+fit the 31-byte budget). Population size, vendor mix and 5 GHz behaviour are **persona-driven**
+(Ward vs Shade) and auto-selected from the chip target.
 
-### Observe mode (M5)
+**Web config dashboard.** At boot the decoy can raise an **on-demand open Wi-Fi AP + captive
+dashboard** for ~30 s (gate `SIMULACRA_WEBUI`, on by default): join it from a phone to see live
+status and toggle detection/churn, clear threats, or reboot — then the AP drops and Wi-Fi is
+handed back to the decoy.
 
-Build with `SIMULACRA_OBSERVE=1` (in `main/simulacra_main.c`) to **profile the ambient BLE
-environment** instead of advertising. Observe mode passively scans (extended discovery, since
-ext-adv is enabled) and aggregates what it hears into a small model of distributions — vendor mix,
-per-vendor interval histograms, RSSI spread, advertising-PDU types, distinct-device population, and
-arrival rate — persisted to NVS (`main/rf_model.c`). It **stores no per-device identifiers**: every
-MAC is hashed with a per-boot salt for in-window dedup only and dropped at capture; the ephemeral
-table is wiped each sweep. The model is what M6 will sample to generate a population that matches the
-room. The default build (`SIMULACRA_OBSERVE=0`) is unchanged — the decoy. Cadence knobs live at the
-top of `main/observe.c` (`OBS_SWEEP_MS`, `OBS_PERSIST_EVERY`; raise from the 15 s test value for a
-long-running deployment). This needs the observer role — `CONFIG_BT_NIMBLE_ROLE_OBSERVER=y` in
-`sdkconfig.defaults.esp32c6`.
+## Roadmap & honest limits
 
-### Population-match (M6)
+- **Known-tracker fingerprinting** — a detection layer for rotating commercial tags (AirTag /
+  SmartTag / Tile) that the behavioural follower-detector can't catch.
+- **Wi-Fi observe → match** — profile the ambient probe environment and generate synthetic probe
+  traffic that matches the room, the way the BLE side already does.
+- **OTA updates** — now that a screen exists to confirm/rollback.
+- **More cooperating roles** — the modular node model is young; expect additional roles as the
+  fleet grows.
 
-When an observed model is present in NVS (from observe mode), the decoy **generates its roster by
-sampling that model** instead of the hand-weighted templates (`main/generate.c`): company-IDs drawn
-from the observed vendor mix (any company-ID, not just the templated few — Apple `0x004C` always
-becomes safe iBeacon), intervals from each vendor's observed histogram, fresh random-static MACs, and
-**dithered per-identity TX power** for a realistic signal-strength spread. The active-set size is
-driven by the observed population, **persona-tuned** (`SIMULACRA_PERSONA`, defaulting from the chip
-target): **Ward** (C5, fixed/vehicle) runs denser (`1.5× / 6–16`), **Shade** (C6, EDC) stays
-conservative (`1.1× / 4–8`). A fresh/never-observed device (model `total_obs < 50`) falls back to the
-template population, so it's always believable. Re-profiling = re-run observe mode; the decoy
-regenerates at next boot. (Continuous/automatic re-profiling is M8.)
+## Credits
 
-### Wi-Fi probe injection (M7)
+Built on [Splinter](https://github.com/0xXyc/splinter) by **0xXyc (Jacob Swiz)**, used with
+permission. Simulacra extends it into the multi-node system described above.
 
-Build with `SIMULACRA_PROBE=1` (in `main/simulacra_main.c`) for a **Wi-Fi-only** mode that injects
-synthetic 802.11 **probe requests** (`main/probe.c`, via `esp_wifi_80211_tx`) — adding the Wi-Fi
-dimension to the decoy. A small active set of fake "phones" each use a **randomized,
-locally-administered MAC** (what privacy-randomizing phones emit) and broadcast at a phone-like rate,
-channel-hopping 2.4 GHz (**+5 GHz on the C5/Ward** via `WIFI_BAND_MODE_AUTO`); MACs rotate over time
-so a sniffer sees devices come and go. **Wi-Fi "Law 3":** only **broadcast/wildcard-SSID** probes are
-ever emitted — never directed probes naming an SSID (those would leak a fake preferred-network-list,
-itself a fingerprint). Persona-tuned (defaults from the chip target): Ward ~8 fake phones dual-band,
-Shade ~4 on 2.4 GHz with faster MAC rotation. NimBLE is not started in this mode. Synthetic for now —
-Wi-Fi observe→match is a later milestone, and **BLE + Wi-Fi coexistence is M8**.
-
-### M8 — BLE + Wi-Fi coexistence (default)
-
-The default build (all flags 0) is now the **combined coexist decoy**: BLE ext-adv and
-Wi-Fi synthetic probe-request injection run **concurrently** via ESP-IDF SW coexistence,
-with no additional hardware needed. You get decoy BLE devices *and* randomised probe requests concurrently on a single ESP32.
-
-**Live re-profiling.** The coexist coordinator scans the ambient BLE environment for ~15 s
-every ~10 min (Ward/C5) or ~5 min (Shade/C6), updates the rf\_model in place, and
-reshapes the synthetic population — crowd size, vendor mix, intervals — to match the
-new room, with no reflash required. If the environment is too sparse (< 50 observations)
-the update is skipped and the current population is kept.
-
-**Anti-entourage (Shade/C6 only).** After each re-profile, if the drift score between
-the old and new model exceeds 0.45, Shade triggers accelerated churn (3× normal speed)
-so the decoy crowd turns over quickly when the real environment changes. The acceleration
-decays linearly back to 1× over ~2 min.
-
-**Partition layout.** The combined binary (~1.2 MB) exceeds the default 1 MB factory
-partition. Both `sdkconfig.defaults.esp32c6` and `sdkconfig.defaults.esp32c5` set
-`CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y` — no manual Kconfig change needed.
-
-**Build modes (all flags default 0):**
-
-| Flag | Behavior |
-|------|----------|
-| *(none set)* | Combined coexist decoy — BLE + Wi-Fi together **(new default)** |
-| `SIMULACRA_PROBE=1` | Wi-Fi-only probe injector (dev / bench) |
-| `SIMULACRA_SNIFF=1` | Wi-Fi probe sniffer — promiscuous capture, log counts (verification / M9 seed) |
-| `SIMULACRA_OBSERVE=1` | BLE-only ambient observe + model (never advertises) |
-| `CHURN_SELFTEST=1` | On-target host-logic self-test; radio idle, PASS/FAIL serial |
-
-### M9 — Passive tracker / follower detection ("Threat Radar")
-
-The default decoy now also **watches for a device that is following you**. While it decoys,
-Simulacra taps the same re-profile scans it already runs and flags a **stable-identity device
-seen with you across multiple distinct RF environments** — a behavioral "this device moves with
-me" signal, not a fingerprint. Detection is **on by default** (`SIMULACRA_DETECT`; build with
-`SIMULACRA_DETECT=0` to compile it out) and adds **no** extra radio or coexistence load — it
-reuses the M8 re-profile windows and drift metric.
-
-- a **location-epoch** advances when a re-profile measures a materially changed environment
-  (drift > 0.45) — an RF-neighbourhood proxy, not GPS;
-- a device seen with **meaningful presence across 3 distinct location-epochs** is a **confirmed
-  follower**;
-- alerts are serial `THREAT confirmed …` (carrying the device's live MAC so you can locate it)
-  plus RSSI-throttled `THREAT locate …` "getting-warmer" updates, and an optional board-gated LED
-  (`SIMULACRA_DETECT_LED_GPIO`, unset = off);
-- **data discipline:** candidates stay hashed in RAM; only **confirmed** threats persist to NVS and
-  retain a live MAC. A **per-install** salt (distinct from observe's per-boot salt) makes the hash
-  stable across sweeps/reboots so "same device across places" is meaningful. The decoy **never
-  flags its own** advertised MACs.
-
-**Honest scope.** M9 catches **non-rotating** followers (e.g. a fixed-MAC beacon slipped into a
-bag). MAC-rotating commercial tags (AirTag / SmartTag / Tile rotate their addresses) are **not**
-caught by this behavioral layer — that is known-tracker fingerprinting, the planned **M10**
-detection layer. "Location" is an RF-drift proxy, and a benign device you are often near may
-occasionally flag (an allowlist is planned). It is a behavioral follower-detector, not a universal
-tracker scanner.
-
-**Deferred:** Wi-Fi observe → model → match — sniff the 802.11 probe environment, build a
-probe-request rf\_model, and generate synthetic probe MACs/SSIDs that match the room (as M5/M6 did
-for BLE; the `SIMULACRA_SNIFF` tool is the seed).
-
-### Antenna (XIAO ESP32-C6)
-
-The firmware drives the XIAO C6 RF switch at boot: GPIO3 low enables the switch, GPIO14 selects the
-antenna. It defaults to the **external U.FL antenna** (`SIMULACRA_EXT_ANTENNA 1`). If you run on the
-**onboard** ceramic antenna, set `SIMULACRA_EXT_ANTENNA 0` — selecting external with no antenna
-attached degrades RF (and noticeably hurts scan/RX sensitivity in observe mode).
-
-## Troubleshooting
-
-- **`apt` says "Release file ... is not valid yet"** — the system clock is wrong. Fix with
-  `sudo date -s "$(curl -sI https://www.google.com | grep -i '^date:' | cut -d' ' -f2-)"`
-  then `sudo timedatectl set-ntp true`.
-- **`fatal error: nimble/nimble_port.h: No such file`** — `main/CMakeLists.txt` needs
-  `REQUIRES bt nvs_flash` (already set here).
-- **`Permission denied: '/dev/ttyUSB0'`** — you're not in `dialout` yet, or the terminal
-  predates the group change; open a new terminal / `newgrp dialout`.
+> Intended for privacy / anti-tracking use in a space you control. Don't point it at other
+> people's devices.

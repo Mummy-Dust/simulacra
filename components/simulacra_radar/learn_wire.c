@@ -55,6 +55,28 @@ bool learn_merge(learned_template_t *store, size_t *count, size_t cap,
     return true;
 }
 
+bool learn_merge_wire(learned_template_t *store, size_t *count, size_t cap,
+                      const learned_template_t *rec, uint16_t sweep_no)
+{
+    int idx = lw_find(store, *count, rec->shape_hash);
+    if (idx >= 0) {
+        learned_template_t *e = &store[idx];
+        if (rec->reinforce_count > e->reinforce_count) e->reinforce_count = rec->reinforce_count;
+        e->last_seen_sweep = sweep_no;
+        if (rec->itvl_min_ms < e->itvl_min_ms) e->itvl_min_ms = rec->itvl_min_ms;
+        if (rec->itvl_max_ms > e->itvl_max_ms) e->itvl_max_ms = rec->itvl_max_ms;
+        return true;
+    }
+    if (*count < cap) {
+        store[*count] = *rec; store[*count].last_seen_sweep = sweep_no; (*count)++;
+        return true;
+    }
+    size_t w = lw_weakest(store, *count);
+    if (rec->reinforce_count < store[w].reinforce_count) return false;
+    store[w] = *rec; store[w].last_seen_sweep = sweep_no;
+    return true;
+}
+
 int learn_wire_pack(uint8_t *payload, size_t *plen, const learned_template_t *recs, uint8_t nrecs,
                     uint16_t lib_version, uint8_t chunk_index, uint8_t chunk_count)
 {

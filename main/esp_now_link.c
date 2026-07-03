@@ -30,6 +30,8 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "freertos/task.h"
 #include "radar_key.h"
 #include "coexist.h"
+#include "learn.h"
+#include "learn_wire.h"
 
 #ifndef SIMULACRA_ESPNOW_CHANNEL
 #define SIMULACRA_ESPNOW_CHANNEL 1
@@ -39,6 +41,7 @@ static const uint8_t BCAST[6] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
 static uint8_t   s_salt[4];
 static uint64_t  s_counter;
 static radar_replay_t s_req_replay;                 // reject replayed requests
+static radar_replay_t s_sync_replay;                // reject replayed LEARN_SYNC from Vigil
 static volatile bool  s_answer;                     // set by RX cb, consumed by task
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len)
@@ -46,9 +49,18 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
     uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
     if (radar_wire_open(data, (size_t)len, SIMULACRA_ESPNOW_KEY, &type, pl, &plen, salt, &ctr) != 0)
         return;                                     // not ours / bad tag
-    if (type != RADAR_TYPE_REQUEST) return;
-    if (!radar_replay_ok(&s_req_replay, salt, ctr)) return;   // replayed request
-    s_answer = true;                                // defer the heavy work to the task
+    if (type == RADAR_TYPE_REQUEST) {
+        if (!radar_replay_ok(&s_req_replay, salt, ctr)) return;   // replayed request
+        s_answer = true;                            // defer the heavy work to the task
+        return;
+    }
+    if (type == RADAR_TYPE_LEARN_SYNC) {
+        if (!radar_replay_ok(&s_sync_replay, salt, ctr)) return;
+        learn_chunk_hdr_t h; learned_template_t rx[LEARN_WIRE_RECS_PER_CHUNK]; uint8_t nr;
+        if (learn_wire_unpack(pl, plen, rx, &nr, &h) != 0) return;
+        for (uint8_t i = 0; i < nr; i++) learn_ingest_wire(&rx[i]);   // regate inside
+        return;
+    }
 }
 
 static void respond_once(void)
@@ -62,11 +74,35 @@ static void respond_once(void)
     ESP_LOGW(ETAG, "answered request (%u B x3)", (unsigned)flen);
 }
 
+static void offer_library(void)
+{
+    static learned_template_t snap[LEARN_CAP];
+    size_t n = learn_snapshot(snap, LEARN_CAP);
+    if (n == 0) return;
+    uint8_t chunks = (uint8_t)((n + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
+    for (uint8_t ci = 0; ci < chunks; ci++) {
+        size_t off = (size_t)ci * LEARN_WIRE_RECS_PER_CHUNK;
+        uint8_t nrec = (uint8_t)((n - off < LEARN_WIRE_RECS_PER_CHUNK) ? (n - off)
+                                                                       : LEARN_WIRE_RECS_PER_CHUNK);
+        uint8_t pl[RADAR_FRAME_MAX]; size_t plen;
+        if (learn_wire_pack(pl, &plen, &snap[off], nrec, 1, ci, chunks) != 0) continue;
+        uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+        if (radar_wire_seal(frame, &flen, RADAR_TYPE_LEARN_OFFER, pl, plen,
+                            SIMULACRA_ESPNOW_KEY, s_salt, ++s_counter) == 0)
+            esp_now_send(BCAST, frame, flen);
+        vTaskDelay(pdMS_TO_TICKS(20));   // space chunks so the peer's RX queue drains
+    }
+    ESP_LOGW(ETAG, "offered library (%u recs, %u chunks)", (unsigned)n, chunks);
+}
+
 static void espnow_task(void *arg)
 {
     (void)arg;
+    uint32_t last_offer = 0;
     for (;;) {
         if (s_answer) { s_answer = false; respond_once(); }
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (now - last_offer > 30000) { last_offer = now; offer_library(); }   // every 30 s
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

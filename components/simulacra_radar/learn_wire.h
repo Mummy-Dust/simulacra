@@ -8,6 +8,11 @@
 bool learn_merge(learned_template_t *store, size_t *count, size_t cap,
                  const learned_template_t *rec, uint16_t sweep_no);
 
+// Like learn_merge, but a duplicate takes max(reinforce_count) instead of incrementing —
+// used on the wire-receive path so re-broadcasts don't inflate a shape's weight.
+bool learn_merge_wire(learned_template_t *store, size_t *count, size_t cap,
+                      const learned_template_t *rec, uint16_t sweep_no);
+
 // --- wire chunk framing for the ESP-NOW fleet sync (Phase 2) ---
 #define RADAR_TYPE_LEARN_OFFER 3     // decoy -> Vigil: newly learned/reinforced records
 #define RADAR_TYPE_LEARN_SYNC  4     // Vigil -> all: merged library chunk

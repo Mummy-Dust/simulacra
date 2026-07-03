@@ -24,6 +24,22 @@ encrypted link. No cloud, no app, no accounts. Just radios that lie convincingly
 It isn't a jammer and it isn't a spammer. It builds *presence*: a believable, drifting
 population that a tracker has to swim through, while your real device sits quietly in the noise.
 
+## The threat it answers
+
+Tracking no longer stops at your license plate. A newer class of surveillance — Leonardo's
+[**SignalTrace**](https://insideevs.com/news/799191/alpr-cameras-track-more-devices/) is the
+clearest public example — bolts onto automated license-plate-reader camera networks and *passively*
+harvests the **wireless identifiers** of everything moving with you: phone, watch, earbuds, even the
+car's tire-pressure sensors. It breaks nothing and reads no content — it simply records **which
+devices consistently travel together** and bundles them into an *electronic fingerprint* tied to you
+and your vehicle across every camera you pass.
+
+Simulacra attacks that correlation at the root. It wraps you in a **churning crowd of phantom devices
+that travel with you too**, constantly rotating them, so the "set that moves together" is polluted
+and never settles — your real device stops being a clean signal and becomes one uncertain face in a
+fake entourage. It works the bands an ESP32 owns (BLE + Wi-Fi); the sensors it can't reach are noted
+under [honest limits](#roadmap--honest-limits).
+
 ## The system: cooperating nodes
 
 Simulacra is built as **roles, not one monolithic gadget**. A board's job is chosen at build

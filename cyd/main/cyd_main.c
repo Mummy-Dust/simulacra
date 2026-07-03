@@ -15,6 +15,7 @@
 #include "radar_ui.h"
 #include "radar_key.h"
 #include "learn_wire.h"
+#include "learn_db.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_event.h"
@@ -135,6 +136,56 @@ static size_t             s_lib_count;
 static radar_replay_t     s_offer_replay;   // reject replayed LEARN_OFFER
 static uint16_t           s_lib_sweep;      // local "time" for merges/age (monotonic tick)
 
+// ---- encrypted-at-rest SD persistence of the RAM library ----
+#define LEARN_DB_PATH SD_MOUNT_POINT "/simulacra/learn.db"
+#define LEARN_DB_TMP  SD_MOUNT_POINT "/simulacra/learn.tmp"
+#define LEARN_DB_SAVE_MS 30000
+static uint8_t  s_db_key[32];
+static bool     s_lib_dirty;
+
+static void learn_db_load(void)
+{
+    learn_db_derive_key(SIMULACRA_ESPNOW_KEY, s_db_key);
+    if (!s_sd_ok) return;
+    FILE *f = fopen(LEARN_DB_PATH, "rb");
+    if (!f) { ESP_LOGW(TAG, "learndb: none on card (fresh)"); return; }
+    // This build persists only the RAM working set (<= VIGIL_LIB_CAP records), so the buffers
+    // are sized to that. A file larger than that comes from a future archive-capable Vigil and
+    // is rejected here (rebuilt from sync) rather than partially loaded.
+    static uint8_t blob[sizeof(learn_db_hdr_t) + VIGIL_LIB_CAP*sizeof(learned_template_t)];
+    fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (fsz < 0 || (size_t)fsz > sizeof blob) {
+        fclose(f); ESP_LOGW(TAG, "learndb: file exceeds RAM build cap -> rebuild from sync"); return;
+    }
+    size_t n = fread(blob, 1, (size_t)fsz, f); fclose(f);
+    uint16_t cnt = 0;
+    static learned_template_t tmp[VIGIL_LIB_CAP];
+    if (learn_db_open(blob, n, tmp, &cnt, s_db_key) != 0) {
+        ESP_LOGW(TAG, "learndb: open failed (corrupt/foreign) -> rebuild from sync");
+        return;
+    }
+    // Re-gate every record off the card, then merge into the RAM working set (cap VIGIL_LIB_CAP).
+    size_t admitted = 0;
+    for (uint16_t i = 0; i < cnt; i++)
+        if (learn_regate(&tmp[i]) && learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &tmp[i], s_lib_sweep))
+            admitted++;
+    ESP_LOGW(TAG, "learndb: loaded %u/%u recs -> lib=%u", (unsigned)admitted, (unsigned)cnt, (unsigned)s_lib_count);
+}
+
+static void learn_db_save(void)
+{
+    if (!s_sd_ok || s_lib_count == 0) return;
+    static uint8_t blob[sizeof(learn_db_hdr_t) + VIGIL_LIB_CAP*sizeof(learned_template_t)]; size_t blen;
+    if (learn_db_seal(blob, &blen, s_lib, (uint16_t)s_lib_count, s_db_key) != 0) return;
+    FILE *f = fopen(LEARN_DB_TMP, "wb");
+    if (!f) { ESP_LOGW(TAG, "learndb: tmp open fail (keep RAM set)"); return; }
+    size_t w = fwrite(blob, 1, blen, f); fclose(f);
+    if (w != blen) { ESP_LOGW(TAG, "learndb: short write, abort rename"); remove(LEARN_DB_TMP); return; }
+    remove(LEARN_DB_PATH);                       // FAT rename won't clobber; remove then rename
+    if (rename(LEARN_DB_TMP, LEARN_DB_PATH) != 0) { ESP_LOGW(TAG, "learndb: rename fail"); return; }
+    ESP_LOGW(TAG, "learndb: saved %u recs (%u B)", (unsigned)s_lib_count, (unsigned)blen);
+}
+
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
     (void)info;
     uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
@@ -156,7 +207,8 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         if (learn_wire_unpack(pl, plen, rx, &nr, &h) != 0) return;
         for (uint8_t i = 0; i < nr; i++)
             if (learn_regate(&rx[i]))
-                learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rx[i], s_lib_sweep);
+                if (learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rx[i], s_lib_sweep))
+                    s_lib_dirty = true;
         ESP_LOGW(TAG, "offer rx: +%u recs, lib=%u", (unsigned)nr, (unsigned)s_lib_count);
         return;
     }
@@ -251,6 +303,7 @@ void app_main(void)
         if (f) { fputs("ok", f); fclose(f); ESP_LOGW(TAG, "sd: probe write ok"); }
         else ESP_LOGW(TAG, "sd: probe write FAILED");
     }
+    learn_db_load();
 
     radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
     static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;
@@ -263,6 +316,10 @@ void app_main(void)
         if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
         static uint32_t last_sync = 0;
         if (now - last_sync > 20000) { last_sync = now; broadcast_library(); }   // every 20 s
+        static uint32_t last_save = 0;
+        if (s_lib_dirty && now - last_save > LEARN_DB_SAVE_MS) {
+            last_save = now; s_lib_dirty = false; learn_db_save();
+        }
         radar_ui_on_tick(&ui, now, s_status.threat_count);
         if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
         if (ui.backlight_on){

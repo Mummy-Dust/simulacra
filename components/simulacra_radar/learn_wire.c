@@ -1,3 +1,4 @@
+#include <string.h>
 #include "learn_record.h"
 #include "learn_wire.h"
 
@@ -51,5 +52,38 @@ bool learn_merge(learned_template_t *store, size_t *count, size_t cap,
     size_t w = lw_weakest(store, *count);
     if (rec->reinforce_count < store[w].reinforce_count) return false;
     store[w] = *rec; store[w].last_seen_sweep = sweep_no;
+    return true;
+}
+
+int learn_wire_pack(uint8_t *payload, size_t *plen, const learned_template_t *recs, uint8_t nrecs,
+                    uint16_t lib_version, uint8_t chunk_index, uint8_t chunk_count)
+{
+    if (nrecs > LEARN_WIRE_RECS_PER_CHUNK) return -1;
+    learn_chunk_hdr_t h = { lib_version, chunk_index, chunk_count, nrecs };
+    memcpy(payload, &h, sizeof h);
+    memcpy(payload + sizeof h, recs, (size_t)nrecs * sizeof(learned_template_t));
+    *plen = sizeof h + (size_t)nrecs * sizeof(learned_template_t);
+    return 0;
+}
+
+int learn_wire_unpack(const uint8_t *payload, size_t plen, learned_template_t *recs,
+                      uint8_t *nrecs, learn_chunk_hdr_t *hdr)
+{
+    if (plen < sizeof(learn_chunk_hdr_t)) return -1;
+    memcpy(hdr, payload, sizeof *hdr);
+    if (hdr->rec_count > LEARN_WIRE_RECS_PER_CHUNK) return -1;
+    size_t need = sizeof(learn_chunk_hdr_t) + (size_t)hdr->rec_count * sizeof(learned_template_t);
+    if (plen < need) return -1;
+    memcpy(recs, payload + sizeof(learn_chunk_hdr_t),
+           (size_t)hdr->rec_count * sizeof(learned_template_t));
+    *nrecs = hdr->rec_count;
+    return 0;
+}
+
+bool learn_regate(const learned_template_t *rec)
+{
+    if (rec->ad_len == 0 || rec->ad_len > 31) return false;
+    if (law3_forbidden(rec->ad, rec->ad_len)) return false;
+    if (learn_shape_hash(rec) != rec->shape_hash) return false;
     return true;
 }

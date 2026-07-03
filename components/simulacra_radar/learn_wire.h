@@ -7,3 +7,27 @@
 // insert, evicting the weakest when full. Returns false iff full and rec is the weakest.
 bool learn_merge(learned_template_t *store, size_t *count, size_t cap,
                  const learned_template_t *rec, uint16_t sweep_no);
+
+// --- wire chunk framing for the ESP-NOW fleet sync (Phase 2) ---
+#define RADAR_TYPE_LEARN_OFFER 3     // decoy -> Vigil: newly learned/reinforced records
+#define RADAR_TYPE_LEARN_SYNC  4     // Vigil -> all: merged library chunk
+#define LEARN_WIRE_RECS_PER_CHUNK 3  // (218 - hdr) / sizeof(record), with margin
+
+typedef struct __attribute__((packed)) {
+    uint16_t lib_version;
+    uint8_t  chunk_index;
+    uint8_t  chunk_count;
+    uint8_t  rec_count;
+} learn_chunk_hdr_t;
+
+// Pack up to LEARN_WIRE_RECS_PER_CHUNK records into a radar_wire payload chunk.
+// Returns 0 (and *plen <= 218) on success, <0 if nrecs exceeds the chunk capacity.
+int learn_wire_pack(uint8_t *payload, size_t *plen, const learned_template_t *recs, uint8_t nrecs,
+                    uint16_t lib_version, uint8_t chunk_index, uint8_t chunk_count);
+// Unpack a chunk. Returns 0 on a well-formed chunk (recs/nrecs/hdr filled), <0 otherwise.
+int learn_wire_unpack(const uint8_t *payload, size_t plen, learned_template_t *recs,
+                      uint8_t *nrecs, learn_chunk_hdr_t *hdr);
+
+// Re-validate a wire-received record before merging (never trust the wire):
+// budget + Law-3 + shape_hash recompute must all hold.
+bool learn_regate(const learned_template_t *rec);

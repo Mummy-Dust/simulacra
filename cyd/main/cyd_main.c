@@ -104,6 +104,8 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
     if (type!=RADAR_TYPE_STATUS || plen!=sizeof(radar_wire_status_t)) return;
     if (!radar_replay_ok(&s_replay,salt,ctr)) return;
     memcpy(&s_status, pl, sizeof s_status);
+    if (s_status.threat_count > RADAR_MAX_THREATS)      // never trust the wire field: threats[] is fixed-size
+        s_status.threat_count = RADAR_MAX_THREATS;      // (a conforming decoy already clamps; this guards the renderer regardless)
     s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
     ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
              (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,

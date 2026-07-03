@@ -15,12 +15,18 @@
 #include "radar_ui.h"
 #include "radar_key.h"
 #include "learn_wire.h"
+#include "learn_db.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "driver/sdspi_host.h"
+#include <sys/stat.h>
+#include <stdio.h>
 #include <string.h>
 
 #define PIN_MOSI 13
@@ -91,6 +97,32 @@ static void set_backlight(bool on)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 
+// ---- microSD on its own SPI host (SPI3), separate from the display's SPI2 (E2) ----
+#define SD_HOST     SPI3_HOST
+#define PIN_SD_MOSI 23
+#define PIN_SD_MISO 19
+#define PIN_SD_SCK  18
+#define PIN_SD_CS    5
+#define SD_MOUNT_POINT "/sdcard"
+static bool s_sd_ok;
+static sdmmc_card_t *s_card;
+
+static bool sd_mount(void)
+{
+    spi_bus_config_t bus = { .mosi_io_num=PIN_SD_MOSI, .miso_io_num=PIN_SD_MISO,
+        .sclk_io_num=PIN_SD_SCK, .quadwp_io_num=-1, .quadhd_io_num=-1, .max_transfer_sz=4096 };
+    if (spi_bus_initialize(SD_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK) { ESP_LOGW(TAG,"sd: bus init fail"); return false; }
+    sdspi_device_config_t dev = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev.gpio_cs = PIN_SD_CS; dev.host_id = SD_HOST;
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT(); host.slot = SD_HOST;
+    esp_vfs_fat_sdmmc_mount_config_t mnt = { .format_if_mount_failed=false, .max_files=4,
+        .allocation_unit_size=16*1024 };
+    esp_err_t e = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &dev, &mnt, &s_card);
+    if (e != ESP_OK) { ESP_LOGW(TAG, "sd: absent/unmountable (0x%x) -> RAM-only librarian", e); return false; }
+    ESP_LOGW(TAG, "sd: mounted (%lluMB)", ((uint64_t)s_card->csd.capacity)*s_card->csd.sector_size/(1024*1024));
+    return true;
+}
+
 // ---- ESP-NOW radar link (STA on a fixed channel, broadcast, AES-GCM via radar_wire) ----
 static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static radar_wire_status_t s_status;             // last good status
@@ -103,6 +135,56 @@ static learned_template_t s_lib[VIGIL_LIB_CAP];
 static size_t             s_lib_count;
 static radar_replay_t     s_offer_replay;   // reject replayed LEARN_OFFER
 static uint16_t           s_lib_sweep;      // local "time" for merges/age (monotonic tick)
+
+// ---- encrypted-at-rest SD persistence of the RAM library ----
+#define LEARN_DB_PATH SD_MOUNT_POINT "/simulacra/learn.db"
+#define LEARN_DB_TMP  SD_MOUNT_POINT "/simulacra/learn.tmp"
+#define LEARN_DB_SAVE_MS 30000
+static uint8_t  s_db_key[32];
+static bool     s_lib_dirty;
+
+static void learn_db_load(void)
+{
+    learn_db_derive_key(SIMULACRA_ESPNOW_KEY, s_db_key);
+    if (!s_sd_ok) return;
+    FILE *f = fopen(LEARN_DB_PATH, "rb");
+    if (!f) { ESP_LOGW(TAG, "learndb: none on card (fresh)"); return; }
+    // This build persists only the RAM working set (<= VIGIL_LIB_CAP records), so the buffers
+    // are sized to that. A file larger than that comes from a future archive-capable Vigil and
+    // is rejected here (rebuilt from sync) rather than partially loaded.
+    static uint8_t blob[sizeof(learn_db_hdr_t) + VIGIL_LIB_CAP*sizeof(learned_template_t)];
+    fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (fsz < 0 || (size_t)fsz > sizeof blob) {
+        fclose(f); ESP_LOGW(TAG, "learndb: file exceeds RAM build cap -> rebuild from sync"); return;
+    }
+    size_t n = fread(blob, 1, (size_t)fsz, f); fclose(f);
+    uint16_t cnt = 0;
+    static learned_template_t tmp[VIGIL_LIB_CAP];
+    if (learn_db_open(blob, n, tmp, &cnt, s_db_key) != 0) {
+        ESP_LOGW(TAG, "learndb: open failed (corrupt/foreign) -> rebuild from sync");
+        return;
+    }
+    // Re-gate every record off the card, then merge into the RAM working set (cap VIGIL_LIB_CAP).
+    size_t admitted = 0;
+    for (uint16_t i = 0; i < cnt; i++)
+        if (learn_regate(&tmp[i]) && learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &tmp[i], s_lib_sweep))
+            admitted++;
+    ESP_LOGW(TAG, "learndb: loaded %u/%u recs -> lib=%u", (unsigned)admitted, (unsigned)cnt, (unsigned)s_lib_count);
+}
+
+static void learn_db_save(void)
+{
+    if (!s_sd_ok || s_lib_count == 0) return;
+    static uint8_t blob[sizeof(learn_db_hdr_t) + VIGIL_LIB_CAP*sizeof(learned_template_t)]; size_t blen;
+    if (learn_db_seal(blob, &blen, s_lib, (uint16_t)s_lib_count, s_db_key) != 0) return;
+    FILE *f = fopen(LEARN_DB_TMP, "wb");
+    if (!f) { ESP_LOGW(TAG, "learndb: tmp open fail (keep RAM set)"); return; }
+    size_t w = fwrite(blob, 1, blen, f); fclose(f);
+    if (w != blen) { ESP_LOGW(TAG, "learndb: short write, abort rename"); remove(LEARN_DB_TMP); return; }
+    remove(LEARN_DB_PATH);                       // FAT rename won't clobber; remove then rename
+    if (rename(LEARN_DB_TMP, LEARN_DB_PATH) != 0) { ESP_LOGW(TAG, "learndb: rename fail"); return; }
+    ESP_LOGW(TAG, "learndb: saved %u recs (%u B)", (unsigned)s_lib_count, (unsigned)blen);
+}
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
     (void)info;
@@ -125,7 +207,8 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         if (learn_wire_unpack(pl, plen, rx, &nr, &h) != 0) return;
         for (uint8_t i = 0; i < nr; i++)
             if (learn_regate(&rx[i]))
-                learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rx[i], s_lib_sweep);
+                if (learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rx[i], s_lib_sweep))
+                    s_lib_dirty = true;
         ESP_LOGW(TAG, "offer rx: +%u recs, lib=%u", (unsigned)nr, (unsigned)s_lib_count);
         return;
     }
@@ -139,21 +222,21 @@ static void send_request(void){
 static void broadcast_library(void){
     if (s_lib_count == 0) return;
     s_lib_sweep++;
-    // top-N by reinforce_count: simple selection into a send buffer (N == whole lib here, cap fits chunks)
-    uint8_t chunks = (uint8_t)((s_lib_count + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
+    static learned_template_t sel[LEARN_SYNC_TOP_N];
+    size_t n = learn_top_n(s_lib, s_lib_count, sel, LEARN_SYNC_TOP_N);
+    uint8_t chunks = (uint8_t)((n + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
     for (uint8_t ci = 0; ci < chunks; ci++) {
         size_t off = (size_t)ci * LEARN_WIRE_RECS_PER_CHUNK;
-        uint8_t nrec = (uint8_t)((s_lib_count - off < LEARN_WIRE_RECS_PER_CHUNK)
-                                 ? (s_lib_count - off) : LEARN_WIRE_RECS_PER_CHUNK);
+        uint8_t nrec = (uint8_t)((n - off < LEARN_WIRE_RECS_PER_CHUNK) ? (n - off) : LEARN_WIRE_RECS_PER_CHUNK);
         uint8_t pl[RADAR_FRAME_MAX]; size_t plen;
-        if (learn_wire_pack(pl, &plen, &s_lib[off], nrec, 1, ci, chunks) != 0) continue;
+        if (learn_wire_pack(pl, &plen, &sel[off], nrec, 1, ci, chunks) != 0) continue;
         uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
         if (radar_wire_seal(frame, &flen, RADAR_TYPE_LEARN_SYNC, pl, plen,
                             SIMULACRA_ESPNOW_KEY, s_salt, ++s_ctr) == 0)
             esp_now_send(BCAST, frame, flen);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    ESP_LOGW(TAG, "broadcast library (%u recs)", (unsigned)s_lib_count);
+    ESP_LOGW(TAG, "broadcast top-%u of %u recs", (unsigned)n, (unsigned)s_lib_count);
 }
 static void net_init(void){
     esp_netif_init(); esp_event_loop_create_default();
@@ -213,6 +296,15 @@ void app_main(void)
     touch_init();
     net_init();
 
+    s_sd_ok = sd_mount();
+    if (s_sd_ok) {                                   // one-shot probe: mkdir + write + read-back
+        mkdir(SD_MOUNT_POINT "/simulacra", 0777);
+        FILE *f = fopen(SD_MOUNT_POINT "/simulacra/probe.txt", "w");
+        if (f) { fputs("ok", f); fclose(f); ESP_LOGW(TAG, "sd: probe write ok"); }
+        else ESP_LOGW(TAG, "sd: probe write FAILED");
+    }
+    learn_db_load();
+
     radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
     static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;
     bool bl_was_on = true;
@@ -224,6 +316,10 @@ void app_main(void)
         if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
         static uint32_t last_sync = 0;
         if (now - last_sync > 20000) { last_sync = now; broadcast_library(); }   // every 20 s
+        static uint32_t last_save = 0;
+        if (s_lib_dirty && now - last_save > LEARN_DB_SAVE_MS) {
+            last_save = now; s_lib_dirty = false; learn_db_save();
+        }
         radar_ui_on_tick(&ui, now, s_status.threat_count);
         if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
         if (ui.backlight_on){

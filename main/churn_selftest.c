@@ -20,6 +20,7 @@
 #include "law3.h"
 #include "learn.h"
 #include "learn_wire.h"
+#include "learn_db.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -391,6 +392,60 @@ static void test_learn_snapshot_ingest(void)
     size_t n = learn_snapshot(out, 8);
     ST_CHECK(n == 2, "snapshot: exports the stored count");
     learn_reset();
+}
+
+static void test_learn_db_key(void)
+{
+    uint8_t k1[32], k2[32];
+    learn_db_derive_key(SIMULACRA_ESPNOW_KEY, k1);
+    learn_db_derive_key(SIMULACRA_ESPNOW_KEY, k2);
+    ST_CHECK(memcmp(k1, k2, 32) == 0, "db key: deterministic");
+    ST_CHECK(memcmp(k1, SIMULACRA_ESPNOW_KEY, 32) != 0, "db key: distinct from session PSK");
+    uint8_t other[32]; memcpy(other, SIMULACRA_ESPNOW_KEY, 32); other[0] ^= 0xFF;
+    uint8_t k3[32]; learn_db_derive_key(other, k3);
+    ST_CHECK(memcmp(k1, k3, 32) != 0, "db key: depends on PSK");
+}
+
+static void test_learn_db_blob(void)
+{
+    uint8_t key[32]; learn_db_derive_key(SIMULACRA_ESPNOW_KEY, key);
+    learned_template_t in[3];
+    for (int i = 0; i < 3; i++) { mk_shape(&in[i], (uint16_t)(0x0075 + i)); in[i].reinforce_count = (uint16_t)(i+1); }
+
+    static uint8_t blob[sizeof(learn_db_hdr_t) + 3*sizeof(learned_template_t)]; size_t blen;
+    ST_CHECK(learn_db_seal(blob, &blen, in, 3, key) == 0, "db blob: seal ok");
+    ST_CHECK(blen == sizeof(learn_db_hdr_t) + 3*sizeof(learned_template_t), "db blob: length exact");
+
+    learned_template_t out[3]; uint16_t n = 0;
+    ST_CHECK(learn_db_open(blob, blen, out, &n, key) == 0 && n == 3, "db blob: open round-trips count");
+    ST_CHECK(memcmp(in, out, 3*sizeof(learned_template_t)) == 0, "db blob: records identical");
+
+    // Tamper one ciphertext byte -> tag must fail.
+    static uint8_t bad[sizeof(blob)]; memcpy(bad, blob, blen);
+    bad[sizeof(learn_db_hdr_t) + 4] ^= 0xFF;
+    ST_CHECK(learn_db_open(bad, blen, out, &n, key) < 0, "db blob: tamper rejected");
+
+    // Wrong key (foreign card) -> tag must fail.
+    uint8_t wrong[32]; memcpy(wrong, key, 32); wrong[0] ^= 0xFF;
+    ST_CHECK(learn_db_open(blob, blen, out, &n, wrong) < 0, "db blob: foreign key rejected");
+
+    // Bad magic -> rejected.
+    static uint8_t nomagic[sizeof(blob)]; memcpy(nomagic, blob, blen); nomagic[0] ^= 0xFF;
+    ST_CHECK(learn_db_open(nomagic, blen, out, &n, key) < 0, "db blob: bad magic rejected");
+}
+
+static void test_learn_top_n(void)
+{
+    learned_template_t s[5];
+    for (int i = 0; i < 5; i++) { mk_shape(&s[i], (uint16_t)(0x0070+i)); s[i].reinforce_count = (uint16_t)(i); }
+    // reinforce_count = 0,1,2,3,4 ; top-3 should be the 4,3,2 set.
+    learned_template_t out[3];
+    size_t n = learn_top_n(s, 5, out, 3);
+    ST_CHECK(n == 3, "top_n: returns n when count>=n");
+    ST_CHECK(out[0].reinforce_count == 4 && out[1].reinforce_count == 3 && out[2].reinforce_count == 2,
+             "top_n: strongest first");
+    // n larger than count -> returns count.
+    ST_CHECK(learn_top_n(s, 5, out, 3) == 3 && learn_top_n(s, 2, out, 3) == 2, "top_n: clamps to count");
 }
 
 static void test_ibeacon(void)
@@ -1016,6 +1071,9 @@ int churn_selftest_run(void)
     test_learn_regate();
     test_learn_merge_wire();
     test_learn_snapshot_ingest();
+    test_learn_db_key();
+    test_learn_db_blob();
+    test_learn_top_n();
     test_ibeacon();
     test_eddystone();
     test_tracker();

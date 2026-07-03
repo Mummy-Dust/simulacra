@@ -77,6 +77,25 @@ bool learn_merge_wire(learned_template_t *store, size_t *count, size_t cap,
     return true;
 }
 
+size_t learn_top_n(const learned_template_t *store, size_t count, learned_template_t *out, size_t n)
+{
+    size_t take = (count < n) ? count : n;
+    bool used[256] = { false };                    // bounds selection to first 256 records
+    for (size_t k = 0; k < take; k++) {
+        int best = -1;
+        for (size_t i = 0; i < count && i < 256; i++) {
+            if (used[i]) continue;
+            if (best < 0 ||
+                store[i].reinforce_count > store[best].reinforce_count ||
+                (store[i].reinforce_count == store[best].reinforce_count &&
+                 store[i].last_seen_sweep > store[best].last_seen_sweep)) best = (int)i;
+        }
+        if (best < 0) break;
+        used[best] = true; out[k] = store[(size_t)best];
+    }
+    return take;
+}
+
 int learn_wire_pack(uint8_t *payload, size_t *plen, const learned_template_t *recs, uint8_t nrecs,
                     uint16_t lib_version, uint8_t chunk_index, uint8_t chunk_count)
 {

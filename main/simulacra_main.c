@@ -50,6 +50,7 @@
 #include "generate.h"
 #include "probe.h"
 #include "sniff.h"
+#include "espnow_sniff.h"
 #include "coexist.h"
 #include "detect.h"
 #include "webui.h"
@@ -89,6 +90,11 @@
 // Probe mode (M7): set to 1 for Wi-Fi-only synthetic probe-request injection (NimBLE not started).
 #ifndef SIMULACRA_PROBE
 #define SIMULACRA_PROBE 0
+#endif
+
+// ESP-NOW opsec sniffer (Task 9): Wi-Fi-only ch1 promiscuous verifier for the radar link. Default 0.
+#ifndef SIMULACRA_ESPNOW_SNIFF
+#define SIMULACRA_ESPNOW_SNIFF 0
 #endif
 
 // Sniff mode (verification / Wi-Fi-observe seed): promiscuous-capture probe requests, log counts.
@@ -218,6 +224,11 @@ void app_main(void)
 #if SIMULACRA_SNIFF
     // Wi-Fi-only verification mode: promiscuous-capture probe requests, log counts. NimBLE idle.
     sniff_start();
+    return;
+#endif
+#if SIMULACRA_ESPNOW_SNIFF
+    // Wi-Fi-only opsec verifier (Task 9): ch1 promiscuous ESP-NOW decode, log REQ/STATUS + src MAC.
+    espnow_sniff_start();
     return;
 #endif
 

@@ -113,6 +113,21 @@ static int8_t dither_tx(void)   // plausible TX spread; not all at max
     return lv[esp_random() % (sizeof(lv)/sizeof(lv[0]))];
 }
 
+// Draw a diverse built-in template into an identity, avoiding `avoid` (the over-represented company
+// we're diversifying away from — the built-in earbuds-sams template is itself 0x0075). Sets
+// payload/len/itvl/archetype; returns the on-air company (RF_VENDOR_UNKNOWN for service-data).
+static uint16_t diversify_fill(identity_t *id, uint16_t avoid)
+{
+    const device_template_t *t = templates_pick();
+    for (int a = 0; a < 8 && t->company_id == avoid; a++) t = templates_pick();
+    uint16_t itvl = 0, cid = 0;
+    if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) id->payload_len = 0;
+    id->archetype_idx = 0;
+    for (size_t i = 0; i < templates_count(); i++) if (template_at(i) == t) { id->archetype_idx = (uint8_t)i; break; }
+    id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random() % 200));
+    return cid ? cid : RF_VENDOR_UNKNOWN;
+}
+
 size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
 {
     // build the vendor sampling table: occupied 24 slots + other(no-mfg 0xFFFF)
@@ -123,6 +138,7 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
     for (size_t i=0;i<RF_VENDOR_SLOTS;i++)
         if (m->vendors[i].count){ counts[k]=m->vendors[i].count; ids[k]=m->vendors[i].company_id; slot[k]=(int)i; k++; }
     if (m->other_count){ counts[k]=m->other_count; ids[k]=RF_VENDOR_UNKNOWN; slot[k]=-1; k++; }
+    uint64_t total_w = 0; for (size_t i=0;i<k;i++) total_w += counts[i];
 
     size_t built = 0;
     for (size_t r=0;r<n;r++){
@@ -130,14 +146,29 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
         make_random_static_addr_pub(id->addr);
         int vi = (k>0)? weighted_pick(counts,k) : -1;
         uint16_t company = (vi>=0)? ids[vi] : RF_VENDOR_UNKNOWN;
-        uint8_t arch=0;
-        if (build_for_vendor(company, id->payload, &id->payload_len, &arch)!=0){ id->payload_len=0; }
+
+        // Diversity floor (per-identity, proportional, stateless -> works for bulk build AND
+        // single-identity reseed, with no clustering). If the sampled vendor is over-represented in
+        // the model (> GEN_MAX_VENDOR_PCT of observations), redirect a proportional fraction of its
+        // draws to a varied built-in template so a monoculture model can't yield a monoculture crowd.
+        bool redirect = false;
+        if (vi >= 0 && total_w > 0) {
+            uint64_t num = (uint64_t)counts[vi] * 100;
+            uint64_t floor = (uint64_t)GEN_MAX_VENDOR_PCT * total_w;
+            if (num > floor && ((uint64_t)esp_random() % num) < (num - floor)) redirect = true;
+        }
+
+        if (redirect) {
+            company = diversify_fill(id, company);   // sets payload/len/itvl/archetype
+        } else {
+            uint8_t arch=0;
+            if (build_for_vendor(company, id->payload, &id->payload_len, &arch)!=0){ id->payload_len=0; }
+            id->archetype_idx = arch;
+            uint16_t itvl = 0;
+            if (vi>=0 && slot[vi]>=0) itvl = sample_interval(m->vendors[slot[vi]].itvl_bins);
+            id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random()%200));
+        }
         id->company_id = company;
-        id->archetype_idx = arch;
-        // interval: from the sampled vendor's histogram (else a default 100-300 ms)
-        uint16_t itvl = 0;
-        if (vi>=0 && slot[vi]>=0) itvl = sample_interval(m->vendors[slot[vi]].itvl_bins);
-        id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random()%200));
         id->tx_power = dither_tx();
         id->state=ID_IDLE; id->active_until_ms=0; id->eligible_at_ms=0;
         if (id->payload_len) built++;

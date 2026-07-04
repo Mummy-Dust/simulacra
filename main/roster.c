@@ -2,6 +2,7 @@
 #include "templates.h"
 #include "rf_model.h"
 #include "generate.h"
+#include "trace.h"
 #include "esp_random.h"
 
 static identity_t s_roster[CHURN_ROSTER_SIZE];
@@ -50,6 +51,9 @@ void roster_init(void)
 {
     rf_model_t m;
     if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
+#if SIMULACRA_TRACE
+        rf_model_dump(&m);                                   // trace: the loaded vendor histogram
+#endif
         generate_roster(&m, s_roster, CHURN_ROSTER_SIZE);
         generate_dump_roster(s_roster, CHURN_ROSTER_SIZE);   // acceptance/inspection
     } else {

@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include "churn.h"
 #include "roster.h"
+#include "trace.h"
 #include "esp_random.h"
 
 // Active set: the identities currently "present" in the synthetic crowd. There
@@ -73,6 +74,8 @@ void churn_tick(uint32_t now_ms)
                 c->state = ID_ACTIVE;
                 c->active_until_ms = now_ms + dwell_ms();
             }
+            SIM_TRACE("churn", "slot %d retire 0x%04X -> active 0x%04X", s,
+                      id->company_id, c ? c->company_id : 0xFFFF);
         }
     }
     if (now_ms - s_last_slice_ms >= CHURN_SLICE_MS) {

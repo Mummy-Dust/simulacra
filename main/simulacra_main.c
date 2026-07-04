@@ -53,6 +53,7 @@
 #include "espnow_sniff.h"
 #include "coexist.h"
 #include "detect.h"
+#include "sig_store.h"
 #include "webui.h"
 #include "esp_now_link.h"
 
@@ -146,6 +147,7 @@ static void simulacra_task(void *arg)
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
     detect_reset();
     detect_set_enabled(SIMULACRA_DETECT);   // M9 master enable (default on); coexist wires the rest
+    sig_store_load_seed();                   // M10 fingerprint DB: compile-time seed (a Vigil push may replace it)
 #if SIMULACRA_WEBUI
     coexist_set_wifi_enabled(false);   // keep Wi-Fi free for the config AP
     coexist_start();                    // BLE churn + detection start now

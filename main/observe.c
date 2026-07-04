@@ -1,6 +1,8 @@
 #include <string.h>
 #include "observe.h"
 #include "learn.h"
+#include "sig_match.h"
+#include "sig_store.h"
 #include "esp_log.h"
 
 // Self-learning template harvester: default ON, gated so it can be built out.
@@ -143,13 +145,32 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
     struct ble_gap_ext_disc_desc *d = &event->ext_disc;
     uint16_t company = RF_VENDOR_UNKNOWN;
     struct ble_hs_adv_fields f;
-    if (ble_hs_adv_parse_fields(&f, d->data, d->length_data) == 0 &&
-        f.mfg_data && f.mfg_data_len >= 2)
-        company = (uint16_t)(f.mfg_data[0] | (f.mfg_data[1] << 8));
+    bool parsed = (ble_hs_adv_parse_fields(&f, d->data, d->length_data) == 0);
+    bool has_mfg = parsed && f.mfg_data && f.mfg_data_len >= 2;
+    if (has_mfg) company = (uint16_t)(f.mfg_data[0] | (f.mfg_data[1] << 8));
+
+    // M10 fingerprint match against the RAM signature store (empty unless the decoy seeded it).
+    const sig_hit_t *hitp = NULL;
+    sig_hit_t hit;
+    if (parsed && sig_store_count() > 0) {
+        uint16_t svc16 = (f.num_uuids16 > 0) ? f.uuids16[0].value : 0x0000;
+        const uint8_t *svcd = NULL; uint8_t svcd_len = 0;
+        if (f.svc_data_uuid16 && f.svc_data_uuid16_len >= 2) {
+            svcd = f.svc_data_uuid16; svcd_len = f.svc_data_uuid16_len;
+            if (svc16 == 0) svc16 = (uint16_t)(svcd[0] | (svcd[1] << 8));
+        }
+        sig_adv_fields_t sf = {
+            .company_id = has_mfg ? company : 0xFFFF, .svc_uuid16 = svc16,
+            .addr_type = sig_addr_type_from(d->addr.type, d->addr.val),
+            .mfg_data = f.mfg_data, .mfg_len = f.mfg_data_len,
+            .svc_data = svcd, .svc_len = svcd_len,
+        };
+        if (sig_match(&sf, sig_store_db(), sig_store_count(), &hit)) hitp = &hit;
+    }
 
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
-    if (s_report_cb) s_report_cb(d->addr.val, d->rssi, company);   // M9 tap: raw MAC still live here
+    if (s_report_cb) s_report_cb(d->addr.val, d->rssi, company, hitp);   // M9 tap: raw MAC still live here
 #if SIMULACRA_LEARN
     learn_offer(observe_hash_mac(d->addr.val), d->data, d->length_data, company, now);
 #endif

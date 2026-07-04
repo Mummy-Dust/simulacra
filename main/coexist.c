@@ -42,6 +42,7 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "rf_model.h"
 #include "esp_random.h"
 #include "detect.h"
+#include "sig_class_name.h"
 #include <string.h>
 
 static const char *TAG = "coexist";
@@ -146,7 +147,8 @@ static void coexist_locate_emit(uint32_t hash, uint32_t id_prefix, int8_t rssi, 
 }
 
 // Registered on observe: fires for every raw report (NimBLE host-task context).
-static void coexist_on_report(const uint8_t mac[6], int8_t rssi, uint16_t company)
+static void coexist_on_report(const uint8_t mac[6], int8_t rssi, uint16_t company,
+                              const sig_hit_t *hit)
 {
     if (!detect_enabled()) return;
     uint8_t self[COEX_SELF_MAX][6]; size_t nself = coexist_self_macs(self, COEX_SELF_MAX);
@@ -155,6 +157,12 @@ static void coexist_on_report(const uint8_t mac[6], int8_t rssi, uint16_t compan
     uint32_t hash = coexist_detect_hash(mac);
     uint16_t epoch = s_epoch;
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (hit) {                                              // M10 fingerprint: known device class
+        if (detect_note_known(hash, rssi, hit->class_id, hit->category, hit->confidence, epoch)
+                == DETECT_CONFIRM)
+            ESP_LOGW(TAG, "KNOWN %s id=%04x conf=%u rssi=%d", sig_class_name(hit->class_id),
+                     (unsigned)(hash & 0xFFFF), (unsigned)hit->confidence, rssi);
+    }
     detect_result_t r = detect_observe(hash, rssi, company, epoch);
     if (r == DETECT_CONFIRM) {
         ESP_LOGW(TAG, "THREAT confirmed id=%04x vendor=0x%04x epochs=%u rssi=%d "

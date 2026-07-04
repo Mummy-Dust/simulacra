@@ -61,11 +61,12 @@ bool learn_merge_wire(learned_template_t *store, size_t *count, size_t cap,
     int idx = lw_find(store, *count, rec->shape_hash);
     if (idx >= 0) {
         learned_template_t *e = &store[idx];
-        if (rec->reinforce_count > e->reinforce_count) e->reinforce_count = rec->reinforce_count;
-        e->last_seen_sweep = sweep_no;
-        if (rec->itvl_min_ms < e->itvl_min_ms) e->itvl_min_ms = rec->itvl_min_ms;
-        if (rec->itvl_max_ms > e->itvl_max_ms) e->itvl_max_ms = rec->itvl_max_ms;
-        return true;
+        bool changed = false;
+        if (rec->reinforce_count > e->reinforce_count) { e->reinforce_count = rec->reinforce_count; changed = true; }
+        e->last_seen_sweep = sweep_no;                   // freshness only — not a durable change
+        if (rec->itvl_min_ms < e->itvl_min_ms) { e->itvl_min_ms = rec->itvl_min_ms; changed = true; }
+        if (rec->itvl_max_ms > e->itvl_max_ms) { e->itvl_max_ms = rec->itvl_max_ms; changed = true; }
+        return changed;
     }
     if (*count < cap) {
         store[*count] = *rec; store[*count].last_seen_sweep = sweep_no; (*count)++;

@@ -18,6 +18,10 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
         out->threats[i].best_rssi = in->threats[i].best_rssi;
         out->threats[i].first_epoch = in->threats[i].first_epoch;
         out->threats[i].last_epoch = in->threats[i].last_epoch;
+        out->threats[i].kind = in->threats[i].kind;
+        out->threats[i].class_id = in->threats[i].class_id;
+        out->threats[i].category = in->threats[i].category;
+        out->threats[i].confidence = in->threats[i].confidence;
     }
 }
 

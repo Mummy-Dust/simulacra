@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "radar_wire.h"     // DETECT_KIND_FOLLOWER / DETECT_KIND_KNOWN (shared with the renderer)
 
 // --- tunables (spec §3/§4) ---
 #ifndef DETECT_EPOCH_STRIKES
@@ -39,6 +40,10 @@ typedef struct {
     int8_t   best_rssi;
     uint16_t first_epoch;
     uint16_t last_epoch;
+    uint8_t  kind;          // DETECT_KIND_* (0 = FOLLOWER by zero-init)
+    uint8_t  class_id;      // sig_class_t (KNOWN only)
+    uint8_t  category;      // sig_category_t (KNOWN only)
+    uint8_t  confidence;    // 0..100 (KNOWN only)
 } detect_threat_t;
 
 // --- pure core (no radio, no NVS in the decision path) ---
@@ -46,6 +51,10 @@ void            detect_reset(void);                 // clear all RAM state (test
 void            detect_set_enabled(bool en);
 bool            detect_enabled(void);
 detect_result_t detect_observe(uint32_t hash, int8_t rssi, uint16_t vendor, uint16_t epoch);
+// Fingerprint hit: record a KNOWN device class. New row -> DETECT_CONFIRM (sets pending for
+// NVS/LED); an existing row -> DETECT_KNOWN. Eviction sacrifices KNOWN rows before FOLLOWERs.
+detect_result_t detect_note_known(uint32_t hash, int8_t rssi, uint8_t class_id,
+                                  uint8_t category, uint8_t confidence, uint16_t epoch);
 void            detect_on_epoch_change(uint16_t epoch);
 // Locate-throttle (pure): should a `THREAT locate` line be emitted for this sighting?
 bool            detect_locate_due(int8_t rssi, int8_t last_rssi, uint32_t now_ms, uint32_t last_ms);

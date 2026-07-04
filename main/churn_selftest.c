@@ -28,6 +28,7 @@
 #include "sig_seed.h"
 #include "sig_class_name.h"
 #include "sig_store.h"
+#include "threat_escalation.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -890,6 +891,7 @@ static void test_detect_nvs(void)
     detect_threat_t t;
     ST_CHECK(detect_threat_at(0, &t) && t.hash == 0xD00D && t.vendor == 0x004C && t.epochs >= 3,
              "restored threat round-trips hash/vendor/epochs");
+    ST_CHECK(t.sessions_seen >= 1 && t.places_seen >= 1, "nvs: recurrence counters restored");
 
     // Salt persists (stable across a load), so cross-boot hashes are stable by design.
     uint32_t s1 = detect_load_salt();
@@ -1039,6 +1041,7 @@ static void test_espnow_convert(void)
     w.threats[0].best_rssi = -50; w.threats[0].epochs = 4;
     w.threats[0].kind = DETECT_KIND_KNOWN; w.threats[0].class_id = SIG_CLASS_TILE;
     w.threats[0].category = SIG_CAT_TRACKER; w.threats[0].confidence = 75;
+    w.threats[0].sessions_seen = 3; w.threats[0].places_seen = 2;
 
     radar_wire_status_t r; espnow_status_from_webui(&r, &w);
     ST_CHECK(r.uptime_s == 61 && r.active_devices == 6 && r.probes_sent == 2048,
@@ -1049,6 +1052,7 @@ static void test_espnow_convert(void)
     ST_CHECK(r.threats[0].kind == DETECT_KIND_KNOWN && r.threats[0].class_id == SIG_CLASS_TILE,
              "convert: known fields carried");
     ST_CHECK(r.threats[0].confidence == 75, "convert: confidence carried");
+    ST_CHECK(r.threats[0].sessions_seen == 3 && r.threats[0].places_seen == 2, "convert: recurrence carried");
 }
 
 static void test_sig_match(void)
@@ -1232,6 +1236,53 @@ static void test_sig_store(void)
     ST_CHECK(sig_store_count() == 1, "store: bad record re-gated out");
 }
 
+static void test_escalation_ladder(void)
+{
+    ST_CHECK(threat_escalation_level(1,1) == ESCALATION_NEW,        "esc: (1,1) NEW");
+    ST_CHECK(threat_escalation_level(1,2) == ESCALATION_NEW,        "esc: (1,2) NEW");
+    ST_CHECK(threat_escalation_level(2,1) == ESCALATION_RECURRING,  "esc: (2,1) RECURRING (2nd session)");
+    ST_CHECK(threat_escalation_level(1,3) == ESCALATION_RECURRING,  "esc: (1,3) RECURRING (breadth)");
+    ST_CHECK(threat_escalation_level(3,1) == ESCALATION_RECURRING,  "esc: (3,1) not persistent (1 place)");
+    ST_CHECK(threat_escalation_level(3,2) == ESCALATION_PERSISTENT, "esc: (3,2) PERSISTENT");
+    ST_CHECK(threat_escalation_level(9,9) == ESCALATION_PERSISTENT, "esc: saturated PERSISTENT");
+    ST_CHECK(escalation_name(ESCALATION_PERSISTENT)[0] == 'P',      "esc: name P");
+}
+
+static void test_escalation_recurrence(void)
+{
+    detect_reset();
+    detect_set_session(1);
+    for (uint16_t e = 1; e <= 3; e++) { detect_on_epoch_change(e);
+        detect_observe(0xABCD, -50, 0x0075, e); detect_observe(0xABCD, -50, 0x0075, e); }
+    detect_threat_t t;
+    ST_CHECK(detect_threat_at(0, &t) && t.sessions_seen == 1 && t.places_seen == 1, "recur: fresh = 1/1");
+    ST_CHECK(threat_escalation_level(t.sessions_seen, t.places_seen) == ESCALATION_NEW, "recur: fresh NEW");
+
+    detect_observe(0xABCD, -50, 0x0075, 4);
+    detect_observe(0xABCD, -50, 0x0075, 5);
+    detect_threat_at(0, &t);
+    ST_CHECK(t.sessions_seen == 1 && t.places_seen == 3, "recur: places grow within a session");
+    ST_CHECK(threat_escalation_level(t.sessions_seen, t.places_seen) == ESCALATION_RECURRING, "recur: breadth RECURRING");
+
+    detect_observe(0xABCD, -50, 0x0075, 5);
+    detect_threat_at(0, &t);
+    ST_CHECK(t.places_seen == 3, "recur: same context no double count");
+
+    detect_set_session(2);
+    detect_observe(0xABCD, -50, 0x0075, 6);
+    detect_threat_at(0, &t);
+    ST_CHECK(t.sessions_seen == 2, "recur: new session bumps sessions_seen");
+
+    detect_reset(); detect_set_session(1);
+    detect_note_known(0x1234, -40, SIG_CLASS_AIRTAG, SIG_CAT_TRACKER, 80, 1);
+    detect_note_known(0x1234, -40, SIG_CLASS_AIRTAG, SIG_CAT_TRACKER, 80, 2);   // new place
+    detect_set_session(2); detect_note_known(0x1234, -40, SIG_CLASS_AIRTAG, SIG_CAT_TRACKER, 80, 3);
+    detect_set_session(3); detect_note_known(0x1234, -40, SIG_CLASS_AIRTAG, SIG_CAT_TRACKER, 80, 4);
+    detect_threat_at(0, &t);
+    ST_CHECK(t.sessions_seen == 3 && t.places_seen >= 2, "recur: KNOWN escalates across sessions");
+    ST_CHECK(threat_escalation_level(t.sessions_seen, t.places_seen) == ESCALATION_PERSISTENT, "recur: KNOWN PERSISTENT");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1303,6 +1354,8 @@ int churn_selftest_run(void)
     test_detect_nvs();
     test_detect_clear();
     test_detect_known();
+    test_escalation_ladder();
+    test_escalation_recurrence();
     test_webui_json();
     test_radar_geometry();
     test_radar_ui();

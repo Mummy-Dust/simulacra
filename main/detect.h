@@ -44,6 +44,9 @@ typedef struct {
     uint8_t  class_id;      // sig_class_t (KNOWN only)
     uint8_t  category;      // sig_category_t (KNOWN only)
     uint8_t  confidence;    // 0..100 (KNOWN only)
+    uint8_t  sessions_seen; // distinct boot-sessions observed in (saturating)
+    uint8_t  places_seen;   // distinct location-contexts observed in (saturating)
+    uint16_t last_session;  // session id of the last sighting
 } detect_threat_t;
 
 // --- pure core (no radio, no NVS in the decision path) ---
@@ -66,6 +69,8 @@ bool            detect_threat_at(size_t i, detect_threat_t *out);
 
 // --- persistence (NVS namespace "splinter"; called by the coordinator, not the decision path) ---
 uint32_t        detect_load_salt(void);        // load-or-create the per-install detection salt
+void            detect_set_session(uint16_t id);   // set current boot-session id (tests + coexist)
+uint16_t        detect_begin_session(void);        // NVS load-increment-save the boot counter; sets + returns it
 int             detect_save_nvs(void);         // persist confirmed threats; 0 = ok
 int             detect_load_nvs(void);         // restore confirmed threats; 0 = ok
 // Clear the RAM threat table AND wipe the persisted threats (keeps the salt).

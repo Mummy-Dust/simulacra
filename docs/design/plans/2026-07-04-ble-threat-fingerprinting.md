@@ -57,7 +57,7 @@ Shared render — `components/simulacra_radar/radar_render.c`: label + color KNO
   - `bool sig_match(const sig_adv_fields_t *adv, const threat_sig_t *db, size_t count, sig_hit_t *out);`
   - `uint8_t sig_addr_type_from(uint8_t nimble_addr_type, const uint8_t mac[6]);`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `main/churn_selftest.c` (near the learn tests), and register `test_sig_match();` in `churn_selftest_run()`:
 
@@ -115,12 +115,12 @@ static void test_sig_match(void)
 }
 ```
 
-- [ ] **Step 2: Run selftest build to verify it fails**
+- [x] **Step 2: Run selftest build to verify it fails**
 
 Run: `idf.py -DCHURN_SELFTEST=1 -p COM12 build`
 Expected: compile FAIL — `threat_sig.h` / `sig_match` not found.
 
-- [ ] **Step 3: Create `threat_sig.h`**
+- [x] **Step 3: Create `threat_sig.h`**
 
 ```c
 #pragma once
@@ -166,7 +166,7 @@ typedef struct {
 typedef struct { uint16_t sig_id; uint8_t category; uint8_t class_id; uint8_t confidence; } sig_hit_t;
 ```
 
-- [ ] **Step 4: Create `sig_match.h`**
+- [x] **Step 4: Create `sig_match.h`**
 
 ```c
 #pragma once
@@ -183,7 +183,7 @@ uint8_t sig_addr_type_from(uint8_t nimble_addr_type, const uint8_t mac[6]);
 bool sig_regate(const threat_sig_t *s);
 ```
 
-- [ ] **Step 5: Create `sig_match.c`**
+- [x] **Step 5: Create `sig_match.c`**
 
 ```c
 #include "sig_match.h"
@@ -245,12 +245,12 @@ bool sig_match(const sig_adv_fields_t *adv, const threat_sig_t *db, size_t count
 
 Add `"sig_match.c"` to `components/simulacra_radar/CMakeLists.txt` SRCS.
 
-- [ ] **Step 6: Run selftest to verify it passes**
+- [x] **Step 6: Run selftest to verify it passes**
 
 Run: `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`
 Expected: `SELFTEST result: PASS`, count grows by 10.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add components/simulacra_radar/threat_sig.h components/simulacra_radar/sig_match.h components/simulacra_radar/sig_match.c components/simulacra_radar/CMakeLists.txt main/churn_selftest.c
@@ -267,7 +267,7 @@ git commit -m "feat(sig): threat_sig record + pure masked-pattern matcher"
 **Interfaces:**
 - Consumes: `sig_regate` (created in Task 1).
 
-- [ ] **Step 1: Write the failing test** (register `test_sig_regate();`)
+- [x] **Step 1: Write the failing test** (register `test_sig_regate();`)
 
 ```c
 static void test_sig_regate(void)
@@ -292,13 +292,13 @@ static void test_sig_regate(void)
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (function present but test unregistered → actually it compiles; run and expect the new checks; if `sig_regate` already handles all, they PASS — that's fine, this task documents the contract). If any check FAILS, fix `sig_regate` in `sig_match.c`.
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (function present but test unregistered → actually it compiles; run and expect the new checks; if `sig_regate` already handles all, they PASS — that's fine, this task documents the contract). If any check FAILS, fix `sig_regate` in `sig_match.c`.
 
-- [ ] **Step 3: Confirm implementation** — `sig_regate` from Task 1 already enforces every case above. No code change expected.
+- [x] **Step 3: Confirm implementation** — `sig_regate` from Task 1 already enforces every case above. No code change expected.
 
-- [ ] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +7.
+- [x] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +7.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add main/churn_selftest.c
@@ -323,7 +323,7 @@ git commit -m "test(sig): re-gate bounds/range coverage"
 
 **Reference:** clone `components/simulacra_radar/learn_db.{h,c}` exactly; substitute the record type (`threat_sig_t`), magic, label `"simulacra-sigdb-v1"`, and add `content_version` to the header (authenticated as AAD alongside magic/version/count).
 
-- [ ] **Step 1: Write the failing test** (register `test_sig_db_blob();`)
+- [x] **Step 1: Write the failing test** (register `test_sig_db_blob();`)
 
 ```c
 #include "sig_db.h"
@@ -353,9 +353,9 @@ static void test_sig_db_blob(void)
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_db.h` missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_db.h` missing).
 
-- [ ] **Step 3: Create `sig_db.h`**
+- [x] **Step 3: Create `sig_db.h`**
 
 ```c
 #pragma once
@@ -385,13 +385,13 @@ int sig_db_open(const uint8_t *buf, size_t len, threat_sig_t *recs,
                 uint16_t *count, uint16_t *content_version, const uint8_t key[32]);
 ```
 
-- [ ] **Step 4: Create `sig_db.c`** — copy `learn_db.c` and adapt. Key points: HKDF-SHA256 with `SIG_DB_LABEL` (reuse `learn_db.c`'s HMAC-based HKDF verbatim — `mbedtls_hkdf` is not compiled in default IDF); authenticate `magic|format_version|content_version|count` as GCM AAD; ciphertext = `count * sizeof(threat_sig_t)`; random 12-byte nonce; 16-byte tag. `sig_db_open` verifies magic + `format_version == SIG_DB_FMT_VER`, checks `len == sizeof(hdr) + count*sizeof(threat_sig_t)`, authenticates, then copies out records + `*content_version`.
+- [x] **Step 4: Create `sig_db.c`** — copy `learn_db.c` and adapt. Key points: HKDF-SHA256 with `SIG_DB_LABEL` (reuse `learn_db.c`'s HMAC-based HKDF verbatim — `mbedtls_hkdf` is not compiled in default IDF); authenticate `magic|format_version|content_version|count` as GCM AAD; ciphertext = `count * sizeof(threat_sig_t)`; random 12-byte nonce; 16-byte tag. `sig_db_open` verifies magic + `format_version == SIG_DB_FMT_VER`, checks `len == sizeof(hdr) + count*sizeof(threat_sig_t)`, authenticates, then copies out records + `*content_version`.
 
 Add `"sig_db.c"` to `components/simulacra_radar/CMakeLists.txt` SRCS.
 
-- [ ] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +6.
+- [x] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +6.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add components/simulacra_radar/sig_db.h components/simulacra_radar/sig_db.c components/simulacra_radar/CMakeLists.txt main/churn_selftest.c
@@ -416,7 +416,7 @@ git commit -m "feat(sig): AES-256-GCM sealed signature DB (content-versioned)"
 
 **Reference:** mirror `learn_wire.c`'s `learn_wire_pack`/`learn_wire_unpack` (header + packed records; validate `rec_count <= SIG_WIRE_RECS_PER_CHUNK` and `plen` on unpack).
 
-- [ ] **Step 1: Write the failing test** (register `test_sig_wire();`)
+- [x] **Step 1: Write the failing test** (register `test_sig_wire();`)
 
 ```c
 #include "sig_wire.h"
@@ -442,9 +442,9 @@ static void test_sig_wire(void)
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_wire.h` missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_wire.h` missing).
 
-- [ ] **Step 3: Create `sig_wire.h` + `sig_wire.c`** — mirror `learn_wire`. `sig_wire.h`:
+- [x] **Step 3: Create `sig_wire.h` + `sig_wire.c`** — mirror `learn_wire`. `sig_wire.h`:
 
 ```c
 #pragma once
@@ -470,9 +470,9 @@ int sig_wire_unpack(const uint8_t *payload, size_t plen, threat_sig_t *recs,
 
 `sig_wire.c` — pack writes `sig_chunk_hdr_t` then `nrecs * sizeof(threat_sig_t)`; returns `<0` if `nrecs > SIG_WIRE_RECS_PER_CHUNK`. unpack validates `plen >= sizeof(hdr)`, reads hdr, validates `rec_count <= SIG_WIRE_RECS_PER_CHUNK` and `plen == sizeof(hdr) + rec_count*sizeof(threat_sig_t)`, copies records. Add `"sig_wire.c"` to CMakeLists SRCS.
 
-- [ ] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +6.
+- [x] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +6.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add components/simulacra_radar/sig_wire.h components/simulacra_radar/sig_wire.c components/simulacra_radar/CMakeLists.txt main/churn_selftest.c
@@ -497,7 +497,7 @@ git commit -m "feat(sig): ESP-NOW chunk framing for signature DB sync"
 
 **Note on byte values:** the pattern/offset/mask below are the implementer's starting vectors from public documentation. They make the tests self-consistent; **confirm against a live capture** (run the decoy in observe/sniff mode near a real AirTag/SmartTag/Tile and compare) before the bench sign-off in Task 12.
 
-- [ ] **Step 1: Write the failing test** (register `test_sig_seed();`)
+- [x] **Step 1: Write the failing test** (register `test_sig_seed();`)
 
 ```c
 #include "sig_seed.h"
@@ -528,9 +528,9 @@ static void test_sig_seed(void)
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_seed.h` missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_seed.h` missing).
 
-- [ ] **Step 3: Create `sig_class_name.h`**
+- [x] **Step 3: Create `sig_class_name.h`**
 
 ```c
 #pragma once
@@ -546,7 +546,7 @@ static inline const char *sig_class_name(uint8_t class_id)
 }
 ```
 
-- [ ] **Step 4: Create `sig_seed.h` + `sig_seed.c`**
+- [x] **Step 4: Create `sig_seed.h` + `sig_seed.c`**
 
 `sig_seed.h`:
 
@@ -597,9 +597,9 @@ size_t   sig_seed_copy(threat_sig_t *out, size_t max)
 
 Add `"sig_seed.c"` to CMakeLists SRCS.
 
-- [ ] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +7.
+- [x] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +7.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add components/simulacra_radar/sig_seed.h components/simulacra_radar/sig_seed.c components/simulacra_radar/sig_class_name.h components/simulacra_radar/CMakeLists.txt main/churn_selftest.c
@@ -623,7 +623,7 @@ git commit -m "feat(sig): seed signature set (AirTag/SmartTag/Tile) + class name
 
 **Note:** the enum value `DETECT_KNOWN` already exists and is returned by `detect_observe` for "hash already a threat"; reuse it as the "already recorded" signal. Zero-init makes `kind == DETECT_KIND_FOLLOWER` by default, so the existing behavioral path needs no field writes beyond leaving kind at 0. Bump `DETECT_THR_MAGIC` (the struct grew, so old blobs are dropped once on first boot after update — acceptable; behavioral threats re-confirm).
 
-- [ ] **Step 1: Write the failing test** (register `test_detect_known();`)
+- [x] **Step 1: Write the failing test** (register `test_detect_known();`)
 
 ```c
 static void test_detect_known(void)
@@ -667,9 +667,9 @@ static int detect_threat_find_kind(uint32_t hash) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`detect_note_known` / fields missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`detect_note_known` / fields missing).
 
-- [ ] **Step 3: Extend `detect.h`** — add after the enum and in the struct:
+- [x] **Step 3: Extend `detect.h`** — add after the enum and in the struct:
 
 ```c
 #define DETECT_KIND_FOLLOWER 0
@@ -692,7 +692,7 @@ detect_result_t detect_note_known(uint32_t hash, int8_t rssi, uint8_t class_id,
                                   uint8_t category, uint8_t confidence, uint16_t epoch);
 ```
 
-- [ ] **Step 4: Implement in `detect.c`**
+- [x] **Step 4: Implement in `detect.c`**
 
 Bump the magic (struct grew): `#define DETECT_THR_MAGIC 0x4D394432u   // 'M9D2'`.
 
@@ -730,9 +730,9 @@ detect_result_t detect_note_known(uint32_t hash, int8_t rssi, uint8_t class_id,
 
 (The behavioral `promote()` path already zero-inits via `s_threat` reuse; leave `kind` at 0 = FOLLOWER. No other change needed there.)
 
-- [ ] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Existing `test_detect_nvs` still passes (magic bump is internal; it saves+loads within one run).
+- [x] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Existing `test_detect_nvs` still passes (magic bump is internal; it saves+loads within one run).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main/detect.h main/detect.c main/churn_selftest.c
@@ -752,7 +752,7 @@ git commit -m "feat(detect): KNOWN threat kind + detect_note_known (follower-pri
 **Interfaces:**
 - Produces: `radar_wire_status_t.threats[i]` gains `uint8_t kind, class_id, category, confidence;` (after `last_epoch`). `espnow_status_from_webui` copies them from the webui snapshot.
 
-- [ ] **Step 1: Extend the failing test** — in the existing `test_espnow_convert`, set the new webui threat fields and assert they survive conversion:
+- [x] **Step 1: Extend the failing test** — in the existing `test_espnow_convert`, set the new webui threat fields and assert they survive conversion:
 
 ```c
     // (inside test_espnow_convert, after populating an input threat)
@@ -764,9 +764,9 @@ git commit -m "feat(detect): KNOWN threat kind + detect_note_known (follower-pri
     ST_CHECK(r.threats[0].confidence == 75, "convert: confidence carried");
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (fields missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (fields missing).
 
-- [ ] **Step 3: Extend the wire struct** — in `radar_wire.h`, the threats element becomes:
+- [x] **Step 3: Extend the wire struct** — in `radar_wire.h`, the threats element becomes:
 
 ```c
     struct __attribute__((packed)) {
@@ -785,9 +785,9 @@ Add the same four fields to the `webui_status_t` threat element (find it via gre
         out->threats[i].confidence = in->threats[i].confidence;
 ```
 
-- [ ] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Also confirm `sizeof(radar_wire_status_t)` stays under 218 (it becomes ~151 B) — the existing `test_radar_wire`/`test_espnow_convert` round-trip covers seal/open.
+- [x] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Also confirm `sizeof(radar_wire_status_t)` stays under 218 (it becomes ~151 B) — the existing `test_radar_wire`/`test_espnow_convert` round-trip covers seal/open.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add components/simulacra_radar/radar_wire.h main/esp_now_link.c main/webui.h main/webui.c main/churn_selftest.c
@@ -811,7 +811,7 @@ git commit -m "feat(wire): status frame carries KNOWN threat class/category/conf
   - `uint16_t sig_store_version(void);`
   - `bool sig_store_adopt(const threat_sig_t *recs, size_t n, uint16_t content_version);` — re-gate each; adopt (wholesale swap) iff `content_version >= current` and at least one record survives re-gate; returns true if adopted.
 
-- [ ] **Step 1: Write the failing test** (register `test_sig_store();`)
+- [x] **Step 1: Write the failing test** (register `test_sig_store();`)
 
 ```c
 #include "sig_store.h"
@@ -841,9 +841,9 @@ static void test_sig_store(void)
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_store.h` missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`sig_store.h` missing).
 
-- [ ] **Step 3: Create `sig_store.h` + `sig_store.c`**
+- [x] **Step 3: Create `sig_store.h` + `sig_store.c`**
 
 `sig_store.h`:
 
@@ -897,9 +897,9 @@ bool sig_store_adopt(const threat_sig_t *recs, size_t n, uint16_t content_versio
 
 Add `"sig_store.c"` to `main/CMakeLists.txt` SRCS.
 
-- [ ] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +6.
+- [x] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +6.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add main/sig_store.h main/sig_store.c main/CMakeLists.txt main/churn_selftest.c
@@ -917,7 +917,7 @@ git commit -m "feat(sig): decoy RAM signature store (seed load + re-gated wholes
 **Interfaces:**
 - Consumes: `sig_match`, `sig_addr_type_from`, `sig_store_db/count`, `detect_note_known`, `observe_hash_mac`.
 
-- [ ] **Step 1: Seed the store at boot** — in `main/simulacra_main.c`, in the decoy branch of `simulacra_task` right after `detect_reset();` (before `coexist_start`), add:
+- [x] **Step 1: Seed the store at boot** — in `main/simulacra_main.c`, in the decoy branch of `simulacra_task` right after `detect_reset();` (before `coexist_start`), add:
 
 ```c
     sig_store_load_seed();   // fingerprint DB: compile-time seed; a Vigil push may replace it
@@ -925,7 +925,7 @@ git commit -m "feat(sig): decoy RAM signature store (seed load + re-gated wholes
 
 Add `#include "sig_store.h"` at the top.
 
-- [ ] **Step 2: Match at the observe hook** — in `main/observe.c` `observe_gap_event`, after the existing `learn_offer(...)` block and before `observe_ingest(...)`, add:
+- [x] **Step 2: Match at the observe hook** — in `main/observe.c` `observe_gap_event`, after the existing `learn_offer(...)` block and before `observe_ingest(...)`, add:
 
 ```c
 #if SIMULACRA_DETECT
@@ -955,14 +955,14 @@ Add `#include "sig_store.h"` at the top.
 
 Includes at top of `observe.c`: `#include "sig_match.h"`, `#include "sig_store.h"`, `#include "sig_class_name.h"`, `#include "detect.h"`. For the epoch argument, reuse the same epoch source the M9 tap already feeds to `detect_observe` (grep `detect_observe(` in `observe.c`/`coexist.c`; if detection is driven from `coexist.c`'s `s_report_cb`, call `detect_note_known` there instead, alongside `detect_observe`, passing the same `epoch`). **Wire it wherever `detect_observe` is currently called so both share one epoch counter.**
 
-- [ ] **Step 3: Build the decoy** — `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 build`
+- [x] **Step 3: Build the decoy** — `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 build`
 Expected: clean build.
 
-- [ ] **Step 4: Bench smoke** — flash; bring a real AirTag near the decoy (or rely on ambient). Read serial:
+- [x] **Step 4: Bench smoke** — flash; bring a real AirTag near the decoy (or rely on ambient). Read serial:
 `& "$env:USERPROFILE\.claude\skills\build-flash-read\build_flash_read.ps1" -Target c5 -Port COM12 -Do read -ReadSeconds 30 -Grep 'sig: KNOWN'`
 Expected: `sig: KNOWN AirTag (conf=80)` (or SmartTag/Tile) if a tracker is present. (No tracker nearby → no line; that's fine, deferred full check to Task 12.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add main/observe.c main/simulacra_main.c
@@ -980,7 +980,7 @@ git commit -m "feat(sig): decoy matches adverts at the observe hook -> DETECT_KN
 **Interfaces:**
 - Consumes: `sig_wire_unpack`, `sig_store_adopt`, `sig_chunk_hdr_t`, `RADAR_TYPE_SIG_SYNC`.
 
-- [ ] **Step 1: Add reassembly state + handler** — in `main/esp_now_link.c`, add includes `#include "sig_wire.h"`, `#include "sig_store.h"`, a replay gate `static radar_replay_t s_sig_replay;`, and reassembly state:
+- [x] **Step 1: Add reassembly state + handler** — in `main/esp_now_link.c`, add includes `#include "sig_wire.h"`, `#include "sig_store.h"`, a replay gate `static radar_replay_t s_sig_replay;`, and reassembly state:
 
 ```c
 static threat_sig_t s_sig_rx[SIG_DB_CAP];
@@ -1015,11 +1015,11 @@ In `on_recv`, add a branch:
     }
 ```
 
-- [ ] **Step 2: Build the decoy** — `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 build`; clean.
+- [x] **Step 2: Build the decoy** — `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 build`; clean.
 
-- [ ] **Step 3: Bench (after Task 11 flashes Vigil)** — deferred to Task 12; the send side must exist first.
+- [x] **Step 3: Bench (after Task 11 flashes Vigil)** — deferred to Task 12; the send side must exist first.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add main/esp_now_link.c
@@ -1037,7 +1037,7 @@ git commit -m "feat(sig): decoy reassembles SIG_SYNC chunks + re-gated adopt"
 **Interfaces:**
 - Consumes: `sig_db_*`, `sig_seed_*`, `sig_wire_pack`, `RADAR_TYPE_SIG_SYNC`, `radar_wire_seal`, `sig_class_name`.
 
-- [ ] **Step 1: Vigil signature DB state + load/seal** — in `cyd/main/cyd_main.c`, near the learn DB state, add:
+- [x] **Step 1: Vigil signature DB state + load/seal** — in `cyd/main/cyd_main.c`, near the learn DB state, add:
 
 ```c
 #include "sig_db.h"
@@ -1079,7 +1079,7 @@ static void sig_db_init(void) {
 
 Call `sig_db_init();` in `app_main` right after `learn_db_load();`.
 
-- [ ] **Step 2: Broadcast `SIG_SYNC` every 60 s** — add:
+- [x] **Step 2: Broadcast `SIG_SYNC` every 60 s** — add:
 
 ```c
 static void broadcast_sig_db(void) {
@@ -1106,7 +1106,7 @@ In the main loop, alongside the learn `broadcast_library` timer, add a 60 s time
         if (now - last_sig > 60000) { last_sig = now; broadcast_sig_db(); }
 ```
 
-- [ ] **Step 3: Label + color KNOWN threats** — in `components/simulacra_radar/radar_render.c`, add `#include "sig_class_name.h"`. In `draw_detail`, render KNOWN rows distinctly:
+- [x] **Step 3: Label + color KNOWN threats** — in `components/simulacra_radar/radar_render.c`, add `#include "sig_class_name.h"`. In `draw_detail`, render KNOWN rows distinctly:
 
 ```c
         if (st->threats[i].kind == DETECT_KIND_KNOWN) {
@@ -1121,9 +1121,9 @@ In the main loop, alongside the learn `broadcast_library` timer, add a 60 s time
 
 Add `#include "detect.h"` guard is not needed in the shared component; instead define `#define DETECT_KIND_KNOWN 1` locally in `radar_render.c` or read it from `radar_wire.h`. **Put `DETECT_KIND_FOLLOWER/KNOWN` in `radar_wire.h`** (shared) so both `detect.h` and `radar_render.c` reference one definition — update Task 6/Task 7 to `#include`/reference it. In `draw_radar`, give KNOWN blips a distinct fill color (e.g. `0xFD20` amber) vs. the follower `threat_color`.
 
-- [ ] **Step 4: Build Vigil** — from `cyd/`: `idf.py build`; clean, no DRAM overflow.
+- [x] **Step 4: Build Vigil** — from `cyd/`: `idf.py build`; clean, no DRAM overflow.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cyd/main/cyd_main.c components/simulacra_radar/radar_render.c components/simulacra_radar/radar_wire.h main/detect.h
@@ -1136,15 +1136,15 @@ git commit -m "feat(vigil): signature DB custody on SD + SIG_SYNC broadcast + KN
 
 **Files:** none (bench).
 
-- [ ] **Step 1: Flash both** — Vigil (from `cyd/`): `idf.py -p COM10 flash`. Decoy: `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 flash`.
+- [x] **Step 1: Flash both** — Vigil (from `cyd/`): `idf.py -p COM10 flash`. Decoy: `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 flash`.
 
-- [ ] **Step 2: DB distribution** — read the decoy: `build_flash_read.ps1 -Target c5 -Port COM12 -Do read -ReadSeconds 75 -Grep 'sig: adopted|sig: KNOWN'`. Expect `sig: adopted DB v1 (3 sigs)` within ~60 s (Vigil's first `SIG_SYNC`). Read Vigil (COM10): expect `sigdb: loaded`/`sigdb: saved` and `sig: broadcast v1 (3 sigs…)`.
+- [x] **Step 2: DB distribution** — read the decoy: `build_flash_read.ps1 -Target c5 -Port COM12 -Do read -ReadSeconds 75 -Grep 'sig: adopted|sig: KNOWN'`. Expect `sig: adopted DB v1 (3 sigs)` within ~60 s (Vigil's first `SIG_SYNC`). Read Vigil (COM10): expect `sigdb: loaded`/`sigdb: saved` and `sig: broadcast v1 (3 sigs…)`.
 
-- [ ] **Step 3: Live match** — bring a real AirTag (or SmartTag/Tile) near the decoy. Expect decoy `sig: KNOWN AirTag (conf=80)`, and on the CYD DETAIL page a `AirTag (likely)` row (verify via CYD `status rx` serial if the screen isn't visible). **Confirm the seed pattern bytes against this live capture** (Task 5 note); adjust `sig_seed.c` if a real tracker doesn't match, then re-flash.
+- [x] **Step 3: Live match** — bring a real AirTag (or SmartTag/Tile) near the decoy. Expect decoy `sig: KNOWN AirTag (conf=80)`, and on the CYD DETAIL page a `AirTag (likely)` row (verify via CYD `status rx` serial if the screen isn't visible). **Confirm the seed pattern bytes against this live capture** (Task 5 note); adjust `sig_seed.c` if a real tracker doesn't match, then re-flash.
 
-- [ ] **Step 4: Regression** — flip to a selftest build (`idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`) and confirm `SELFTEST result: PASS` with the new total (all sig tests green). Revert to the display-paired build after.
+- [x] **Step 4: Regression** — flip to a selftest build (`idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`) and confirm `SELFTEST result: PASS` with the new total (all sig tests green). Revert to the display-paired build after.
 
-- [ ] **Step 5: Finish** — mark checkboxes; then use superpowers:finishing-a-development-branch (verify selftest PASS, offer merge options; established pattern = `--no-ff` merge to local `main`).
+- [x] **Step 5: Finish** — mark checkboxes; then use superpowers:finishing-a-development-branch (verify selftest PASS, offer merge options; established pattern = `--no-ff` merge to local `main`).
 
 ---
 
@@ -1155,3 +1155,15 @@ git commit -m "feat(vigil): signature DB custody on SD + SIG_SYNC broadcast + KN
 **Type consistency:** `threat_sig_t`, `sig_adv_fields_t`, `sig_hit_t`, `sig_match`, `sig_regate`, `sig_addr_type_from`, `sig_db_seal/open` (with `content_version`), `sig_wire_pack/unpack`, `sig_seed_copy/version`, `detect_note_known`, `DETECT_KIND_*` (single definition in `radar_wire.h` per T11 note), `sig_store_*` — all consistent across tasks.
 
 **Known follow-ups folded in:** `DETECT_KIND_*` lives in `radar_wire.h` (shared) to avoid a `detect.h` dependency from the shared renderer (noted in T11, referenced by T6/T7). Seed byte values are explicitly flagged for live confirmation in T5 + T12.
+
+## Execution Record (2026-07-04)
+
+All 12 tasks implemented inline, selftest-verified on C5 COM12 and bench-verified on C5+CYD.
+
+- **Selftest:** PASS, fails=0, with ~+43 new sig checks (Tasks 1–8). Regression after all integration: still PASS.
+- **Two bugs caught during execution:**
+  - `promote()` never stamped `kind`, so a behavioral follower reusing a recycled KNOWN slot inherited `kind=KNOWN` (mislabeled + wrongly evictable). Fixed to stamp FOLLOWER + clear KNOWN fields. (selftest-caught)
+  - `sig_db_init` put `threat_sig_t tmp[SIG_DB_CAP]` (~2.8 KB) on the ~3.5 KB main-task stack → **stack overflow + Vigil boot loop**. Fixed to `static` (matches `learn_db_load`). (bench-caught)
+- **Distribution bench (both boards):** Vigil `sigdb: loaded/saved v1 (3 sigs, 173 B)` + `sig: broadcast v1 (3 sigs, 1 chunk)` every 60 s; decoy `sig: adopted DB v1 (3 sigs)` — seal→SD→ESP-NOW→reassemble→re-gate→wholesale adopt confirmed end to end.
+- **NOT yet verified — live tracker match (T12 step 3):** needs a real AirTag/SmartTag/Tile present during a decoy observe reprofile window (~15 s every several minutes), and the seed pattern bytes confirmed against that capture. Deferred until a real tracker is on the bench. Both boards left running the fingerprint build for this.
+- Commits: tasks 1–5 (`b031253`), 6–8 (`a0dcd1d`), 9 (`1f208d1`), 10 (`f9bfe65`), 11 (`aada48f`), stack fix (`5e792b8`).

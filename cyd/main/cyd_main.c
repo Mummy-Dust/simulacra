@@ -16,6 +16,9 @@
 #include "radar_key.h"
 #include "learn_wire.h"
 #include "learn_db.h"
+#include "sig_db.h"
+#include "sig_wire.h"
+#include "sig_seed.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_event.h"
@@ -145,6 +148,14 @@ static bool     s_lib_dirty;
 static uint32_t s_last_offer_ms, s_last_sync_ms, s_last_save_ms;  // 0 = never
 static uint32_t s_save_bytes;
 
+// ---- M10 fingerprint signature DB: custodied encrypted on SD, pushed to decoys ----
+#define SIG_DB_PATH SD_MOUNT_POINT "/simulacra/threat_sig.db"
+#define SIG_DB_TMP  SD_MOUNT_POINT "/simulacra/threat_sig.tmp"
+static threat_sig_t s_sigdb[SIG_DB_CAP];
+static size_t       s_sigdb_n;
+static uint16_t     s_sigdb_ver;
+static uint8_t      s_sigdb_key[32];
+
 static void learn_db_load(void)
 {
     learn_db_derive_key(SIMULACRA_ESPNOW_KEY, s_db_key);
@@ -187,6 +198,63 @@ static void learn_db_save(void)
     if (rename(LEARN_DB_TMP, LEARN_DB_PATH) != 0) { ESP_LOGW(TAG, "learndb: rename fail"); return; }
     ESP_LOGW(TAG, "learndb: saved %u recs (%u B)", (unsigned)s_lib_count, (unsigned)blen);
     s_last_save_ms = (uint32_t)(esp_timer_get_time()/1000); s_save_bytes = (uint32_t)blen;
+}
+
+static void sig_db_save_card(void)
+{
+    if (!s_sd_ok || s_sigdb_n == 0) return;
+    static uint8_t blob[sizeof(sig_db_hdr_t) + SIG_DB_CAP*sizeof(threat_sig_t)]; size_t blen;
+    if (sig_db_seal(blob, &blen, s_sigdb, (uint16_t)s_sigdb_n, s_sigdb_ver, s_sigdb_key) != 0) return;
+    FILE *f = fopen(SIG_DB_TMP, "wb");
+    if (!f) { ESP_LOGW(TAG, "sigdb: tmp open fail"); return; }
+    size_t w = fwrite(blob, 1, blen, f); fclose(f);
+    if (w != blen) { remove(SIG_DB_TMP); return; }
+    remove(SIG_DB_PATH);
+    if (rename(SIG_DB_TMP, SIG_DB_PATH) == 0)
+        ESP_LOGW(TAG, "sigdb: saved v%u (%u sigs, %u B)", (unsigned)s_sigdb_ver, (unsigned)s_sigdb_n, (unsigned)blen);
+}
+
+static void sig_db_init(void)
+{
+    sig_db_derive_key(SIMULACRA_ESPNOW_KEY, s_sigdb_key);
+    s_sigdb_n = sig_seed_copy(s_sigdb, SIG_DB_CAP);   // baseline = compiled seed
+    s_sigdb_ver = sig_seed_version();
+    if (s_sd_ok) {
+        FILE *f = fopen(SIG_DB_PATH, "rb");
+        if (f) {
+            static uint8_t blob[sizeof(sig_db_hdr_t) + SIG_DB_CAP*sizeof(threat_sig_t)];
+            fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+            size_t n = (fsz > 0 && (size_t)fsz <= sizeof blob) ? fread(blob, 1, (size_t)fsz, f) : 0;
+            fclose(f);
+            static threat_sig_t tmp[SIG_DB_CAP]; uint16_t cnt = 0, ver = 0;   // static: avoid main-task stack overflow
+            if (n && sig_db_open(blob, n, tmp, &cnt, &ver, s_sigdb_key) == 0 &&
+                ver >= s_sigdb_ver && cnt <= SIG_DB_CAP) {
+                memcpy(s_sigdb, tmp, cnt * sizeof(threat_sig_t)); s_sigdb_n = cnt; s_sigdb_ver = ver;
+                ESP_LOGW(TAG, "sigdb: loaded v%u (%u sigs) from card", (unsigned)ver, (unsigned)cnt);
+            }
+        }
+    }
+    sig_db_save_card();                               // self-populate a fresh/older card with the seed
+}
+
+static void broadcast_sig_db(void)
+{
+    if (s_sigdb_n == 0) return;
+    uint8_t chunks = (uint8_t)((s_sigdb_n + SIG_WIRE_RECS_PER_CHUNK - 1) / SIG_WIRE_RECS_PER_CHUNK);
+    for (uint8_t ci = 0; ci < chunks; ci++) {
+        size_t off = (size_t)ci * SIG_WIRE_RECS_PER_CHUNK;
+        uint8_t nrec = (uint8_t)((s_sigdb_n - off < SIG_WIRE_RECS_PER_CHUNK) ? (s_sigdb_n - off)
+                                                                             : SIG_WIRE_RECS_PER_CHUNK);
+        uint8_t pl[RADAR_FRAME_MAX]; size_t plen;
+        if (sig_wire_pack(pl, &plen, &s_sigdb[off], nrec, s_sigdb_ver, ci, chunks) != 0) continue;
+        uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+        if (radar_wire_seal(frame, &flen, RADAR_TYPE_SIG_SYNC, pl, plen,
+                            SIMULACRA_ESPNOW_KEY, s_salt, ++s_ctr) == 0)
+            esp_now_send(BCAST, frame, flen);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    ESP_LOGW(TAG, "sig: broadcast v%u (%u sigs, %u chunks)",
+             (unsigned)s_sigdb_ver, (unsigned)s_sigdb_n, (unsigned)chunks);
 }
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
@@ -310,6 +378,7 @@ void app_main(void)
         else ESP_LOGW(TAG, "sd: probe write FAILED");
     }
     learn_db_load();
+    sig_db_init();
 
     radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
     static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;
@@ -322,6 +391,8 @@ void app_main(void)
         if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
         static uint32_t last_sync = 0;
         if (now - last_sync > 20000) { last_sync = now; broadcast_library(); }   // every 20 s
+        static uint32_t last_sig = 0;
+        if (now - last_sig > 60000) { last_sig = now; broadcast_sig_db(); }      // signature DB every 60 s
         static uint32_t last_save = 0;
         if (s_lib_dirty && now - last_save > LEARN_DB_SAVE_MS) {
             last_save = now; s_lib_dirty = false; learn_db_save();

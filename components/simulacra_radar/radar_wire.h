@@ -9,6 +9,9 @@
 #define RADAR_TYPE_REQUEST 1
 #define RADAR_TYPE_STATUS  2
 #define RADAR_MAX_THREATS  8        // must match DETECT_MAX_THREATS
+// Threat kind (shared so the renderer can label without depending on detect.h):
+#define DETECT_KIND_FOLLOWER 0      // behavioral follower (persistence across epochs)
+#define DETECT_KIND_KNOWN    1      // fingerprint match (known device class)
 #define RADAR_KEY_LEN   32
 #define RADAR_NONCE_LEN 12
 #define RADAR_TAG_LEN   16
@@ -23,6 +26,7 @@ typedef struct __attribute__((packed)) {
     struct __attribute__((packed)) {
         uint32_t hash; uint16_t vendor; uint8_t epochs; int8_t best_rssi;
         uint16_t first_epoch, last_epoch;
+        uint8_t kind, class_id, category, confidence;   // KNOWN-device fields (kind=DETECT_KIND_*)
     } threats[RADAR_MAX_THREATS];
 } radar_wire_status_t;
 

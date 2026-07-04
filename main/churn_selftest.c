@@ -21,6 +21,13 @@
 #include "learn.h"
 #include "learn_wire.h"
 #include "learn_db.h"
+#include "threat_sig.h"
+#include "sig_match.h"
+#include "sig_db.h"
+#include "sig_wire.h"
+#include "sig_seed.h"
+#include "sig_class_name.h"
+#include "sig_store.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -1030,6 +1037,8 @@ static void test_espnow_convert(void)
     w.active_target = 6; w.threat_count = 1;
     w.threats[0].hash = 0xC0FFEE; w.threats[0].vendor = 0x004C;
     w.threats[0].best_rssi = -50; w.threats[0].epochs = 4;
+    w.threats[0].kind = DETECT_KIND_KNOWN; w.threats[0].class_id = SIG_CLASS_TILE;
+    w.threats[0].category = SIG_CAT_TRACKER; w.threats[0].confidence = 75;
 
     radar_wire_status_t r; espnow_status_from_webui(&r, &w);
     ST_CHECK(r.uptime_s == 61 && r.active_devices == 6 && r.probes_sent == 2048,
@@ -1037,6 +1046,190 @@ static void test_espnow_convert(void)
     ST_CHECK((r.flags & 0x1) != 0, "paused flag packed");
     ST_CHECK(r.threat_count == 1 && r.threats[0].hash == 0xC0FFEE &&
              r.threats[0].best_rssi == -50, "threat copied hash-only");
+    ST_CHECK(r.threats[0].kind == DETECT_KIND_KNOWN && r.threats[0].class_id == SIG_CLASS_TILE,
+             "convert: known fields carried");
+    ST_CHECK(r.threats[0].confidence == 75, "convert: confidence carried");
+}
+
+static void test_sig_match(void)
+{
+    threat_sig_t s = {0};
+    s.sig_id = 1; s.category = SIG_CAT_TRACKER; s.class_id = SIG_CLASS_AIRTAG;
+    s.company_id = 0x004C; s.svc_uuid16 = 0x0000;
+    s.addr_type_mask = SIG_ADDR_RPA | SIG_ADDR_NRPA;
+    s.match_src = SIG_SRC_MFG_DATA; s.pat_off = 2; s.pat_len = 1;
+    s.pattern[0] = 0x12; s.mask[0] = 0xFF; s.confidence = 80;
+
+    uint8_t mfg[] = { 0x4C,0x00, 0x12, 0x19, 0xAA,0xBB,0xCC };
+    sig_adv_fields_t adv = { .company_id = 0x004C, .svc_uuid16 = 0,
+        .addr_type = SIG_ADDR_RPA, .mfg_data = mfg, .mfg_len = sizeof mfg,
+        .svc_data = NULL, .svc_len = 0 };
+
+    sig_hit_t hit;
+    ST_CHECK(sig_match(&adv, &s, 1, &hit), "sig_match: airtag advert hits");
+    ST_CHECK(hit.class_id == SIG_CLASS_AIRTAG, "sig_match: reports class");
+
+    mfg[4] = 0x11; mfg[5] = 0x22;
+    ST_CHECK(sig_match(&adv, &s, 1, &hit), "sig_match: robust to rotating bytes");
+
+    uint8_t mfg2[] = { 0x4C,0x00, 0x07, 0x19, 0x00 };
+    adv.mfg_data = mfg2; adv.mfg_len = sizeof mfg2;
+    ST_CHECK(!sig_match(&adv, &s, 1, &hit), "sig_match: near-miss rejected");
+
+    adv.mfg_data = mfg; adv.mfg_len = sizeof mfg; adv.company_id = 0x0075;
+    ST_CHECK(!sig_match(&adv, &s, 1, &hit), "sig_match: company gate");
+
+    adv.company_id = 0x004C; adv.mfg_len = 2;
+    ST_CHECK(!sig_match(&adv, &s, 1, &hit), "sig_match: short advert bounds-safe");
+
+    adv.mfg_len = sizeof mfg; adv.addr_type = SIG_ADDR_PUBLIC;
+    ST_CHECK(!sig_match(&adv, &s, 1, &hit), "sig_match: addr-type gate");
+
+    uint8_t rpa[6]  = {0,0,0,0,0, 0x40};
+    uint8_t stat[6] = {0,0,0,0,0, 0xC0};
+    ST_CHECK(sig_addr_type_from(1, rpa)  == SIG_ADDR_RPA,    "addr_type: RPA");
+    ST_CHECK(sig_addr_type_from(1, stat) == SIG_ADDR_STATIC, "addr_type: static");
+    ST_CHECK(sig_addr_type_from(0, rpa)  == SIG_ADDR_PUBLIC, "addr_type: public");
+}
+
+static void test_sig_regate(void)
+{
+    threat_sig_t s = {0};
+    s.category = SIG_CAT_TRACKER; s.class_id = SIG_CLASS_TILE; s.match_src = SIG_SRC_SVC_DATA;
+    s.pat_off = 0; s.pat_len = 2; s.confidence = 75;
+    ST_CHECK(sig_regate(&s), "regate: well-formed accepted");
+
+    threat_sig_t b1 = s; b1.pat_len = SIG_PAT_MAX + 1;
+    ST_CHECK(!sig_regate(&b1), "regate: over-long pattern rejected");
+    threat_sig_t b2 = s; b2.pat_off = SIG_PAT_MAX - 1; b2.pat_len = 4;
+    ST_CHECK(!sig_regate(&b2), "regate: offset+len overrun rejected");
+    threat_sig_t b3 = s; b3.category = SIG_CAT_COUNT;
+    ST_CHECK(!sig_regate(&b3), "regate: bad category rejected");
+    threat_sig_t b4 = s; b4.class_id = SIG_CLASS_COUNT;
+    ST_CHECK(!sig_regate(&b4), "regate: bad class rejected");
+    threat_sig_t b5 = s; b5.match_src = SIG_SRC_COUNT;
+    ST_CHECK(!sig_regate(&b5), "regate: bad match_src rejected");
+    threat_sig_t b6 = s; b6.confidence = 101;
+    ST_CHECK(!sig_regate(&b6), "regate: confidence>100 rejected");
+}
+
+static void test_sig_db_blob(void)
+{
+    uint8_t psk[32]; for (int i=0;i<32;i++) psk[i]=(uint8_t)(i*7+1);
+    uint8_t key[32]; sig_db_derive_key(psk, key);
+
+    threat_sig_t recs[2] = {0};
+    recs[0].sig_id = 1; recs[0].class_id = SIG_CLASS_AIRTAG; recs[0].company_id = 0x004C;
+    recs[1].sig_id = 2; recs[1].class_id = SIG_CLASS_TILE;   recs[1].svc_uuid16 = 0xFEED;
+
+    static uint8_t blob[sizeof(sig_db_hdr_t) + 2*sizeof(threat_sig_t)]; size_t blen;
+    ST_CHECK(sig_db_seal(blob, &blen, recs, 2, 7, key) == 0, "sigdb: seal ok");
+
+    threat_sig_t out[2]; uint16_t cnt = 0, ver = 0;
+    ST_CHECK(sig_db_open(blob, blen, out, &cnt, &ver, key) == 0, "sigdb: open ok");
+    ST_CHECK(cnt == 2 && ver == 7, "sigdb: count + content_version recovered");
+    ST_CHECK(out[1].svc_uuid16 == 0xFEED, "sigdb: record bytes intact");
+
+    blob[blen/2] ^= 0xFF;
+    ST_CHECK(sig_db_open(blob, blen, out, &cnt, &ver, key) != 0, "sigdb: tamper rejected");
+
+    uint8_t key2[32]; psk[0]^=1; sig_db_derive_key(psk, key2);
+    ST_CHECK(sig_db_open(blob, blen, out, &cnt, &ver, key2) != 0, "sigdb: wrong key rejected");
+}
+
+static void test_sig_wire(void)
+{
+    threat_sig_t recs[3] = {0};
+    recs[0].sig_id = 10; recs[1].sig_id = 11; recs[2].sig_id = 12;
+    recs[2].company_id = 0x0075;
+
+    uint8_t pl[RADAR_FRAME_MAX]; size_t plen;
+    ST_CHECK(sig_wire_pack(pl, &plen, recs, 3, 42, 0, 2) == 0, "sigwire: pack ok");
+    ST_CHECK(plen <= 218, "sigwire: chunk fits");
+
+    threat_sig_t out[SIG_WIRE_RECS_PER_CHUNK]; uint8_t nr; sig_chunk_hdr_t h;
+    ST_CHECK(sig_wire_unpack(pl, plen, out, &nr, &h) == 0, "sigwire: unpack ok");
+    ST_CHECK(nr == 3 && h.content_version == 42 && h.chunk_count == 2, "sigwire: hdr recovered");
+    ST_CHECK(out[2].company_id == 0x0075, "sigwire: record bytes intact");
+
+    ST_CHECK(sig_wire_pack(pl, &plen, recs, SIG_WIRE_RECS_PER_CHUNK + 1, 1, 0, 1) < 0,
+             "sigwire: over-capacity pack rejected");
+    ST_CHECK(sig_wire_unpack(pl, 2, out, &nr, &h) < 0, "sigwire: short payload rejected");
+}
+
+static void test_sig_seed(void)
+{
+    threat_sig_t db[SIG_DB_CAP];
+    size_t n = sig_seed_copy(db, SIG_DB_CAP);
+    ST_CHECK(n >= 3, "seed: at least airtag/smarttag/tile");
+    ST_CHECK(sig_seed_version() >= 1, "seed: content_version set");
+    for (size_t i = 0; i < n; i++) ST_CHECK(sig_regate(&db[i]), "seed: every record re-gates clean");
+
+    uint8_t mfg[] = { 0x4C,0x00, 0x12, 0x19, 0x10,0x00,0x00 };
+    sig_adv_fields_t adv = { .company_id = 0x004C, .svc_uuid16 = 0, .addr_type = SIG_ADDR_RPA,
+        .mfg_data = mfg, .mfg_len = sizeof mfg, .svc_data = NULL, .svc_len = 0 };
+    sig_hit_t hit;
+    ST_CHECK(sig_match(&adv, db, n, &hit) && hit.class_id == SIG_CLASS_AIRTAG, "seed: airtag hit");
+
+    uint8_t svc[] = { 0xED,0xFE, 0x02,0x00,0x0C };
+    sig_adv_fields_t tadv = { .company_id = 0xFFFF, .svc_uuid16 = 0xFEED, .addr_type = SIG_ADDR_PUBLIC,
+        .mfg_data = NULL, .mfg_len = 0, .svc_data = svc, .svc_len = sizeof svc };
+    ST_CHECK(sig_match(&tadv, db, n, &hit) && hit.class_id == SIG_CLASS_TILE, "seed: tile hit");
+
+    ST_CHECK(sig_class_name(SIG_CLASS_AIRTAG)[0] != '\0', "class name: airtag non-empty");
+}
+
+static int detect_threat_find_kind(uint32_t hash) {
+    for (size_t i = 0; i < detect_threat_count(); i++) {
+        detect_threat_t t; if (detect_threat_at(i, &t) && t.hash == hash) return t.kind;
+    }
+    return -1;
+}
+
+static void test_detect_known(void)
+{
+    detect_reset();
+    ST_CHECK(detect_note_known(0xAAAA1111, -55, SIG_CLASS_AIRTAG, SIG_CAT_TRACKER, 80, 3) == DETECT_CONFIRM,
+             "known: first hit confirms");
+    ST_CHECK(detect_threat_count() == 1, "known: one threat row");
+    detect_threat_t t;
+    ST_CHECK(detect_threat_at(0, &t) && t.kind == DETECT_KIND_KNOWN, "known: row is KIND_KNOWN");
+    ST_CHECK(t.class_id == SIG_CLASS_AIRTAG && t.confidence == 80, "known: class + confidence stored");
+
+    ST_CHECK(detect_note_known(0xAAAA1111, -40, SIG_CLASS_AIRTAG, SIG_CAT_TRACKER, 80, 4) == DETECT_KNOWN,
+             "known: repeat updates");
+    ST_CHECK(detect_threat_count() == 1, "known: no duplicate");
+    detect_threat_at(0, &t); ST_CHECK(t.best_rssi == -40, "known: rssi improved");
+
+    detect_reset();
+    for (int i = 0; i < DETECT_MAX_THREATS; i++)
+        detect_note_known(0xB0000000u + i, -60, SIG_CLASS_TILE, SIG_CAT_TRACKER, 75, 1);
+    for (uint16_t e = 1; e <= 3; e++) { detect_observe(0xF0F0F0F0, -50, 0x1234, e); detect_observe(0xF0F0F0F0, -50, 0x1234, e); }
+    ST_CHECK(detect_threat_find_kind(0xF0F0F0F0) == DETECT_KIND_FOLLOWER, "known: follower admitted over KNOWN");
+    for (int i = 0; i < DETECT_MAX_THREATS; i++)
+        detect_note_known(0xC0000000u + i, -60, SIG_CLASS_TILE, SIG_CAT_TRACKER, 75, 5);
+    ST_CHECK(detect_threat_find_kind(0xF0F0F0F0) == DETECT_KIND_FOLLOWER, "known: follower not evicted by KNOWN");
+}
+
+static void test_sig_store(void)
+{
+    sig_store_load_seed();
+    ST_CHECK(sig_store_count() >= 3, "store: seed loaded");
+    ST_CHECK(sig_store_version() == sig_seed_version(), "store: seed version");
+
+    threat_sig_t one[1] = {0};
+    one[0].sig_id = 99; one[0].class_id = SIG_CLASS_TILE; one[0].match_src = SIG_SRC_SVC_DATA;
+    one[0].svc_uuid16 = 0xFEED; one[0].pat_len = 0; one[0].confidence = 75;
+    ST_CHECK(sig_store_adopt(one, 1, sig_seed_version() + 1), "store: newer version adopted");
+    ST_CHECK(sig_store_count() == 1 && sig_store_version() == sig_seed_version()+1, "store: swapped wholesale");
+
+    ST_CHECK(!sig_store_adopt(one, 1, sig_seed_version()), "store: older version ignored");
+
+    threat_sig_t two[2] = {0};
+    two[0] = one[0]; two[0].sig_id = 5;
+    two[1] = one[0]; two[1].sig_id = 6; two[1].pat_len = SIG_PAT_MAX + 5;
+    ST_CHECK(sig_store_adopt(two, 2, sig_seed_version() + 2), "store: adopt with one bad record");
+    ST_CHECK(sig_store_count() == 1, "store: bad record re-gated out");
 }
 
 int churn_selftest_run(void)
@@ -1080,6 +1273,12 @@ int churn_selftest_run(void)
     test_learn_db_key();
     test_learn_db_blob();
     test_learn_top_n();
+    test_sig_match();
+    test_sig_regate();
+    test_sig_db_blob();
+    test_sig_wire();
+    test_sig_seed();
+    test_sig_store();
     test_ibeacon();
     test_eddystone();
     test_tracker();
@@ -1103,6 +1302,7 @@ int churn_selftest_run(void)
     test_detect_self_exclude();
     test_detect_nvs();
     test_detect_clear();
+    test_detect_known();
     test_webui_json();
     test_radar_geometry();
     test_radar_ui();

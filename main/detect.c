@@ -77,6 +77,9 @@ static detect_threat_t *promote(candidate_t *c)
     }
     t->hash = c->hash; t->vendor = c->vendor; t->epochs = c->distinct_epochs;
     t->best_rssi = c->best_rssi; t->first_epoch = c->first_epoch; t->last_epoch = c->cur_epoch;
+    // A follower may reuse a slot previously held by a KNOWN row; stamp the kind and clear the
+    // KNOWN-only fields so it isn't mislabeled or wrongly targeted by KNOWN eviction.
+    t->kind = DETECT_KIND_FOLLOWER; t->class_id = 0; t->category = 0; t->confidence = 0;
     s_pending = true; s_pending_threat = *t;   // hand off to the coordinator for NVS persist + LED
     c->used = false;   // candidate graduates to a threat
     return t;
@@ -112,6 +115,34 @@ detect_result_t detect_observe(uint32_t hash, int8_t rssi, uint16_t vendor, uint
         if (c->distinct_epochs >= DETECT_EPOCH_STRIKES) { promote(c); return DETECT_CONFIRM; }
     }
     return DETECT_NONE;
+}
+
+detect_result_t detect_note_known(uint32_t hash, int8_t rssi, uint8_t class_id,
+                                  uint8_t category, uint8_t confidence, uint16_t epoch)
+{
+    if (!s_enabled) return DETECT_NONE;
+    detect_threat_t *t = threat_find(hash);
+    if (t) {                                   // already recorded: refresh
+        if (rssi > t->best_rssi) t->best_rssi = rssi;
+        t->last_epoch = epoch;
+        return DETECT_KNOWN;
+    }
+    if (s_threat_n < DETECT_MAX_THREATS) {
+        t = &s_threat[s_threat_n++];
+    } else {
+        // Evict the oldest KNOWN row before ever touching a FOLLOWER; if all are FOLLOWERs, drop.
+        t = NULL;
+        for (size_t i = 0; i < s_threat_n; i++) {
+            if (s_threat[i].kind != DETECT_KIND_KNOWN) continue;
+            if (!t || s_threat[i].last_epoch < t->last_epoch) t = &s_threat[i];
+        }
+        if (!t) return DETECT_NONE;            // table full of followers: don't crowd them out
+    }
+    memset(t, 0, sizeof(*t));
+    t->hash = hash; t->best_rssi = rssi; t->first_epoch = epoch; t->last_epoch = epoch;
+    t->kind = DETECT_KIND_KNOWN; t->class_id = class_id; t->category = category; t->confidence = confidence;
+    s_pending = true; s_pending_threat = *t;
+    return DETECT_CONFIRM;
 }
 
 void detect_on_epoch_change(uint16_t epoch)
@@ -153,7 +184,7 @@ bool detect_threat_at(size_t i, detect_threat_t *out)
 #define DETECT_NVS_NS    "splinter"       // reuse the existing namespace (do not rename)
 #define DETECT_KEY_SALT  "detect_salt"
 #define DETECT_KEY_THR   "detect_thr"
-#define DETECT_THR_MAGIC 0x4D394454u       // 'M9DT'
+#define DETECT_THR_MAGIC 0x4D394432u       // 'M9D2' (bumped: detect_threat_t grew KNOWN fields)
 
 void detect_clear_threats(void)
 {

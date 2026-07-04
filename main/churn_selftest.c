@@ -976,9 +976,10 @@ static void test_radar_ui(void)
     radar_ui_t ui;
     radar_ui_reset(&ui, 1000, 0);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR && ui.backlight_on, "reset: radar + bl on");
-    radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL, "input 1 -> detail");
-    radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,  "input 2 -> stats");
-    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_RADAR,  "input 3 -> wraps");
+    radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL,  "input 1 -> detail");
+    radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,   "input 2 -> stats");
+    radar_ui_on_input(&ui, 1250); ST_CHECK(ui.view == RADAR_VIEW_LIBRARY, "input 3 -> library");
+    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_RADAR,   "input 4 -> wraps");
     radar_ui_on_input(&ui, 2000); radar_ui_on_input(&ui, 2000);          // -> stats
     radar_ui_on_tick(&ui, 2000 + RADAR_VIEW_IDLE_MS + 1, 0);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR, "idle returns to radar");

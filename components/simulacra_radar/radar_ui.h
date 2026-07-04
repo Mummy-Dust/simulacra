@@ -5,7 +5,7 @@
 #define RADAR_VIEW_IDLE_MS 15000u   // no input this long -> back to radar
 #define RADAR_BL_IDLE_MS   30000u   // clear + idle this long -> backlight off
 
-typedef enum { RADAR_VIEW_RADAR = 0, RADAR_VIEW_DETAIL, RADAR_VIEW_STATS, RADAR_VIEW_COUNT } radar_view_t;
+typedef enum { RADAR_VIEW_RADAR = 0, RADAR_VIEW_DETAIL, RADAR_VIEW_STATS, RADAR_VIEW_LIBRARY, RADAR_VIEW_COUNT } radar_view_t;
 
 typedef struct {
     radar_view_t view;

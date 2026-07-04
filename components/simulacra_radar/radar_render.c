@@ -48,12 +48,30 @@ static void draw_stats(radar_gfx_t *g, const radar_wire_status_t *st){
     ROW("up %lus",(unsigned long)st->uptime_s);
     #undef ROW
 }
-void radar_render_view(radar_view_t view, const radar_wire_status_t *st, uint16_t sweep,
-                       uint16_t *band, int band_h, int w, int h, radar_flush_fn flush, void *ctx){
+static void fmt_age(char *out, size_t n, const char *label, uint32_t age_s){
+    if (age_s == UINT32_MAX) snprintf(out, n, "%s never", label);
+    else                     snprintf(out, n, "%s %lus ago", label, (unsigned long)age_s);
+}
+static void draw_library(radar_gfx_t *g, const radar_lib_info_t *lib){
+    char l[40]; int y=6; radar_gfx_text(g,8,y,"LIBRARY",COL_FG); y+=24;
+    #define ROW(...) do{ snprintf(l,sizeof l,__VA_ARGS__); radar_gfx_text(g,6,y,l,COL_DIM); y+=18; }while(0)
+    if (!lib) { radar_gfx_text(g,6,y,"not a librarian",COL_DIM); return; }
+    if (lib->sd_ok) ROW("sd OK %luMB",(unsigned long)lib->card_mb);
+    else            radar_gfx_text(g,6,y,"sd ABSENT (RAM only)",COL_WARN), y+=18;
+    ROW("lib %u/%u shapes",(unsigned)lib->lib_count,(unsigned)lib->lib_cap);
+    fmt_age(l,sizeof l,"offer rx",lib->offer_age_s); radar_gfx_text(g,6,y,l,COL_DIM); y+=18;
+    fmt_age(l,sizeof l,"sync tx ",lib->sync_age_s);  radar_gfx_text(g,6,y,l,COL_DIM); y+=18;
+    if (lib->save_age_s == UINT32_MAX) ROW("save never");
+    else ROW("save %lus ago (%luB)",(unsigned long)lib->save_age_s,(unsigned long)lib->save_bytes);
+    #undef ROW
+}
+void radar_render_view(radar_view_t view, const radar_wire_status_t *st, const radar_lib_info_t *lib,
+                       uint16_t sweep, uint16_t *band, int band_h, int w, int h, radar_flush_fn flush, void *ctx){
     for(int y0=0;y0<h;y0+=band_h){ radar_gfx_t g={ .buf=band, .w=w, .y0=y0, .h=band_h };
         radar_gfx_clear(&g,COL_BG);
         if(view==RADAR_VIEW_DETAIL) draw_detail(&g,st);
         else if(view==RADAR_VIEW_STATS) draw_stats(&g,st);
+        else if(view==RADAR_VIEW_LIBRARY) draw_library(&g,lib);
         else draw_radar(&g,st,sweep);
         flush(y0, band_h, band, ctx); }
 }

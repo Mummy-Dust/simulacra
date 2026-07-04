@@ -226,7 +226,7 @@ static void sig_db_init(void)
             fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
             size_t n = (fsz > 0 && (size_t)fsz <= sizeof blob) ? fread(blob, 1, (size_t)fsz, f) : 0;
             fclose(f);
-            threat_sig_t tmp[SIG_DB_CAP]; uint16_t cnt = 0, ver = 0;
+            static threat_sig_t tmp[SIG_DB_CAP]; uint16_t cnt = 0, ver = 0;   // static: avoid main-task stack overflow
             if (n && sig_db_open(blob, n, tmp, &cnt, &ver, s_sigdb_key) == 0 &&
                 ver >= s_sigdb_ver && cnt <= SIG_DB_CAP) {
                 memcpy(s_sigdb, tmp, cnt * sizeof(threat_sig_t)); s_sigdb_n = cnt; s_sigdb_ver = ver;

@@ -3,6 +3,7 @@
 #include "learn.h"
 #include "sig_match.h"
 #include "sig_store.h"
+#include "fleet.h"
 #include "esp_log.h"
 
 // Self-learning template harvester: default ON, gated so it can be built out.
@@ -150,6 +151,14 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
     bool has_mfg = parsed && f.mfg_data && f.mfg_data_len >= 2;
     if (has_mfg) company = (uint16_t)(f.mfg_data[0] | (f.mfg_data[1] << 8));
 
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    // Fleet self-exclusion: a fleet-mate's synthetic advert -> skip detect/learn/model entirely
+    // (the sweep still closes so windows time out correctly).
+    if (fleet_mac_excluded(d->addr.val, now)) {
+        if (!s_window_mode) observe_maybe_close_sweep(now);
+        return 0;
+    }
+
     // M10 fingerprint match against the RAM signature store (empty unless the decoy seeded it).
     const sig_hit_t *hitp = NULL;
     sig_hit_t hit;
@@ -169,7 +178,6 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
         if (sig_match(&sf, sig_store_db(), sig_store_count(), &hit)) hitp = &hit;
     }
 
-    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
     if (s_report_cb) s_report_cb(d->addr.val, d->rssi, company, hitp);   // M9 tap: raw MAC still live here
 #if SIMULACRA_LEARN

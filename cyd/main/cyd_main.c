@@ -142,6 +142,8 @@ static uint16_t           s_lib_sweep;      // local "time" for merges/age (mono
 #define LEARN_DB_SAVE_MS 30000
 static uint8_t  s_db_key[32];
 static bool     s_lib_dirty;
+static uint32_t s_last_offer_ms, s_last_sync_ms, s_last_save_ms;  // 0 = never
+static uint32_t s_save_bytes;
 
 static void learn_db_load(void)
 {
@@ -184,6 +186,7 @@ static void learn_db_save(void)
     remove(LEARN_DB_PATH);                       // FAT rename won't clobber; remove then rename
     if (rename(LEARN_DB_TMP, LEARN_DB_PATH) != 0) { ESP_LOGW(TAG, "learndb: rename fail"); return; }
     ESP_LOGW(TAG, "learndb: saved %u recs (%u B)", (unsigned)s_lib_count, (unsigned)blen);
+    s_last_save_ms = (uint32_t)(esp_timer_get_time()/1000); s_save_bytes = (uint32_t)blen;
 }
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
@@ -209,6 +212,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
             if (learn_regate(&rx[i]))
                 if (learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rx[i], s_lib_sweep))
                     s_lib_dirty = true;
+        s_last_offer_ms = (uint32_t)(esp_timer_get_time()/1000);
         ESP_LOGW(TAG, "offer rx: +%u recs, lib=%u", (unsigned)nr, (unsigned)s_lib_count);
         return;
     }
@@ -236,8 +240,10 @@ static void broadcast_library(void){
             esp_now_send(BCAST, frame, flen);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+    s_last_sync_ms = (uint32_t)(esp_timer_get_time()/1000);
     ESP_LOGW(TAG, "broadcast top-%u of %u recs", (unsigned)n, (unsigned)s_lib_count);
 }
+static uint32_t age_s(uint32_t now, uint32_t ts){ return ts ? (uint32_t)(now - ts)/1000u : UINT32_MAX; }
 static void net_init(void){
     esp_netif_init(); esp_event_loop_create_default();
     wifi_init_config_t c=WIFI_INIT_CONFIG_DEFAULT(); esp_wifi_init(&c);
@@ -323,7 +329,16 @@ void app_main(void)
         radar_ui_on_tick(&ui, now, s_status.threat_count);
         if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
         if (ui.backlight_on){
-            radar_render_view(ui.view, &s_status, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+            radar_lib_info_t lib = {
+                .sd_ok = s_sd_ok,
+                .card_mb = s_sd_ok ? (uint32_t)(((uint64_t)s_card->csd.capacity)*s_card->csd.sector_size/(1024*1024)) : 0,
+                .lib_count = (uint16_t)s_lib_count, .lib_cap = VIGIL_LIB_CAP,
+                .offer_age_s = age_s(now, s_last_offer_ms),
+                .sync_age_s  = age_s(now, s_last_sync_ms),
+                .save_age_s  = age_s(now, s_last_save_ms),
+                .save_bytes  = s_save_bytes,
+            };
+            radar_render_view(ui.view, &s_status, &lib, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
             draw_freshness_overlay(band, now);
             sweep=(uint16_t)((sweep+12)%360);
         }

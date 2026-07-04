@@ -36,10 +36,12 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "freertos/task.h"
 #include "radar_key.h"
 #include "coexist.h"
+#include "churn.h"
 #include "learn.h"
 #include "learn_wire.h"
 #include "sig_wire.h"
 #include "sig_store.h"
+#include "fleet.h"
 
 #ifndef SIMULACRA_ESPNOW_CHANNEL
 #define SIMULACRA_ESPNOW_CHANNEL 1
@@ -98,6 +100,35 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         }
         return;
     }
+    if (type == RADAR_TYPE_FLEET_MACS) {                   // a peer decoy's active synthetic MACs
+        uint8_t macs[FLEET_MAC_CAP][6];
+        size_t nm = fleet_macs_unpack(pl, plen, macs, FLEET_MAC_CAP);
+        if (nm) {
+            uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+            fleet_note_peer_macs(macs, nm, now);
+            ESP_LOGW(ETAG, "fleet: peer +%u macs (peers=%u)", (unsigned)nm, (unsigned)fleet_peer_count(now));
+        }
+        return;
+    }
+}
+
+// Broadcast our current active synthetic MACs so fleet-mates can self-exclude us from their
+// model / learn / detect. AES-GCM authenticated (only fleet PSK holders can read/emit it).
+static void broadcast_fleet_macs(void)
+{
+    uint8_t macs[CHURN_ACTIVE_SET][6]; size_t n = 0;
+    for (size_t s = 0; s < churn_active_count() && n < CHURN_ACTIVE_SET; s++) {
+        const identity_t *id = churn_active_at(s);
+        if (id) memcpy(macs[n++], id->addr, 6);
+    }
+    if (n == 0) return;
+    uint8_t pl[RADAR_FRAME_MAX]; size_t plen = fleet_macs_pack(pl, sizeof pl, macs, n);
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+    if (radar_wire_seal(frame, &flen, RADAR_TYPE_FLEET_MACS, pl, plen,
+                        SIMULACRA_ESPNOW_KEY, s_salt, ++s_counter) == 0) {
+        esp_now_send(BCAST, frame, flen);
+        ESP_LOGW(ETAG, "fleet: broadcast %u macs", (unsigned)n);
+    }
 }
 
 static void respond_once(void)
@@ -135,11 +166,12 @@ static void offer_library(void)
 static void espnow_task(void *arg)
 {
     (void)arg;
-    uint32_t last_offer = 0;
+    uint32_t last_offer = 0, last_fleet = 0;
     for (;;) {
         if (s_answer) { s_answer = false; respond_once(); }
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (now - last_offer > 30000) { last_offer = now; offer_library(); }   // every 30 s
+        if (now - last_fleet > 25000) { last_fleet = now; broadcast_fleet_macs(); }   // every 25 s
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

@@ -29,6 +29,7 @@
 #include "sig_class_name.h"
 #include "sig_store.h"
 #include "threat_escalation.h"
+#include "fleet.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -628,9 +629,12 @@ static void test_vendor_mfg_builder(void)
 static void test_generate(void)
 {
     rf_model_t m; rf_model_reset(&m);
-    // 70% company 0x0040 @ ~150 ms, 30% Samsung 0x0075 @ ~900 ms
+    // Dominant 0x0040 @ ~150 ms, small Samsung 0x0075 minority @ ~900 ms. The generation diversity
+    // floor caps any single vendor at GEN_MAX_VENDOR_PCT and fills the overflow with varied templates,
+    // so the dominant is pulled down toward the cap -- keep the minority small enough that the capped
+    // dominant still clearly leads (otherwise the c40>c75 margin is thin and flaky).
     for (int i=0;i<70;i++) rf_model_observe(&m, 0x0040, -55, 0, 150);
-    for (int i=0;i<30;i++) rf_model_observe(&m, 0x0075, -65, 0, 900);
+    for (int i=0;i<10;i++) rf_model_observe(&m, 0x0075, -65, 0, 900);
     rf_model_end_sweep(&m, 6, 60000, 6);
 
     static identity_t roster[64];
@@ -1236,6 +1240,28 @@ static void test_sig_store(void)
     ST_CHECK(sig_store_count() == 1, "store: bad record re-gated out");
 }
 
+static void test_fleet(void)
+{
+    fleet_reset();
+    uint8_t set[3][6] = { {1,2,3,4,5,6}, {7,7,7,7,7,7}, {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF} };
+    fleet_note_peer_macs(set, 2, 1000);
+    ST_CHECK(fleet_mac_excluded(set[0], 1000) && fleet_mac_excluded(set[1], 1000), "fleet: noted peers excluded");
+    ST_CHECK(!fleet_mac_excluded(set[2], 1000), "fleet: unknown mac not excluded");
+    ST_CHECK(fleet_peer_count(1000) == 2, "fleet: two peers tracked");
+
+    // refresh just before expiry keeps a peer alive; the un-refreshed one expires
+    fleet_note_peer_macs(set, 1, 1000 + FLEET_MAC_TTL_MS - 1);
+    ST_CHECK(fleet_mac_excluded(set[0], 1000 + FLEET_MAC_TTL_MS - 1), "fleet: refresh keeps peer alive");
+    ST_CHECK(!fleet_mac_excluded(set[1], 1000 + FLEET_MAC_TTL_MS + 1), "fleet: stale peer expires");
+
+    // wire round-trip
+    uint8_t buf[RADAR_FRAME_MAX]; size_t plen = fleet_macs_pack(buf, sizeof buf, set, 3);
+    ST_CHECK(plen == 1 + 3*6, "fleet: pack length");
+    uint8_t out[8][6]; size_t n = fleet_macs_unpack(buf, plen, out, 8);
+    ST_CHECK(n == 3 && memcmp(out[2], set[2], 6) == 0, "fleet: unpack round-trips");
+    ST_CHECK(fleet_macs_unpack(buf, 2, out, 8) == 0, "fleet: truncated payload rejected");
+}
+
 static void test_rf_model_decay(void)
 {
     // Rolling window: a vendor seen heavily once then never again must fade below a vendor that
@@ -1400,6 +1426,7 @@ int churn_selftest_run(void)
     test_escalation_ladder();
     test_escalation_recurrence();
     test_rf_model_decay();
+    test_fleet();
     test_generate_diversity_floor();
     test_webui_json();
     test_radar_geometry();

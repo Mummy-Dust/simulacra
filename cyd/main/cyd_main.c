@@ -398,7 +398,15 @@ void app_main(void)
             last_save = now; s_lib_dirty = false; learn_db_save();
         }
         radar_ui_on_tick(&ui, now, s_status.threat_count);
-        if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
+        if (ui.backlight_on != bl_was_on) {
+            set_backlight(ui.backlight_on);
+            // On wake, grant a freshness grace: while asleep no requests go out so s_status_ms is
+            // frozen stale, which would paint a spurious "NO DECOY" for ~1s until the first
+            // post-wake reply. Only if we'd already seen a decoy; a never-seen decoy keeps
+            // "SEARCHING...", and a truly-gone decoy still expires the 15s window honestly.
+            if (ui.backlight_on && s_status_ms != 0) s_status_ms = now;
+            bl_was_on = ui.backlight_on;
+        }
         if (ui.backlight_on){
             radar_lib_info_t lib = {
                 .sd_ok = s_sd_ok,

@@ -67,6 +67,7 @@ void observe_end_sweep(rf_model_t *m, uint32_t window_ms)
     uint32_t distinct = 0;
     for (size_t i = 0; i < OBS_TABLE_CAP; i++) if (s_tbl[i].used) distinct++;
     rf_model_end_sweep(m, distinct, window_ms, s_arrivals);
+    rf_model_decay(m);                     // rolling window: fade old obs so the model tracks NOW
     memset(s_tbl, 0, sizeof(s_tbl));       // wipe ephemeral identifiers
     s_arrivals = 0;
     s_saturated = false;

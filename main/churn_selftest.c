@@ -1236,6 +1236,26 @@ static void test_sig_store(void)
     ST_CHECK(sig_store_count() == 1, "store: bad record re-gated out");
 }
 
+static void test_rf_model_decay(void)
+{
+    // Rolling window: a vendor seen heavily once then never again must fade below a vendor that
+    // keeps being seen, so the model tracks the CURRENT room instead of all-time history.
+    rf_model_t m; rf_model_reset(&m);
+    for (int i = 0; i < 200; i++) rf_model_observe(&m, 0x00AA, -50, 3, 500);   // vendor A, once
+    int ia = rf_vendor_index(&m, 0x00AA);
+    uint32_t a1 = m.vendors[ia].count;
+    for (int s = 0; s < 8; s++) {                                              // 8 sweeps of vendor B only
+        for (int i = 0; i < 200; i++) rf_model_observe(&m, 0x00BB, -50, 3, 500);
+        rf_model_decay(&m);
+    }
+    ia = rf_vendor_index(&m, 0x00AA);
+    int ib = rf_vendor_index(&m, 0x00BB);
+    uint32_t a2 = (ia >= 0) ? m.vendors[ia].count : 0;
+    uint32_t b2 = (ib >= 0) ? m.vendors[ib].count : 0;
+    ST_CHECK(a2 < a1, "decay: stale vendor faded from the model");
+    ST_CHECK(b2 > a2, "decay: recently-present vendor outweighs the stale one");
+}
+
 static void test_generate_diversity_floor(void)
 {
     // A model skewed to a single loud vendor (a room full of Galaxy Buds) must NOT produce a
@@ -1379,6 +1399,7 @@ int churn_selftest_run(void)
     test_detect_known();
     test_escalation_ladder();
     test_escalation_recurrence();
+    test_rf_model_decay();
     test_generate_diversity_floor();
     test_webui_json();
     test_radar_geometry();

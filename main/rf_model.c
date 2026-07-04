@@ -43,6 +43,24 @@ int rf_vendor_index(const rf_model_t *m, uint16_t company_id)
     return -1;
 }
 
+static uint32_t decayed(uint32_t x)             // subtract 1/DEN, but always at least 1 so small
+{ uint32_t d = x / RF_DECAY_DEN; if (d == 0) d = 1; return (x > d) ? x - d : 0; }  // counts eventually reclaim
+
+void rf_model_decay(rf_model_t *m)
+{
+    for (size_t i = 0; i < RF_VENDOR_SLOTS; i++) {
+        rf_vendor_t *v = &m->vendors[i];
+        if (v->count == 0) continue;
+        v->count = decayed(v->count);
+        for (size_t b = 0; b < RF_ITVL_BINS; b++) v->itvl_bins[b] -= v->itvl_bins[b] / RF_DECAY_DEN;
+        if (v->count == 0) { v->company_id = 0; memset(v->itvl_bins, 0, sizeof v->itvl_bins); }  // free the slot
+    }
+    if (m->other_count) m->other_count = decayed(m->other_count);
+    for (size_t b = 0; b < RF_ITVL_BINS; b++) m->other_itvl_bins[b] -= m->other_itvl_bins[b] / RF_DECAY_DEN;
+    for (size_t b = 0; b < RF_RSSI_BINS; b++) m->rssi_bins[b] -= m->rssi_bins[b] / RF_DECAY_DEN;
+    for (size_t b = 0; b < RF_PDU_BINS; b++)  m->pdu_bins[b]  -= m->pdu_bins[b]  / RF_DECAY_DEN;
+}
+
 void rf_model_observe(rf_model_t *m, uint16_t company_id, int8_t rssi,
                       uint8_t pdu_type, int32_t interval_ms)
 {

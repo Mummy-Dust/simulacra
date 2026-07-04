@@ -31,7 +31,12 @@ typedef struct {
     float       arrival_per_min;   // EWMA of new distinct devices per minute
 } rf_model_t;
 
+#define RF_DECAY_DEN 4   // rolling-window decay: retain (DEN-1)/DEN of each histogram per closed sweep
+
 void   rf_model_reset(rf_model_t *m);
+// Fade old observations into a rolling window so the model tracks the RECENT environment and no
+// single loud vendor accumulates unbounded, permanent weight. Call once per closed sweep.
+void   rf_model_decay(rf_model_t *m);
 // Fold one observation's static features. interval_ms < 0 => no interval sample (first sighting).
 void   rf_model_observe(rf_model_t *m, uint16_t company_id, int8_t rssi,
                         uint8_t pdu_type, int32_t interval_ms);

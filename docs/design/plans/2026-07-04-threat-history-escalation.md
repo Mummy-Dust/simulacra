@@ -41,7 +41,7 @@
   `threat_escalation_level(uint8_t sessions_seen, uint8_t places_seen)`; `escalation_name(detect_escalation_t)`;
   thresholds `DETECT_ESC_PERSIST_SESSIONS 3` / `DETECT_ESC_PERSIST_PLACES 2` / `DETECT_ESC_RECUR_SESSIONS 2` / `DETECT_ESC_RECUR_PLACES 3`.
 
-- [ ] **Step 1: Write the failing test** (add `#include "threat_escalation.h"` near the other sig includes; register `test_escalation_ladder();`)
+- [x] **Step 1: Write the failing test** (add `#include "threat_escalation.h"` near the other sig includes; register `test_escalation_ladder();`)
 
 ```c
 static void test_escalation_ladder(void)
@@ -57,9 +57,9 @@ static void test_escalation_ladder(void)
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`threat_escalation.h` missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`threat_escalation.h` missing).
 
-- [ ] **Step 3: Create `threat_escalation.h`**
+- [x] **Step 3: Create `threat_escalation.h`**
 
 ```c
 #pragma once
@@ -88,9 +88,9 @@ static inline const char *escalation_name(detect_escalation_t e)
 
 (Header-only — no CMakeLists change needed.)
 
-- [ ] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +8.
+- [x] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS, +8.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add components/simulacra_radar/threat_escalation.h main/churn_selftest.c
@@ -111,7 +111,7 @@ git commit -m "feat(escalation): shared NEW/RECURRING/PERSISTENT ladder"
   (NVS load-increment-save; returns the new id). New threats init counters to 1; a session bump sets
   `s_pending`.
 
-- [ ] **Step 1: Write the failing test** (register `test_escalation_recurrence();`)
+- [x] **Step 1: Write the failing test** (register `test_escalation_recurrence();`)
 
 ```c
 static void test_escalation_recurrence(void)
@@ -163,9 +163,9 @@ Also extend `test_detect_nvs`: after confirming and before save, set `detect_set
     ST_CHECK(rt.sessions_seen >= 1 && rt.places_seen >= 1, "nvs: recurrence counters restored");
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`detect_set_session`/fields missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (`detect_set_session`/fields missing).
 
-- [ ] **Step 3: Extend `detect.h`**
+- [x] **Step 3: Extend `detect.h`**
 
 Add the fields to `detect_threat_t` (after `confidence`):
 
@@ -182,7 +182,7 @@ void     detect_set_session(uint16_t id);   // set current boot-session id (test
 uint16_t detect_begin_session(void);        // NVS load-increment-save the boot counter; sets + returns it
 ```
 
-- [ ] **Step 4: Implement in `detect.c`**
+- [x] **Step 4: Implement in `detect.c`**
 
 Bump the magic (struct grew again): `#define DETECT_THR_MAGIC 0x4D394433u   // 'M9D3'`.
 
@@ -269,9 +269,9 @@ uint16_t detect_begin_session(void)
 
 Add `#include "threat_escalation.h"` is not required in detect.c (the level function is used by callers/UI, not the core), but include it if you want the enum there. Not needed for this task.
 
-- [ ] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Existing detect tests still green (they don't set a session; `s_session` starts 0, `detect_reset` keeps it 0, new threats init to 1 — behavior unchanged for them).
+- [x] **Step 5: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Existing detect tests still green (they don't set a session; `s_session` starts 0, `detect_reset` keeps it 0, new threats init to 1 — behavior unchanged for them).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main/detect.h main/detect.c main/churn_selftest.c
@@ -289,7 +289,7 @@ git commit -m "feat(escalation): per-threat recurrence counters + boot-session t
 **Interfaces:**
 - Produces: `radar_wire_status_t.threats[i]` gains `uint8_t sessions_seen, places_seen;` after `confidence`.
 
-- [ ] **Step 1: Extend the failing test** — in `test_espnow_convert`, set + assert the new fields:
+- [x] **Step 1: Extend the failing test** — in `test_espnow_convert`, set + assert the new fields:
 
 ```c
     w.threats[0].sessions_seen = 3; w.threats[0].places_seen = 2;
@@ -297,9 +297,9 @@ git commit -m "feat(escalation): per-threat recurrence counters + boot-session t
     ST_CHECK(r.threats[0].sessions_seen == 3 && r.threats[0].places_seen == 2, "convert: recurrence carried");
 ```
 
-- [ ] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (fields missing).
+- [x] **Step 2: Run to verify it fails** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build`; FAIL (fields missing).
 
-- [ ] **Step 3: Add the wire fields** — in `radar_wire.h`, the threats element becomes:
+- [x] **Step 3: Add the wire fields** — in `radar_wire.h`, the threats element becomes:
 
 ```c
     struct __attribute__((packed)) {
@@ -323,9 +323,9 @@ In `coexist.c` `coexist_start`, add the session init alongside the other detect 
     detect_begin_session();                       // escalation: bump + load the persistent boot-session id
 ```
 
-- [ ] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Frame size stays < 218 B (~183 B). Also build the decoy to confirm coexist wiring: `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 build`.
+- [x] **Step 4: Run to verify it passes** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor`; PASS. Frame size stays < 218 B (~183 B). Also build the decoy to confirm coexist wiring: `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 build`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add main/coexist.c components/simulacra_radar/radar_wire.h main/esp_now_link.c main/churn_selftest.c
@@ -343,7 +343,7 @@ git commit -m "feat(escalation): boot-session init + recurrence counters on the 
 **Interfaces:**
 - Consumes: `threat_escalation_level`, `escalation_name`, wire `sessions_seen`/`places_seen`.
 
-- [ ] **Step 1: Color helper + includes** — in `radar_render.c` add `#include "threat_escalation.h"` and:
+- [x] **Step 1: Color helper + includes** — in `radar_render.c` add `#include "threat_escalation.h"` and:
 
 ```c
 static uint16_t escalation_color(detect_escalation_t e){
@@ -353,7 +353,7 @@ static uint16_t escalation_color(detect_escalation_t e){
 }
 ```
 
-- [ ] **Step 2: Color radar blips by escalation** — replace the blip color line in `draw_radar`:
+- [x] **Step 2: Color radar blips by escalation** — replace the blip color line in `draw_radar`:
 
 ```c
         detect_escalation_t e = threat_escalation_level(st->threats[i].sessions_seen, st->threats[i].places_seen);
@@ -362,7 +362,7 @@ static uint16_t escalation_color(detect_escalation_t e){
 
 (Removes the prior KNOWN-amber / `threat_color(epochs)` blip logic; escalation color now applies uniformly. The KNOWN vs follower distinction stays in the DETAIL text.)
 
-- [ ] **Step 3: Tag + color DETAIL rows** — rewrite the `draw_detail` per-threat loop body:
+- [x] **Step 3: Tag + color DETAIL rows** — rewrite the `draw_detail` per-threat loop body:
 
 ```c
     for(uint8_t i=0;i<st->threat_count;i++){ char r[48];
@@ -381,9 +381,9 @@ static uint16_t escalation_color(detect_escalation_t e){
         radar_gfx_text(g,6,30+i*18,r,escalation_color(e)); } }
 ```
 
-- [ ] **Step 4: Build Vigil** — from `cyd/`: `idf.py build`; clean.
+- [x] **Step 4: Build Vigil** — from `cyd/`: `idf.py build`; clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add components/simulacra_radar/radar_render.c
@@ -396,15 +396,15 @@ git commit -m "feat(vigil): escalation-colored threat blips + DETAIL level/count
 
 **Files:** none (bench).
 
-- [ ] **Step 1: Flash both** — Vigil (from `cyd/`): `idf.py -p COM10 flash`. Decoy: `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 flash`.
+- [x] **Step 1: Flash both** — Vigil (from `cyd/`): `idf.py -p COM10 flash`. Decoy: `idf.py -DCHURN_SELFTEST=0 -DSIMULACRA_ESPNOW=1 -DSIMULACRA_WEBUI=1 -p COM12 flash`.
 
-- [ ] **Step 2: Session counter persists** — read the decoy across two reboots; confirm no crash and that a confirmed threat's `sessions_seen` increments on the second boot (watch a `THREAT confirmed`/`status rx` line, or add a temporary log if needed). Because cross-session recurrence is slow to force, this is best-effort — the pure logic is the primary verification (Tasks 1–2 selftest).
+- [x] **Step 2: Session counter persists** — read the decoy across two reboots; confirm no crash and that a confirmed threat's `sessions_seen` increments on the second boot (watch a `THREAT confirmed`/`status rx` line, or add a temporary log if needed). Because cross-session recurrence is slow to force, this is best-effort — the pure logic is the primary verification (Tasks 1–2 selftest).
 
-- [ ] **Step 3: Display** — with at least one confirmed threat present, verify the CYD DETAIL row shows the `N/R/P` tag + `Ns/Mp` counts and the blip/row color matches (yellow/orange/red). Serial-verify via `status rx` if the screen isn't visible.
+- [x] **Step 3: Display** — with at least one confirmed threat present, verify the CYD DETAIL row shows the `N/R/P` tag + `Ns/Mp` counts and the blip/row color matches (yellow/orange/red). Serial-verify via `status rx` if the screen isn't visible.
 
-- [ ] **Step 4: Regression** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor` → `SELFTEST result: PASS`. Restore the display-paired decoy build after.
+- [x] **Step 4: Regression** — `idf.py -DCHURN_SELFTEST=1 -p COM12 build flash monitor` → `SELFTEST result: PASS`. Restore the display-paired decoy build after.
 
-- [ ] **Step 5: Finish** — mark checkboxes; use superpowers:finishing-a-development-branch (verify selftest PASS, offer merge options; established pattern = `--no-ff` merge to local `main`).
+- [x] **Step 5: Finish** — mark checkboxes; use superpowers:finishing-a-development-branch (verify selftest PASS, offer merge options; established pattern = `--no-ff` merge to local `main`).
 
 ---
 
@@ -415,3 +415,12 @@ git commit -m "feat(vigil): escalation-colored threat blips + DETAIL level/count
 **Type consistency:** `detect_escalation_t`, `threat_escalation_level(sessions_seen, places_seen)`, `escalation_name`, `detect_set_session`/`detect_begin_session`, `credit_recurrence`, and the `sessions_seen`/`places_seen`/`last_session` field names are used identically across tasks and match `detect_threat_t` ↔ the wire element.
 
 **Notes:** `threat_escalation.h` is header-only (no CMakeLists change). `DETECT_THR_MAGIC` bump to `M9D3`. Existing detect tests are unaffected (they don't set a session; new threats init counters to 1).
+
+## Execution Record (2026-07-04)
+
+All 5 tasks implemented inline; selftest green on C5 COM12, clean-boot verified on C5+CYD.
+
+- **Selftest:** PASS, fails=0, +11 checks (ladder table 8, recurrence 2 groups, wire-convert 1, nvs 1). Recurrence arithmetic traced and confirmed: fresh follower 1/1 NEW → places grow within session → RECURRING → new session bumps `sessions_seen`; KNOWN fingerprint reaches 3 sessions / ≥2 places → PERSISTENT.
+- **Clean boot both boards:** decoy `NimBLE host synced` (no crash from the new `detect_sess` NVS key or the M9D3 format bump); CYD `learndb/sigdb loaded` + `panel up` (no crash from the wider wire/threat struct). No boot loop.
+- **NOT machine-verified (best-effort, per plan):** the cross-session `sessions_seen` climb over real reboots and the on-screen escalation color/tag — both need a real persistent threat present across reboots plus a look at the CYD. Pure logic is the primary verification (selftest). Both boards left on the escalation build.
+- Commits: tasks 1–3 (`aa6d6fe`), task 4 (`c3a5ec0`).

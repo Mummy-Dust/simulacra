@@ -1236,6 +1236,27 @@ static void test_sig_store(void)
     ST_CHECK(sig_store_count() == 1, "store: bad record re-gated out");
 }
 
+static void test_generate_diversity_floor(void)
+{
+    // A model skewed to a single loud vendor (a room full of Galaxy Buds) must NOT produce a
+    // single-manufacturer synthetic crowd — the generation diversity floor fills the overflow
+    // from varied built-in templates.
+    rf_model_t m; rf_model_reset(&m);
+    for (int i = 0; i < 200; i++) rf_model_observe(&m, 0x0075, -50, 3, 500);   // Samsung only
+    static identity_t roster[64];
+    size_t built = generate_roster(&m, roster, 64);
+    ST_CHECK(built >= 60, "diversity: most identities built");
+
+    size_t samsung = 0; uint16_t seen[32]; size_t distinct = 0;
+    for (size_t i = 0; i < 64; i++) {
+        if (roster[i].company_id == 0x0075) samsung++;
+        size_t j; for (j = 0; j < distinct; j++) if (seen[j] == roster[i].company_id) break;
+        if (j == distinct && distinct < 32) seen[distinct++] = roster[i].company_id;
+    }
+    ST_CHECK(samsung <= (64 * GEN_MAX_VENDOR_PCT) / 100 + 1, "diversity: no single vendor dominates the roster");
+    ST_CHECK(distinct >= 3, "diversity: crowd spans multiple manufacturers");
+}
+
 static void test_escalation_ladder(void)
 {
     ST_CHECK(threat_escalation_level(1,1) == ESCALATION_NEW,        "esc: (1,1) NEW");
@@ -1356,6 +1377,7 @@ int churn_selftest_run(void)
     test_detect_known();
     test_escalation_ladder();
     test_escalation_recurrence();
+    test_generate_diversity_floor();
     test_webui_json();
     test_radar_geometry();
     test_radar_ui();

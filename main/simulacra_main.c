@@ -162,7 +162,20 @@ static void simulacra_task(void *arg)
     esp_now_link_start();   // listen-only responder; answers CYD requests over ESP-NOW
 #endif
     for (;;) {                                          // this task idles; coexist runs the show
-        ESP_LOGW(TAG, "decoy alive active=%u", (unsigned)churn_active_count());
+        // Always-on crowd-diversity indicator: active count + distinct manufacturers + the
+        // dominant company's share. A collapse to one vendor (the monoculture bug) shows here.
+        uint16_t ids[CHURN_ACTIVE_SET]; uint8_t cnt[CHURN_ACTIVE_SET]; uint8_t k = 0, tot = 0;
+        for (size_t s = 0; s < CHURN_ACTIVE_SET; s++) {
+            const identity_t *id = churn_active_at(s);
+            if (!id) continue;
+            tot++;
+            uint8_t j; for (j = 0; j < k; j++) if (ids[j] == id->company_id) { cnt[j]++; break; }
+            if (j == k) { ids[k] = id->company_id; cnt[k] = 1; k++; }
+        }
+        uint16_t top = 0; uint8_t topn = 0;
+        for (uint8_t j = 0; j < k; j++) if (cnt[j] > topn) { topn = cnt[j]; top = ids[j]; }
+        ESP_LOGW(TAG, "decoy alive active=%u companies=%u top=0x%04X x%u",
+                 (unsigned)tot, (unsigned)k, top, (unsigned)topn);
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 #endif

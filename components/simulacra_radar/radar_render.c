@@ -2,6 +2,7 @@
 #include "radar_gfx.h"
 #include "radar_geom.h"
 #include "sig_class_name.h"
+#include "threat_escalation.h"
 #include <stdio.h>
 #define COL_BG 0x0000
 #define COL_FG 0xFFFF
@@ -15,6 +16,11 @@
 #define RR 100
 
 static uint16_t threat_color(uint8_t ep){ return ep>=5?COL_WARN:(ep>=2?0xFD20:0xFFE0); }
+static uint16_t escalation_color(detect_escalation_t e){
+    return e==ESCALATION_PERSISTENT ? 0xF800   // red
+         : e==ESCALATION_RECURRING  ? 0xFD20    // orange
+                                    : 0xFFE0;   // yellow (NEW)
+}
 
 static void draw_radar(radar_gfx_t *g, const radar_wire_status_t *st, uint16_t sweep){
     radar_gfx_circle(g,RCX,RCY,RR,COL_RING); radar_gfx_circle(g,RCX,RCY,RR*2/3,COL_RING);
@@ -25,9 +31,8 @@ static void draw_radar(radar_gfx_t *g, const radar_wire_status_t *st, uint16_t s
         uint16_t rr=radar_rssi_to_radius(st->threats[i].best_rssi,RR/4,RR);
         uint16_t an=radar_hash_to_angle(st->threats[i].hash);
         int x,y; radar_polar_to_xy(RCX,RCY,rr,an,&x,&y);
-        uint16_t col = st->threats[i].kind==DETECT_KIND_KNOWN ? 0xFD20   // amber = known device class
-                                                             : threat_color(st->threats[i].epochs);
-        radar_gfx_fill_rect(g,x-2,y-2,5,5,col); }
+        detect_escalation_t e = threat_escalation_level(st->threats[i].sessions_seen, st->threats[i].places_seen);
+        radar_gfx_fill_rect(g,x-2,y-2,5,5,escalation_color(e)); }
     char b[24];
     if(st->threat_count==0) radar_gfx_text(g,84,250,"CLEAR",COL_OK);
     else { snprintf(b,sizeof b,"! %u FOLLOWERS",(unsigned)st->threat_count); radar_gfx_text(g,40,250,b,COL_WARN); }
@@ -37,17 +42,20 @@ static void draw_radar(radar_gfx_t *g, const radar_wire_status_t *st, uint16_t s
 static void draw_detail(radar_gfx_t *g, const radar_wire_status_t *st){
     radar_gfx_text(g,8,6,"FOLLOWERS",COL_FG);
     if(st->threat_count==0){ radar_gfx_text(g,8,30,"none confirmed",COL_DIM); return; }
-    for(uint8_t i=0;i<st->threat_count;i++){ char r[40];
+    for(uint8_t i=0;i<st->threat_count;i++){ char r[48];
+        detect_escalation_t e = threat_escalation_level(st->threats[i].sessions_seen, st->threats[i].places_seen);
+        char tag = escalation_name(e)[0];   // N / R / P
         if(st->threats[i].kind==DETECT_KIND_KNOWN){
             const char *q = st->threats[i].confidence>=80 ? "likely" : "possible";
-            snprintf(r,sizeof r,"%s (%s) %ddB",sig_class_name(st->threats[i].class_id),q,
-                     (int)st->threats[i].best_rssi);
-            radar_gfx_text(g,6,30+i*18,r,0xFD20);   // amber = known device class
+            snprintf(r,sizeof r,"%s %s %ddB %c%u/%u",sig_class_name(st->threats[i].class_id),q,
+                     (int)st->threats[i].best_rssi,tag,
+                     (unsigned)st->threats[i].sessions_seen,(unsigned)st->threats[i].places_seen);
         } else {
-            snprintf(r,sizeof r,"%08lx v%04x %ddB %uep",(unsigned long)st->threats[i].hash,
-                     (unsigned)st->threats[i].vendor,(int)st->threats[i].best_rssi,(unsigned)st->threats[i].epochs);
-            radar_gfx_text(g,6,30+i*18,r,threat_color(st->threats[i].epochs));
-        } } }
+            snprintf(r,sizeof r,"%08lx %ddB %c%u/%u",(unsigned long)st->threats[i].hash,
+                     (int)st->threats[i].best_rssi,tag,
+                     (unsigned)st->threats[i].sessions_seen,(unsigned)st->threats[i].places_seen);
+        }
+        radar_gfx_text(g,6,30+i*18,r,escalation_color(e)); } }
 static void draw_stats(radar_gfx_t *g, const radar_wire_status_t *st){
     char l[40]; int y=6; radar_gfx_text(g,8,y,"DECOY / POP",COL_FG); y+=24;
     #define ROW(...) do{ snprintf(l,sizeof l,__VA_ARGS__); radar_gfx_text(g,6,y,l,COL_DIM); y+=18; }while(0)

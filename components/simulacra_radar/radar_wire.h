@@ -27,6 +27,7 @@ typedef struct __attribute__((packed)) {
         uint32_t hash; uint16_t vendor; uint8_t epochs; int8_t best_rssi;
         uint16_t first_epoch, last_epoch;
         uint8_t kind, class_id, category, confidence;   // KNOWN-device fields (kind=DETECT_KIND_*)
+        uint8_t sessions_seen, places_seen;             // recurrence counters (escalation)
     } threats[RADAR_MAX_THREATS];
 } radar_wire_status_t;
 

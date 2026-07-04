@@ -24,6 +24,7 @@ static uint32_t       s_lru;
 static bool           s_enabled = true;
 static bool           s_pending;
 static detect_threat_t s_pending_threat;
+static uint16_t       s_session;             // current boot-session id (escalation recurrence)
 
 void detect_reset(void)
 {
@@ -33,6 +34,21 @@ void detect_reset(void)
     s_lru = 0;
     s_enabled = true;
     s_pending = false;
+    s_session = 0;
+}
+
+void detect_set_session(uint16_t id) { s_session = id; }
+
+// Bump recurrence counters for an already-recorded threat. A session bump marks the threat pending
+// so the coordinator persists a returning device. Call BEFORE updating t->last_epoch.
+static void credit_recurrence(detect_threat_t *t, uint16_t epoch)
+{
+    if (t->last_session != s_session) {
+        if (t->sessions_seen < 255) t->sessions_seen++;
+        t->last_session = s_session;
+        s_pending = true; s_pending_threat = *t;
+    }
+    if (t->last_epoch != epoch && t->places_seen < 255) t->places_seen++;
 }
 
 void detect_set_enabled(bool en) { s_enabled = en; }
@@ -80,6 +96,7 @@ static detect_threat_t *promote(candidate_t *c)
     // A follower may reuse a slot previously held by a KNOWN row; stamp the kind and clear the
     // KNOWN-only fields so it isn't mislabeled or wrongly targeted by KNOWN eviction.
     t->kind = DETECT_KIND_FOLLOWER; t->class_id = 0; t->category = 0; t->confidence = 0;
+    t->sessions_seen = 1; t->places_seen = 1; t->last_session = s_session;   // escalation baseline
     s_pending = true; s_pending_threat = *t;   // hand off to the coordinator for NVS persist + LED
     c->used = false;   // candidate graduates to a threat
     return t;
@@ -92,6 +109,7 @@ detect_result_t detect_observe(uint32_t hash, int8_t rssi, uint16_t vendor, uint
     detect_threat_t *t = threat_find(hash);
     if (t) {
         if (rssi > t->best_rssi) t->best_rssi = rssi;
+        credit_recurrence(t, epoch);
         t->last_epoch = epoch;
         return DETECT_KNOWN;
     }
@@ -124,6 +142,7 @@ detect_result_t detect_note_known(uint32_t hash, int8_t rssi, uint8_t class_id,
     detect_threat_t *t = threat_find(hash);
     if (t) {                                   // already recorded: refresh
         if (rssi > t->best_rssi) t->best_rssi = rssi;
+        credit_recurrence(t, epoch);
         t->last_epoch = epoch;
         return DETECT_KNOWN;
     }
@@ -141,6 +160,7 @@ detect_result_t detect_note_known(uint32_t hash, int8_t rssi, uint8_t class_id,
     memset(t, 0, sizeof(*t));
     t->hash = hash; t->best_rssi = rssi; t->first_epoch = epoch; t->last_epoch = epoch;
     t->kind = DETECT_KIND_KNOWN; t->class_id = class_id; t->category = category; t->confidence = confidence;
+    t->sessions_seen = 1; t->places_seen = 1; t->last_session = s_session;   // escalation baseline
     s_pending = true; s_pending_threat = *t;
     return DETECT_CONFIRM;
 }
@@ -184,7 +204,8 @@ bool detect_threat_at(size_t i, detect_threat_t *out)
 #define DETECT_NVS_NS    "splinter"       // reuse the existing namespace (do not rename)
 #define DETECT_KEY_SALT  "detect_salt"
 #define DETECT_KEY_THR   "detect_thr"
-#define DETECT_THR_MAGIC 0x4D394432u       // 'M9D2' (bumped: detect_threat_t grew KNOWN fields)
+#define DETECT_KEY_SESS  "detect_sess"
+#define DETECT_THR_MAGIC 0x4D394433u       // 'M9D3' (bumped: detect_threat_t grew recurrence counters)
 
 void detect_clear_threats(void)
 {
@@ -204,6 +225,22 @@ bool detect_drain_pending(detect_threat_t *out)
     if (out) *out = s_pending_threat;
     s_pending = false;
     return true;
+}
+
+uint16_t detect_begin_session(void)
+{
+    nvs_handle_t h; uint32_t v = 0;
+    if (nvs_open(DETECT_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_get_u32(h, DETECT_KEY_SESS, &v);        // NOT_FOUND -> v stays 0
+        v++;
+        nvs_set_u32(h, DETECT_KEY_SESS, v);
+        nvs_commit(h);
+        nvs_close(h);
+    } else {
+        v = 1;
+    }
+    s_session = (uint16_t)v;
+    return s_session;
 }
 
 uint32_t detect_load_salt(void)

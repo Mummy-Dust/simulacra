@@ -291,6 +291,7 @@ void coexist_start(void)
     }
     observe_reprofile_init(esp_random());
     s_detect_salt = detect_load_salt();          // M9: stable per-install salt
+    detect_begin_session();                       // escalation: bump + load the persistent boot-session id
     detect_load_nvs();                            // restore previously-confirmed threats (best-effort)
     observe_set_report_cb(coexist_on_report);     // subscribe the detector to raw reports
     coexist_detect_led_init();

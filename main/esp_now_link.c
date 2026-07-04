@@ -22,6 +22,8 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
         out->threats[i].class_id = in->threats[i].class_id;
         out->threats[i].category = in->threats[i].category;
         out->threats[i].confidence = in->threats[i].confidence;
+        out->threats[i].sessions_seen = in->threats[i].sessions_seen;
+        out->threats[i].places_seen = in->threats[i].places_seen;
     }
 }
 

@@ -113,12 +113,19 @@ static int8_t dither_tx(void)   // plausible TX spread; not all at max
     return lv[esp_random() % (sizeof(lv)/sizeof(lv[0]))];
 }
 
-// Per-company placement tracking for the diversity floor.
-static bool company_at_cap(uint16_t company, const uint16_t *pc_id, const uint32_t *pc_n,
-                           size_t pc_k, size_t cap)
+// Draw a diverse built-in template into an identity, avoiding `avoid` (the over-represented company
+// we're diversifying away from — the built-in earbuds-sams template is itself 0x0075). Sets
+// payload/len/itvl/archetype; returns the on-air company (RF_VENDOR_UNKNOWN for service-data).
+static uint16_t diversify_fill(identity_t *id, uint16_t avoid)
 {
-    for (size_t i = 0; i < pc_k; i++) if (pc_id[i] == company) return pc_n[i] >= cap;
-    return false;
+    const device_template_t *t = templates_pick();
+    for (int a = 0; a < 8 && t->company_id == avoid; a++) t = templates_pick();
+    uint16_t itvl = 0, cid = 0;
+    if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) id->payload_len = 0;
+    id->archetype_idx = 0;
+    for (size_t i = 0; i < templates_count(); i++) if (template_at(i) == t) { id->archetype_idx = (uint8_t)i; break; }
+    id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random() % 200));
+    return cid ? cid : RF_VENDOR_UNKNOWN;
 }
 
 size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
@@ -131,12 +138,7 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
     for (size_t i=0;i<RF_VENDOR_SLOTS;i++)
         if (m->vendors[i].count){ counts[k]=m->vendors[i].count; ids[k]=m->vendors[i].company_id; slot[k]=(int)i; k++; }
     if (m->other_count){ counts[k]=m->other_count; ids[k]=RF_VENDOR_UNKNOWN; slot[k]=-1; k++; }
-
-    // Diversity floor: cap any single company's share of the roster; fill the overflow from the
-    // varied built-in template families (avoiding the capped company) so a model skewed toward one
-    // loud vendor can't collapse the synthetic crowd into a monoculture.
-    size_t cap = (n * GEN_MAX_VENDOR_PCT + 99) / 100; if (cap < 1) cap = 1;
-    uint16_t pc_id[40]; uint32_t pc_n[40]; size_t pc_k = 0;   // per-company placements so far
+    uint64_t total_w = 0; for (size_t i=0;i<k;i++) total_w += counts[i];
 
     size_t built = 0;
     for (size_t r=0;r<n;r++){
@@ -144,25 +146,20 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
         make_random_static_addr_pub(id->addr);
         int vi = (k>0)? weighted_pick(counts,k) : -1;
         uint16_t company = (vi>=0)? ids[vi] : RF_VENDOR_UNKNOWN;
-        const device_template_t *tmpl = NULL;
 
-        // model vendor over its cap -> pick a built-in template whose company is under cap
-        if (company_at_cap(company, pc_id, pc_n, pc_k, cap)) {
-            vi = -1;
-            for (int a = 0; a < 8; a++) {
-                const device_template_t *t = templates_pick();
-                tmpl = t; company = t->company_id;                  // 0x004C iBeacon / vendor id / 0 svc
-                if (!company_at_cap(company, pc_id, pc_n, pc_k, cap)) break;
-            }
+        // Diversity floor (per-identity, proportional, stateless -> works for bulk build AND
+        // single-identity reseed, with no clustering). If the sampled vendor is over-represented in
+        // the model (> GEN_MAX_VENDOR_PCT of observations), redirect a proportional fraction of its
+        // draws to a varied built-in template so a monoculture model can't yield a monoculture crowd.
+        bool redirect = false;
+        if (vi >= 0 && total_w > 0) {
+            uint64_t num = (uint64_t)counts[vi] * 100;
+            uint64_t floor = (uint64_t)GEN_MAX_VENDOR_PCT * total_w;
+            if (num > floor && ((uint64_t)esp_random() % num) < (num - floor)) redirect = true;
         }
 
-        if (tmpl) {
-            uint16_t itvl = 0, cid = 0;
-            if (template_build(tmpl, id->payload, &id->payload_len, &itvl, &cid) != 0) id->payload_len = 0;
-            id->archetype_idx = 0;
-            for (size_t i = 0; i < templates_count(); i++) if (template_at(i) == tmpl) { id->archetype_idx = (uint8_t)i; break; }
-            id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random() % 200));
-            company = cid ? cid : RF_VENDOR_UNKNOWN;
+        if (redirect) {
+            company = diversify_fill(id, company);   // sets payload/len/itvl/archetype
         } else {
             uint8_t arch=0;
             if (build_for_vendor(company, id->payload, &id->payload_len, &arch)!=0){ id->payload_len=0; }
@@ -175,11 +172,6 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
         id->tx_power = dither_tx();
         id->state=ID_IDLE; id->active_until_ms=0; id->eligible_at_ms=0;
         if (id->payload_len) built++;
-
-        // record the FINAL company's placement (for the cap)
-        size_t i; for (i=0;i<pc_k;i++) if (pc_id[i]==company) break;
-        if (i<pc_k) pc_n[i]++;
-        else if (pc_k < 40) { pc_id[pc_k]=company; pc_n[pc_k]=1; pc_k++; }
     }
     return built;
 }

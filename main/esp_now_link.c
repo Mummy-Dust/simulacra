@@ -36,6 +36,8 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "coexist.h"
 #include "learn.h"
 #include "learn_wire.h"
+#include "sig_wire.h"
+#include "sig_store.h"
 
 #ifndef SIMULACRA_ESPNOW_CHANNEL
 #define SIMULACRA_ESPNOW_CHANNEL 1
@@ -46,7 +48,15 @@ static uint8_t   s_salt[4];
 static uint64_t  s_counter;
 static radar_replay_t s_req_replay;                 // reject replayed requests
 static radar_replay_t s_sync_replay;                // reject replayed LEARN_SYNC from Vigil
+static radar_replay_t s_sig_replay;                 // reject replayed SIG_SYNC from Vigil
 static volatile bool  s_answer;                     // set by RX cb, consumed by task
+
+// SIG_SYNC reassembly: accumulate one content_version's chunks, then adopt wholesale.
+static threat_sig_t s_sig_rx[SIG_DB_CAP];
+static uint16_t     s_sig_rx_ver;                   // version currently being assembled (0 = none)
+static uint8_t      s_sig_rx_mask;                  // bit i set once chunk i received (<= 8 chunks)
+static uint8_t      s_sig_rx_cnt;                   // expected chunk_count
+static size_t       s_sig_rx_n;                     // records placed so far
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len)
 {
@@ -63,6 +73,27 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         learn_chunk_hdr_t h; learned_template_t rx[LEARN_WIRE_RECS_PER_CHUNK]; uint8_t nr;
         if (learn_wire_unpack(pl, plen, rx, &nr, &h) != 0) return;
         for (uint8_t i = 0; i < nr; i++) learn_ingest_wire(&rx[i]);   // regate inside
+        return;
+    }
+    if (type == RADAR_TYPE_SIG_SYNC) {
+        if (!radar_replay_ok(&s_sig_replay, salt, ctr)) return;
+        sig_chunk_hdr_t h; threat_sig_t recs[SIG_WIRE_RECS_PER_CHUNK]; uint8_t nr;
+        if (sig_wire_unpack(pl, plen, recs, &nr, &h) != 0) return;
+        if (h.chunk_count == 0 || h.chunk_count > 8 || h.chunk_index >= h.chunk_count) return;
+        if (h.content_version != s_sig_rx_ver) {          // new version -> restart assembly
+            s_sig_rx_ver = h.content_version; s_sig_rx_mask = 0; s_sig_rx_cnt = h.chunk_count; s_sig_rx_n = 0;
+        }
+        size_t off = (size_t)h.chunk_index * SIG_WIRE_RECS_PER_CHUNK;
+        for (uint8_t i = 0; i < nr && off + i < SIG_DB_CAP; i++) s_sig_rx[off + i] = recs[i];
+        s_sig_rx_mask |= (uint8_t)(1u << h.chunk_index);
+        if (off + nr > s_sig_rx_n) s_sig_rx_n = off + nr;
+        uint8_t full = (uint8_t)((1u << s_sig_rx_cnt) - 1);
+        if ((s_sig_rx_mask & full) == full) {             // all chunks in -> re-gate + adopt
+            if (sig_store_adopt(s_sig_rx, s_sig_rx_n, s_sig_rx_ver))
+                ESP_LOGW(ETAG, "sig: adopted DB v%u (%u sigs)", (unsigned)s_sig_rx_ver,
+                         (unsigned)sig_store_count());
+            s_sig_rx_ver = 0; s_sig_rx_mask = 0;          // reset for the next announce
+        }
         return;
     }
 }

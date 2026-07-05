@@ -101,7 +101,42 @@ bool learn_strip(const uint8_t *ad, uint8_t len, uint16_t company,
 
 // ============================ hash + render =============================
 
-static const char *SYN_NAMES[] = { "Buds","Watch","Band","Beat","Sensor","Tag","Speaker","Fit" };
+// Realistic synthetic device names (never the old generic-word + random-digit pad, which read as
+// "Beat1701876" -- an adversary-visible decoy tell). Brand-NEUTRAL pool (plausible on any maker),
+// plus small brand-keyed pools matched to the captured company_id so a Samsung device gets a
+// Samsung-style name (no Apple-name-on-Samsung mismatch). Names are timeless (no version churn) and
+// avoid long digit runs.
+static const char *NAMES_GENERIC[] = {
+    "Buds","Watch","Band","Earbuds","Ear Buds","Fit Band","Sport Buds","Neckband",
+    "Smart Band","BT Speaker","Heart Rate","Sound Core","Smart Ring","Power Buds",
+    "Run Watch","Sport Watch","Bass Buds","Sound Bar","Mini Speaker","Sleep Sensor",
+    "Active Watch","Fitness Band","Wireless Buds","Sport Earbuds","Portable Speaker",
+    "Fitness Tracker","Wireless Earbuds","Wireless Sport Buds"
+};
+static const char *NAMES_SAMSUNG[] = { "Galaxy Buds","Galaxy Watch","Galaxy Fit","Galaxy Buds Pro","Galaxy Buds2" };
+static const char *NAMES_APPLE[]   = { "AirPods","AirPods Pro","Apple Watch","AirPods Max" };
+static const char *NAMES_BOSE[]    = { "Bose QC","Bose Sport","QuietComfort" };
+static const char *NAMES_GARMIN[]  = { "vivosmart","Forerunner","Venu","Instinct" };
+static const char *NAMES_SONY[]    = { "LinkBuds","WF Series","WH Series" };
+static const struct { uint16_t company; const char *const *names; uint8_t count; } NAME_BRANDS[] = {
+    { 0x0075, NAMES_SAMSUNG, 5 }, { 0x004C, NAMES_APPLE, 4 }, { 0x009E, NAMES_BOSE, 3 },
+    { 0x0087, NAMES_GARMIN, 4 },  { 0x012D, NAMES_SONY, 3 },
+};
+
+// Pick a realistic name for `company`, preferring one at least `min_len` chars (else the longest so
+// a non-last name field can always be filled with real characters instead of digit padding).
+static const char *pick_name(uint16_t company, uint8_t min_len)
+{
+    const char *const *pool = NAMES_GENERIC; size_t n = sizeof(NAMES_GENERIC)/sizeof(NAMES_GENERIC[0]);
+    for (size_t i = 0; i < sizeof(NAME_BRANDS)/sizeof(NAME_BRANDS[0]); i++)
+        if (NAME_BRANDS[i].company == company) { pool = NAME_BRANDS[i].names; n = NAME_BRANDS[i].count; break; }
+    uint8_t fit[32]; size_t k = 0; const char *longest = pool[0];
+    for (size_t i = 0; i < n && i < 32; i++) {
+        if (strlen(pool[i]) >= min_len) fit[k++] = (uint8_t)i;
+        if (strlen(pool[i]) > strlen(longest)) longest = pool[i];
+    }
+    return k ? pool[fit[esp_random() % k]] : longest;
+}
 
 // learn_shape_hash now lives in the shared component (learn_wire.c).
 
@@ -111,13 +146,23 @@ int learn_render(const learned_template_t *t, uint8_t out[31],
     memcpy(out, t->ad, t->ad_len);
     for (uint8_t i = 0; i < t->ad_len && i < 31; i++)
         if (t->rand_mask & (1u << i)) out[i] = (uint8_t)(esp_random() & 0xff);
-    if (t->name_len) {                                   // synthetic name, fit to length
-        const char *nm = SYN_NAMES[esp_random() % (sizeof(SYN_NAMES)/sizeof(SYN_NAMES[0]))];
+    uint8_t emit_len = t->ad_len;
+    if (t->name_len && t->name_off >= 2) {               // realistic synthetic name (never digit-pad)
+        bool last = (t->name_off + t->name_len == t->ad_len);   // name is the final AD element?
+        uint8_t avail = last ? (uint8_t)(31 - t->name_off) : t->name_len;
+        const char *nm = pick_name(t->company_id, last ? 1 : t->name_len);
         uint8_t nl = (uint8_t)strlen(nm);
-        for (uint8_t i = 0; i < t->name_len; i++)
-            out[t->name_off + i] = (i < nl) ? (uint8_t)nm[i] : (uint8_t)('0' + (esp_random() % 10));
+        uint8_t m = nl < avail ? nl : avail;
+        if (last) {                                      // grow/shrink the AD to the name's natural length
+            memcpy(out + t->name_off, nm, m);
+            out[t->name_off - 2] = (uint8_t)(1 + m);      // element length byte = type(1) + m value bytes
+            emit_len = (uint8_t)(t->name_off + m);
+        } else {                                         // keep the captured length; pad tail with spaces
+            for (uint8_t i = 0; i < t->name_len; i++)
+                out[t->name_off + i] = (i < m) ? (uint8_t)nm[i] : ' ';
+        }
     }
-    *out_len = t->ad_len;
+    *out_len = emit_len;
     uint16_t lo = t->itvl_min_ms, hi = t->itvl_max_ms;
     if (hi < lo) hi = lo;
     *out_itvl_ms = lo + (hi > lo ? (uint16_t)(esp_random() % (hi - lo + 1)) : 0);

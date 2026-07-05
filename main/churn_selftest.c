@@ -213,27 +213,59 @@ static void test_learn_strip(void)
     ST_CHECK(learn_strip(padded, sizeof padded, 0x0075, &t), "strip: zero-padded AD accepted");
 }
 
+static bool has_digit_run(const uint8_t *b, size_t from, size_t to, int n)
+{
+    int run = 0;
+    for (size_t i = from; i < to && i < 31; i++) {
+        if (b[i] >= '0' && b[i] <= '9') { if (++run >= n) return true; } else run = 0;
+    }
+    return false;
+}
+
 static void test_learn_render(void)
 {
+    // Named Samsung earbud with an 11-char name -- the length that made the old digit-pad tell
+    // ("Beat1701876"). Name is the last AD element (name_off + name_len == ad_len).
     uint8_t named[] = { 0x02,0x01,0x06,
                         0x05,0xFF,0x75,0x00,0xAB,0xCD,
-                        0x09,0x09,'B','u','d','s',' ','P','r','o' };
+                        0x0C,0x09,'G','a','l','a','x','y',' ','B','u','d','s' };
     learned_template_t t;
     ST_CHECK(learn_strip(named, sizeof named, 0x0075, &t), "render: strip ok");
     t.itvl_min_ms = 100; t.itvl_max_ms = 200;
+    ST_CHECK(t.name_len == 11, "render: 11-char name captured");
 
     learned_template_t t2 = t; t2.company_id = 0x009E; t2.ad[2] = 0x9E;
     t2.shape_hash = learn_shape_hash(&t2);
     ST_CHECK(learn_shape_hash(&t) == learn_shape_hash(&t),  "hash: stable");
     ST_CHECK(learn_shape_hash(&t) != learn_shape_hash(&t2), "hash: company changes it");
 
-    uint8_t a[31], b[31]; uint8_t la, lb; uint16_t ia, ib;
-    ST_CHECK(learn_render(&t, a, &la, &ia) == 0, "render a ok");
-    ST_CHECK(learn_render(&t, b, &lb, &ib) == 0, "render b ok");
-    ST_CHECK(la == lb && la <= 31, "render: same length, in budget");
-    ST_CHECK(!law3_forbidden(a, la), "render: Law-3 clean");
+    uint8_t a[31]; uint8_t la; uint16_t ia;
+    bool clean = true, budget = true, no_digits = true, printable = true;
+    for (int k = 0; k < 24; k++) {                 // many renders: names/lengths vary, none digit-pads
+        ST_CHECK(learn_render(&t, a, &la, &ia) == 0, "render ok");
+        if (law3_forbidden(a, la)) clean = false;
+        if (la > 31) budget = false;
+        if (has_digit_run(a, t.name_off, la, 4)) no_digits = false;   // the "Beat1701876" tell
+        for (uint8_t i = t.name_off; i < la; i++) if (a[i] < 0x20 || a[i] > 0x7E) printable = false;
+    }
+    ST_CHECK(clean, "render: Law-3 clean across renders");
+    ST_CHECK(budget, "render: within 31-byte budget");
+    ST_CHECK(printable, "render: name region is printable ASCII");
+    ST_CHECK(no_digits, "render: no digit-run padding in the name (realism)");
+    ST_CHECK(a[5] == 0x75 && a[6] == 0x00, "render: company id stable");
     ST_CHECK(ia >= 100 && ia <= 200, "render: interval in band");
-    ST_CHECK(a[5] == b[5] && a[6] == b[6], "render: company id stable");
+
+    // Name NOT last (mfg data follows it): captured length must be preserved exactly, still no digits.
+    uint8_t nlast[] = { 0x02,0x01,0x06,
+                        0x0C,0x09,'G','a','l','a','x','y',' ','B','u','d','s',
+                        0x05,0xFF,0x75,0x00,0xAB,0xCD };
+    learned_template_t tn;
+    ST_CHECK(learn_strip(nlast, sizeof nlast, 0x0075, &tn), "render(nlast): strip ok");
+    tn.itvl_min_ms = 100; tn.itvl_max_ms = 200;
+    uint8_t c[31]; uint8_t lc; uint16_t ic;
+    ST_CHECK(learn_render(&tn, c, &lc, &ic) == 0, "render(nlast): ok");
+    ST_CHECK(lc == tn.ad_len, "render(nlast): exact length preserved (name not last)");
+    ST_CHECK(!has_digit_run(c, tn.name_off, tn.name_off + tn.name_len, 4), "render(nlast): no digit padding");
 }
 
 static void test_learn_store(void)

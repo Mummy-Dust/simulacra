@@ -76,6 +76,13 @@ shared key: it *asks* a decoy for a status snapshot on demand, and the decoy ans
 short burst of **encrypted, hash-only** telemetry over ESP-NOW. The decoy stays **silent until
 asked**, so the link adds no ambient chatter. Glance at the screen; the decoy stays hidden.
 
+Vigil is also the fleet's **librarian.** Because it carries a microSD card, it durably keeps the
+shared libraries the decoys build up — the **learned device archetypes** and the **known-tracker
+signatures** (both below) — **encrypted at rest** (AES-256-GCM under a key derived from the fleet
+secret) and re-offers them, so a rebooted or newly-joined decoy is repopulated from the card
+rather than starting cold. A dedicated **Library** page reports card status, library size, and
+the last sync/save at a glance.
+
 ### Sniffer node — the audit
 
 A spare board flashed as a **channel-1 promiscuous sniffer** that decodes the link *without the
@@ -113,11 +120,29 @@ not a brand-new random device flickering every cycle.
 - **Coexistence + live re-profiling.** BLE and Wi-Fi run **concurrently** via ESP-IDF software
   coexistence (the default build). Periodically the coordinator scans the ambient BLE
   environment for ~15 s, models it, and **reshapes the synthetic crowd** — size, vendor mix,
-  intervals — to match the room it's actually in, with no reflash.
+  intervals — to match the room it's actually in, with no reflash. A **diversity floor** keeps
+  the crowd from collapsing onto a single vendor, and the model **decays on a rolling window** so
+  it tracks the room *now* rather than everything it has ever heard.
 
 A scanner watching over minutes therefore logs a stable handful of vendor-attributed devices
 with staggered arrivals, gradual turnover, and matching Wi-Fi noise — indistinguishable from an
 ordinary busy room. Your real device is one more face in that crowd.
+
+## A crowd that learns
+
+The built-in archetype library is a strong start, but a truly convincing crowd should resemble
+*this* room, not a generic one. So decoys **learn the shapes of the devices actually around
+them** — advertising *structure* only (which fields, what cadence, what vendor class), **never
+identifiers or content** — and fold those learned archetypes into the population they generate.
+Over time the phantom crowd drifts toward the statistical shape of the real environment.
+
+Learning is a **fleet effort.** Decoys share their learned libraries over the same encrypted
+ESP-NOW link (`LEARN_OFFER` / `LEARN_SYNC`), merging by reinforcement so a shape many nodes have
+seen carries more weight. **Vigil** anchors it, persisting the merged library to encrypted
+microSD so the fleet's accumulated sense of *what this place looks like* survives reboots and
+seeds newly-joined nodes. And fleet-mates **exclude one another** — a decoy never learns from,
+models, or raises an alarm on another Simulacra node, so the fleet can't poison its own picture
+of the room.
 
 ## Threat Radar
 
@@ -130,15 +155,26 @@ fingerprint.
   — an RF-neighbourhood proxy, not GPS.
 - A device seen with meaningful presence across **3 distinct location-epochs** becomes a
   **confirmed follower**.
+- A confirmed follower is then **graded by recurrence** — `NEW`, then `RECURRING`, then
+  `PERSISTENT` as it keeps coming back across separate outings and places — so a one-off
+  coincidence and something that has shadowed you for a week don't read the same. Vigil colours
+  each blip by that level and tags it in the detail view.
 - Alerts surface three ways: serial (`THREAT confirmed …` with the live MAC so you can locate
   it, plus RSSI-throttled "getting-warmer" updates), an optional board LED, and — the point of
   the system — **Vigil**, the remote radar display described above.
 
-**Honest scope.** This is a *behavioural follower-detector*, not a universal tracker scanner. It
-catches **non-rotating** followers (e.g. a fixed-MAC beacon slipped into a bag). Commercial tags
-that rotate their addresses — AirTag, SmartTag, Tile — are **not** caught by this layer; that's
-known-tracker fingerprinting, a planned detection module. A device you're simply often near may
-occasionally flag (an allowlist is planned).
+**Two detection layers.** The recurrence detector above is *behavioural* — it catches
+**non-rotating** followers (a fixed-MAC beacon slipped into a bag) purely by how they move with
+you, and by design ignores what they *are*. Alongside it, a **signature layer** matches adverts
+against a database of **known devices** — commercial tags that rotate their MACs (AirTag,
+SmartTag, Tile) and surveillance / law-enforcement hardware (Flock ALPR cameras, Axon body
+cameras) — and names them with a confidence, catching exactly the rotating tags the behavioural
+layer can't. The signature DB is custodied on Vigil's SD card and synced across the fleet
+(`SIG_SYNC`) like the learned library. *(The matcher ships seeded and wired at the scan hook;
+live confirmation against a physical AirTag is still pending.)*
+
+**Honest limit.** A device you're simply often near may still occasionally flag the behavioural
+layer — an allowlist is planned.
 
 ## Design laws
 
@@ -228,8 +264,11 @@ handed back to the decoy.
 
 ## Roadmap & honest limits
 
-- **Known-tracker fingerprinting** — a detection layer for rotating commercial tags (AirTag /
-  SmartTag / Tile) that the behavioural follower-detector can't catch.
+- **Signature detection — live-verify & expand** — the known-device matcher is shipped and wired;
+  next is confirming it against physical tags (AirTag/SmartTag/Tile) and growing the signature set
+  beyond the seed of trackers and surveillance/LE hardware.
+- **Frequent-companion allowlist** — so a device you're legitimately always near stops flagging the
+  behavioural layer.
 - **Wi-Fi observe → match** — profile the ambient probe environment and generate synthetic probe
   traffic that matches the room, the way the BLE side already does.
 - **OTA updates** — now that a screen exists to confirm/rollback.

@@ -13,7 +13,12 @@ void radar_ui_on_input(radar_ui_t *ui, uint32_t now_ms)
 void radar_ui_on_tick(radar_ui_t *ui, uint32_t now_ms, uint8_t threat_count)
 {
     if (threat_count > ui->last_threat_count) {
-        ui->backlight_on = true; ui->view = RADAR_VIEW_RADAR; ui->last_wake_ms = now_ms;
+        ui->backlight_on = true; ui->last_wake_ms = now_ms;
+        // Surface a new follower by jumping to the radar page ONLY if the user isn't actively
+        // navigating menus; yanking them off a page they just opened is the random snap-back bug.
+        // Once they go idle the shared idle-return below brings them to radar anyway.
+        if ((uint32_t)(now_ms - ui->last_input_ms) >= RADAR_VIEW_IDLE_MS)
+            ui->view = RADAR_VIEW_RADAR;
     }
     ui->last_threat_count = threat_count;
     if (ui->view != RADAR_VIEW_RADAR &&

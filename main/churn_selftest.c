@@ -3,6 +3,7 @@
 #include "churn_selftest.h"
 #include "roster.h"
 #include "churn.h"
+#include "settings.h"
 #include "templates.h"
 #include "rf_model.h"
 #include "observe.h"
@@ -1409,6 +1410,34 @@ static void test_churn_runtime_knobs(void)
     churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
 }
 
+static void test_settings_resolve(void)
+{
+    sim_settings_t s;
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_NORMAL, 16, &s) == 0, "resolve NORMAL ok");
+    ST_CHECK(s.active_target == 16 && !s.paused && s.accel == 1.0f, "NORMAL fills ceiling, running");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_STEALTH, 16, &s) == 0, "resolve STEALTH ok");
+    ST_CHECK(s.active_target == 6 && s.dwell_min_ms >= 300000, "STEALTH ~40% ceiling, long dwell");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_MAX, 16, &s) == 0, "resolve MAX ok");
+    ST_CHECK(s.active_target == 16 && s.accel > 2.0f && s.dwell_max_ms <= 120000, "MAX cranks turnover");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_PAUSE, 16, &s) == 0, "resolve PAUSE ok");
+    ST_CHECK(s.paused && s.active_target == 16, "PAUSE freezes rotation, crowd stays on-air");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_COUNT, 16, &s) == -1, "bad preset rejected");
+
+    // Clamp floors: a hostile 'target=0, dwell=0' can't cross safe bounds.
+    sim_settings_t bad = { .active_target = 0, .paused = false, .accel = 9.0f,
+                           .dwell_min_ms = 0, .dwell_max_ms = 5, .cooldown_min_ms = 0, .cooldown_max_ms = 0 };
+    sim_settings_clamp(&bad, 16);
+    ST_CHECK(bad.active_target >= SIM_TARGET_FLOOR, "clamp raises target to floor");
+    ST_CHECK(bad.dwell_min_ms >= 30000 && bad.accel <= 4.0f && bad.cooldown_min_ms >= 300000, "clamp bounds dwell/accel/cooldown");
+
+    // Ceiling honored on a smaller board (Shade-like ceiling).
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_MAX, 8, &s) == 0 && s.active_target == 8, "MAX clamps to board ceiling");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1434,6 +1463,7 @@ int churn_selftest_run(void)
     test_cooldown();
     test_timeslice();
     test_churn_runtime_knobs();
+    test_settings_resolve();
 
     // --- M4 templates ---
     test_templates();

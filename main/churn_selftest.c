@@ -1438,6 +1438,29 @@ static void test_settings_resolve(void)
     ST_CHECK(sim_settings_resolve(SIM_PRESET_MAX, 8, &s) == 0 && s.active_target == 8, "MAX clamps to board ceiling");
 }
 
+static void test_settings_apply(void)
+{
+    roster_init(); churn_set_apply(noop_apply);
+    sim_settings_apply_preset(SIM_PRESET_STEALTH);
+    ST_CHECK(churn_active_target() == (uint8_t)((CHURN_ACTIVE_SET*4)/10), "apply STEALTH sets churn target");
+    ST_CHECK(!churn_paused(), "STEALTH is running");
+    uint32_t lo=0,hi=0; churn_get_dwell_ms(&lo,&hi);
+    ST_CHECK(lo == 300000, "apply STEALTH sets churn dwell");
+
+    sim_settings_apply_preset(SIM_PRESET_PAUSE);
+    ST_CHECK(churn_paused(), "apply PAUSE pauses churn");
+
+    ST_CHECK(sim_settings_apply_preset(SIM_PRESET_COUNT) == -1, "apply bad preset rejected");
+
+    sim_settings_t g; sim_settings_get(&g);
+    ST_CHECK(g.paused, "get reflects last applied (PAUSE)");
+
+    // Restore NORMAL so subsequent tests run with defaults.
+    sim_settings_apply_preset(SIM_PRESET_NORMAL);
+    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1464,6 +1487,7 @@ int churn_selftest_run(void)
     test_timeslice();
     test_churn_runtime_knobs();
     test_settings_resolve();
+    test_settings_apply();
 
     // --- M4 templates ---
     test_templates();

@@ -1,5 +1,12 @@
 #include "settings.h"
-#include "churn.h"    // CHURN_DWELL_*/CHURN_COOLDOWN_* firmware defaults
+#include "churn.h"    // CHURN_DWELL_*/CHURN_COOLDOWN_* firmware defaults, CHURN_ACTIVE_SET
+#include "nvs.h"
+#include <string.h>
+
+#define SETTINGS_NVS_NS  "sim"
+#define SETTINGS_NVS_KEY "settings"
+
+static sim_settings_t s_cur;   // current in-RAM settings (source of truth)
 
 static uint32_t u32_clamp(uint32_t v, uint32_t lo, uint32_t hi)
 { return v < lo ? lo : (v > hi ? hi : v); }
@@ -44,4 +51,50 @@ int sim_settings_resolve(sim_preset_t p, uint8_t ceiling, sim_settings_t *out)
     sim_settings_clamp(&s, ceiling);
     *out = s;
     return 0;
+}
+
+void sim_settings_apply(const sim_settings_t *s)
+{
+    churn_set_active_target(s->active_target);
+    churn_set_paused(s->paused);
+    churn_set_accel(s->accel);
+    churn_set_dwell_ms(s->dwell_min_ms, s->dwell_max_ms);
+    churn_set_cooldown_ms(s->cooldown_min_ms, s->cooldown_max_ms);
+    s_cur = *s;
+}
+
+static void settings_save(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;   // best-effort
+    nvs_set_blob(h, SETTINGS_NVS_KEY, &s_cur, sizeof s_cur);
+    nvs_commit(h); nvs_close(h);
+}
+
+void sim_settings_set(const sim_settings_t *s)
+{
+    sim_settings_t c = *s; sim_settings_clamp(&c, CHURN_ACTIVE_SET);
+    sim_settings_apply(&c); settings_save();
+}
+
+int sim_settings_apply_preset(sim_preset_t p)
+{
+    sim_settings_t s;
+    if (sim_settings_resolve(p, CHURN_ACTIVE_SET, &s) != 0) return -1;
+    sim_settings_apply(&s); settings_save();
+    return 0;
+}
+
+void sim_settings_get(sim_settings_t *out) { *out = s_cur; }
+
+void sim_settings_init(void)
+{
+    sim_settings_t s;
+    nvs_handle_t h; size_t len = sizeof s;
+    bool loaded = (nvs_open(SETTINGS_NVS_NS, NVS_READONLY, &h) == ESP_OK) &&
+                  (nvs_get_blob(h, SETTINGS_NVS_KEY, &s, &len) == ESP_OK) && len == sizeof s;
+    if (loaded) nvs_close(h);
+    if (!loaded) sim_settings_resolve(SIM_PRESET_NORMAL, CHURN_ACTIVE_SET, &s);
+    sim_settings_clamp(&s, CHURN_ACTIVE_SET);   // guard against a stale/foreign blob
+    sim_settings_apply(&s);
 }

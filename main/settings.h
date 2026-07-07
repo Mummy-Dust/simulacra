@@ -24,3 +24,14 @@ int  sim_settings_resolve(sim_preset_t p, uint8_t ceiling, sim_settings_t *out);
 // Clamp settings to safe floors/ceilings in place (idempotent). Used on every apply so a forged
 // or malformed command can never cross safe bounds.
 void sim_settings_clamp(sim_settings_t *s, uint8_t ceiling);
+
+// Apply settings to the churn engine now (no persistence).
+void sim_settings_apply(const sim_settings_t *s);
+// Resolve preset against CHURN_ACTIVE_SET, clamp, apply, and persist. 0 ok, -1 unknown preset.
+int  sim_settings_apply_preset(sim_preset_t p);
+// Load persisted settings from NVS (or firmware defaults) and apply. Call once at boot.
+void sim_settings_init(void);
+// Snapshot the current in-RAM settings.
+void sim_settings_get(sim_settings_t *out);
+// Web-UI granular path: clamp, apply, and persist an explicit settings struct.
+void sim_settings_set(const sim_settings_t *s);

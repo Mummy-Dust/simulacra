@@ -43,6 +43,7 @@
 #include "identity.h"
 #include "roster.h"
 #include "churn.h"
+#include "settings.h"
 #include "churn_adv.h"
 #include "churn_selftest.h"
 #include "observe.h"
@@ -145,6 +146,7 @@ static void simulacra_task(void *arg)
     }
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
+    sim_settings_init();   // restore persisted churn tunables (or firmware defaults)
     detect_reset();
     detect_set_enabled(SIMULACRA_DETECT);   // M9 master enable (default on); coexist wires the rest
     sig_store_load_seed();                   // M10 fingerprint DB: compile-time seed (a Vigil push may replace it)

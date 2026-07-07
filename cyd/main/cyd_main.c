@@ -355,7 +355,11 @@ static bool touched(void){
 // The window is wide relative to the ~1s request cadence so an occasional lost
 // ESP-NOW broadcast (BLE+Wi-Fi coexist) doesn't flash a spurious "NO DECOY".
 static void draw_freshness_overlay(uint16_t *band, uint32_t now){
-    if (s_status_ms != 0 && (uint32_t)(now - s_status_ms) <= 15000) return;
+    // s_status_ms is stamped by the ESP-NOW recv callback (a separate, higher-priority task) and
+    // can be a few ms AHEAD of this loop's cached `now` — the reply to the request we just sent
+    // lands before we draw. A plain unsigned (now - s_status_ms) then underflows to ~4.29e9 and
+    // paints a permanent spurious "NO DECOY". Compare signed so any not-in-the-past sample is fresh.
+    if (s_status_ms != 0 && (int32_t)(now - s_status_ms) <= 15000) return;
     radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
     radar_gfx_clear(&g, 0x0000);
     if (s_status_ms == 0) radar_gfx_text(&g, 56, 16, "SEARCHING...", 0xFFFF);

@@ -1395,6 +1395,20 @@ static void test_escalation_recurrence(void)
     ST_CHECK(threat_escalation_level(t.sessions_seen, t.places_seen) == ESCALATION_PERSISTENT, "recur: KNOWN PERSISTENT");
 }
 
+static void test_churn_runtime_knobs(void)
+{
+    uint32_t lo = 0, hi = 0;
+    churn_set_dwell_ms(50000, 60000);
+    churn_get_dwell_ms(&lo, &hi);
+    ST_CHECK(lo == 50000 && hi == 60000, "dwell setter/getter round-trip");
+    churn_set_cooldown_ms(400000, 500000);
+    churn_get_cooldown_ms(&lo, &hi);
+    ST_CHECK(lo == 400000 && hi == 500000, "cooldown setter/getter round-trip");
+    // Restore firmware defaults so later tests are unaffected.
+    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1419,6 +1433,7 @@ int churn_selftest_run(void)
     test_churn_lifecycle();
     test_cooldown();
     test_timeslice();
+    test_churn_runtime_knobs();
 
     // --- M4 templates ---
     test_templates();

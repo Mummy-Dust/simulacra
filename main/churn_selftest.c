@@ -1032,6 +1032,17 @@ static void test_radar_ui(void)
     ST_CHECK(!ui.backlight_on, "clear + idle sleeps backlight");
     radar_ui_on_tick(&ui, 999999, 1);
     ST_CHECK(ui.backlight_on && ui.view == RADAR_VIEW_RADAR, "new follower wakes + radar");
+
+    // A new follower must NOT yank the view back to radar while the user is actively navigating
+    // (recent input) -- that is the "random snap-back while reading a page" bug. It still wakes
+    // the backlight, and once the user goes idle a new follower does jump to radar as an alert.
+    radar_ui_reset(&ui, 10000, 0);
+    radar_ui_on_input(&ui, 10100);                 // -> detail, actively navigating
+    radar_ui_on_tick(&ui, 10200, 1);               // new follower arrives mid-navigation
+    ST_CHECK(ui.view == RADAR_VIEW_DETAIL, "new follower keeps page while navigating");
+    ST_CHECK(ui.backlight_on, "new follower still wakes backlight while navigating");
+    radar_ui_on_tick(&ui, 10200 + RADAR_VIEW_IDLE_MS + 1, 2);
+    ST_CHECK(ui.view == RADAR_VIEW_RADAR, "new follower jumps to radar once idle");
 }
 
 static void test_radar_wire(void)

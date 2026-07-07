@@ -355,7 +355,11 @@ static bool touched(void){
 // The window is wide relative to the ~1s request cadence so an occasional lost
 // ESP-NOW broadcast (BLE+Wi-Fi coexist) doesn't flash a spurious "NO DECOY".
 static void draw_freshness_overlay(uint16_t *band, uint32_t now){
-    if (s_status_ms != 0 && (uint32_t)(now - s_status_ms) <= 15000) return;
+    // s_status_ms is stamped by the ESP-NOW recv callback (a separate, higher-priority task) and
+    // can be a few ms AHEAD of this loop's cached `now` — the reply to the request we just sent
+    // lands before we draw. A plain unsigned (now - s_status_ms) then underflows to ~4.29e9 and
+    // paints a permanent spurious "NO DECOY". Compare signed so any not-in-the-past sample is fresh.
+    if (s_status_ms != 0 && (int32_t)(now - s_status_ms) <= 15000) return;
     radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
     radar_gfx_clear(&g, 0x0000);
     if (s_status_ms == 0) radar_gfx_text(&g, 56, 16, "SEARCHING...", 0xFFFF);
@@ -398,7 +402,15 @@ void app_main(void)
             last_save = now; s_lib_dirty = false; learn_db_save();
         }
         radar_ui_on_tick(&ui, now, s_status.threat_count);
-        if (ui.backlight_on != bl_was_on) { set_backlight(ui.backlight_on); bl_was_on = ui.backlight_on; }
+        if (ui.backlight_on != bl_was_on) {
+            set_backlight(ui.backlight_on);
+            // On wake, grant a freshness grace: while asleep no requests go out so s_status_ms is
+            // frozen stale, which would paint a spurious "NO DECOY" for ~1s until the first
+            // post-wake reply. Only if we'd already seen a decoy; a never-seen decoy keeps
+            // "SEARCHING...", and a truly-gone decoy still expires the 15s window honestly.
+            if (ui.backlight_on && s_status_ms != 0) s_status_ms = now;
+            bl_was_on = ui.backlight_on;
+        }
         if (ui.backlight_on){
             radar_lib_info_t lib = {
                 .sd_ok = s_sd_ok,

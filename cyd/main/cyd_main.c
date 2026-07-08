@@ -392,10 +392,20 @@ static bool touch_read_xy(int *x, int *y)
     uint16_t rx = xpt_xfer(0x90);
     uint16_t ry = xpt_xfer(0xD0);
     gpio_set_level(TOUCH_CS_GPIO, 1);
-    if (rx < 100 || ry < 100) return false;              // reject noise/no-contact
-    // Coarse calibration: raw ~[200..3900] -> pixels. Panel is portrait 240x320.
-    int px = (int)((rx - 200) * LCD_W / 3700); if (px < 0) px = 0; if (px >= LCD_W) px = LCD_W-1;
-    int py = (int)((ry - 200) * LCD_H / 3700); if (py < 0) py = 0; if (py >= LCD_H) py = LCD_H-1;
+    if (rx < 60 || ry < 60) return false;                // reject noise/no-contact
+    // Panel-measured calibration (4-corner tap). On this CYD the XPT2046 axes are SWAPPED and
+    // rawY is INVERTED relative to the ILI9341 portrait frame: raw X (~[110..1840]) tracks
+    // screen Y top->bottom; raw Y (~[175..1925]) tracks screen X right->left.
+    #define TCAL_X_MIN 110
+    #define TCAL_X_MAX 1840
+    #define TCAL_Y_MIN 175
+    #define TCAL_Y_MAX 1925
+    int px = (int)((TCAL_Y_MAX - (int)ry) * LCD_W / (TCAL_Y_MAX - TCAL_Y_MIN));   // rawY -> screen X (inverted)
+    int py = (int)(((int)rx - TCAL_X_MIN) * LCD_H / (TCAL_X_MAX - TCAL_X_MIN));   // rawX -> screen Y
+    if (px < 0) px = 0;
+    if (px >= LCD_W) px = LCD_W - 1;
+    if (py < 0) py = 0;
+    if (py >= LCD_H) py = LCD_H - 1;
     *x = px; *y = py;
     return true;
 }

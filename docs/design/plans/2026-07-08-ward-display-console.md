@@ -365,7 +365,7 @@ void ward_librarian_tick(void){                       // called periodically fro
     s_last_save_ms = now;
 }
 ```
-**SD-on-SPI2 note:** the display already called `spi_bus_initialize(WARD_SPI_HOST,...)`; `ward_sd_mount` must NOT re-init the bus — configure `sdspi_device_config_t.host_id = WARD_SPI_HOST`, `gpio_cs = WARD_PIN_SD_CS`, and mount with `esp_vfs_fat_sdspi_mount`. Gate `ward_librarian_init` to run **after** `ward_display_hw_init`.
+**SD-on-SPI2 note:** the display already called `spi_bus_initialize(WARD_SPI_HOST,...)`; `ward_sd_mount` must NOT re-init the bus — configure `sdspi_device_config_t.host_id = WARD_SPI_HOST`, `gpio_cs = WARD_PIN_SD_CS`, and mount with `esp_vfs_fat_sdspi_mount`. Gate `ward_librarian_init` to run **after** `ward_display_hw_init`. **Physical wiring:** this FEIYANG panel exposes SD as a separate 4-pin header — jumper `SD_SCK→`GPIO6, `SD_MOSI→`GPIO23, `SD_MISO→`GPIO24 onto the shared bus; only `SD_CS`→GPIO9 is dedicated. If the SD proves flaky sharing the 40 MHz display clock, drop the SD transfer speed in the mount config (sdspi negotiates its own clock, so this is usually a non-issue).
 
 - [ ] **Step 4: FATFS long-filename support.** Add to `sdkconfig.defaults`:
 ```

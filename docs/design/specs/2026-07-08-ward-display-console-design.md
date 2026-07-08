@@ -19,6 +19,12 @@ display + XPT2046 resistive touch + a microSD slot, **no onboard MCU** (identica
 controller family to the CYD "Cheap Yellow Display" that Vigil already runs on). One
 panel is assigned to Ward; the second is a bench/spare.
 
+**Panel confirmed** (photo `docs/hardware/esp32-c5-wifi6-kit-n16r8/sbt240-feiyang-2.4in-ili9341-panel.jpg`):
+the standard red **FEIYANG 2.4" TFT SPI 240×320 V1.3** module, 3.3 V logic (no level
+shifter → pairs directly with the C5's 3.3 V I/O). Header labels — display: `SCK,
+SDI(MOSI), SDO(MISO), DC, RESET, CS, LED, GND, VCC`; touch: `T_IRQ, T_DO, T_DIN, T_CS,
+T_CLK`; SD as a **separate 4-pin group**: `SD_SCK, SD_MISO, SD_MOSI, SD_CS`.
+
 **Ward host board:** confirmed **ESP32-C5-WIFI6-KIT-N16R8** (ESP32-C5-WROOM-1 module,
 dual USB-C, 16 MB flash / 8 MB PSRAM) — *not* the DevKitC-1. This matters for wiring: the
 N16R8 module breaks out only GPIO `{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,23,24,25,26,27,28}`
@@ -90,6 +96,11 @@ post-boot). The verified map lives entirely in `main/ward_pins.h`.
 **SPI2** as two devices with separate CS lines (IDF arbitrates the shared bus). Touch stays
 on the **proven bit-banged XPT2046** path from the CYD (its own 5 GPIOs), sidestepping any
 display/SD ↔ touch clock conflict and maximizing code reuse.
+
+On this panel the SD is a **separate 4-pin header**, so to share SPI2 the operator jumpers
+`SD_SCK→SCK` (GPIO6), `SD_MOSI→SDI` (GPIO23), `SD_MISO→SDO/MISO` (GPIO24), and runs only
+`SD_CS` to its own line (GPIO9). The display's `SDO(MISO)` is left unconnected (display is
+write-only; only the SD reads back on the shared MISO). `LED` (backlight) → 3V3.
 
 **Confirmed pin map (from the board pinout; verify GPIO0/1 have no 32 kHz crystal):**
 
@@ -214,9 +225,8 @@ Vigil ── signed CONFIG ─▶ Ward decoy ◀── learn RAM-sync ──▶ 
 1. **Pin map (resolved to the real board).** Now mapped to the exposed GPIOs of the
    ESP32-C5-WIFI6-KIT-N16R8 (see table). Remaining bench checks: GPIO0/1 free of a 32 kHz
    crystal, and the JTAG pads (3/4/5) not needed for HW debug. All in one header.
-2. **Panel VCC.** Confirm the SBT240 runs at 3.3 V logic + power (expected for this family)
-   before wiring; some panels want 5 V for the backlight. Since the backlight is tied to a
-   rail (not a GPIO), pick 3V3 vs 5V based on the panel's LED spec at bring-up.
+2. **Panel VCC — resolved.** The panel photo confirms a standard red 3.3 V ILI9341 module
+   (no level shifter); drive `VCC` and `LED` from the C5 **3V3** rail. No open item.
 3. **Render task vs. radio timing.** The decoy's radios are latency-sensitive; the render
    task must run at low priority / modest fps so it never starves BLE/Wi-Fi churn. Mitigate
    with a capped fps and a dedicated low-priority task; validate in the 10-min soak.

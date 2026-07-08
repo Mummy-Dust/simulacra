@@ -45,6 +45,8 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "config_wire.h"
 #include "sim_ctrl_key.h"
 #include "settings.h"
+#include "fleet_key.h"
+#include "enroll_wire.h"
 
 #ifndef SIMULACRA_ESPNOW_CHANNEL
 #define SIMULACRA_ESPNOW_CHANNEL 1
@@ -66,10 +68,71 @@ static uint8_t      s_sig_rx_mask;                  // bit i set once chunk i re
 static uint8_t      s_sig_rx_cnt;                   // expected chunk_count
 static size_t       s_sig_rx_n;                     // records placed so far
 
+// Open a sealed frame with the current fleet key, then the previous (rotation grace).
+int espnow_open_any(const uint8_t *frame, size_t flen, uint8_t *out_type, uint8_t *payload,
+                    size_t *payload_len, uint8_t out_salt[4], uint64_t *out_counter)
+{
+    const uint8_t *k = fleet_key_get();
+    if (k && radar_wire_open(frame, flen, k, out_type, payload, payload_len, out_salt, out_counter) == 0)
+        return 0;
+    const uint8_t *kp = fleet_key_prev();
+    if (kp && radar_wire_open(frame, flen, kp, out_type, payload, payload_len, out_salt, out_counter) == 0)
+        return 0;
+    return -1;
+}
+
+#ifdef SIMULACRA_FLEET_PROVISION
+// Seek-enrollment state: set while we await a GRANT for a REQUEST we sent.
+static uint8_t s_enr_nonce_d[24];   // our per-session nonce (bound into the GRANT)
+static uint8_t s_enr_veph[32];      // Vigil ephemeral pubkey from the OFFER we answered
+static bool    s_enr_pending;
+
+// Handle a raw (unsealed) enrollment frame: [type(1) | enroll payload].
+static void enroll_on_frame(const uint8_t *data, int len)
+{
+    if (data[0] == RADAR_TYPE_ENROLL_OFFER) {
+        if (fleet_key_have()) return;                        // already enrolled -> ignore offers
+        if (len != 1 + ENROLL_OFFER_LEN) return;
+        uint8_t veph[32], nv[24]; uint32_t epoch;
+        if (enroll_offer_open(data + 1, ENROLL_OFFER_LEN, SIMULACRA_CTRL_PK, veph, nv, &epoch) != 0)
+            return;                                          // not a genuine Vigil offer
+        esp_fill_random(s_enr_nonce_d, 24);                  // fresh session
+        memcpy(s_enr_veph, veph, 32);
+        uint8_t idsk[32]; fleet_id_sk(idsk);
+        uint8_t frame[1 + ENROLL_REQUEST_LEN];
+        frame[0] = RADAR_TYPE_ENROLL_REQUEST;
+        if (enroll_request_build(frame + 1, ENROLL_REQUEST_LEN, fleet_id_pk(), idsk,
+                                 s_enr_nonce_d, veph, nv) != ENROLL_REQUEST_LEN) return;
+        esp_now_send(BCAST, frame, sizeof frame);
+        s_enr_pending = true;
+        ESP_LOGW(ETAG, "enroll: answered OFFER (epoch %u) -> sent REQUEST", (unsigned)epoch);
+        return;
+    }
+    if (data[0] == RADAR_TYPE_ENROLL_GRANT) {
+        if (!s_enr_pending || len != 1 + ENROLL_GRANT_LEN) return;
+        uint8_t idsk[32]; fleet_id_sk(idsk);
+        uint8_t key[32], nd_echo[24]; uint32_t epoch;
+        if (enroll_grant_open(data + 1, ENROLL_GRANT_LEN, s_enr_veph, idsk, key, &epoch, nd_echo) != 0)
+            return;
+        if (memcmp(nd_echo, s_enr_nonce_d, 24) != 0) return; // not our session (replay/stale)
+        fleet_key_set(key, epoch);
+        s_enr_pending = false;
+        ESP_LOGW(ETAG, "enroll: GRANT accepted -> fleet key set (epoch %u)", (unsigned)epoch);
+        return;
+    }
+}
+#endif
+
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len)
 {
+#ifdef SIMULACRA_FLEET_PROVISION
+    if (len >= 1 && (data[0] == RADAR_TYPE_ENROLL_OFFER || data[0] == RADAR_TYPE_ENROLL_GRANT)) {
+        enroll_on_frame(data, len);                 // raw enrollment frame, not sealed
+        return;
+    }
+#endif
     uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
-    if (radar_wire_open(data, (size_t)len, SIMULACRA_ESPNOW_KEY, &type, pl, &plen, salt, &ctr) != 0)
+    if (espnow_open_any(data, (size_t)len, &type, pl, &plen, salt, &ctr) != 0)
         return;                                     // not ours / bad tag
     if (type == RADAR_TYPE_REQUEST) {
         if (!radar_replay_ok(&s_req_replay, salt, ctr)) return;   // replayed request
@@ -140,10 +203,11 @@ static void broadcast_fleet_macs(void)
         if (id) memcpy(macs[n++], id->addr, 6);
     }
     if (n == 0) return;
+    const uint8_t *k = fleet_key_get(); if (!k) return;
     uint8_t pl[RADAR_FRAME_MAX]; size_t plen = fleet_macs_pack(pl, sizeof pl, macs, n);
     uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
     if (radar_wire_seal(frame, &flen, RADAR_TYPE_FLEET_MACS, pl, plen,
-                        SIMULACRA_ESPNOW_KEY, s_salt, ++s_counter) == 0) {
+                        k, s_salt, ++s_counter) == 0) {
         esp_now_send(BCAST, frame, flen);
         ESP_LOGW(ETAG, "fleet: broadcast %u macs", (unsigned)n);
     }
@@ -151,11 +215,12 @@ static void broadcast_fleet_macs(void)
 
 static void respond_once(void)
 {
+    const uint8_t *k = fleet_key_get(); if (!k) return;
     webui_status_t w; webui_gather_status(&w);
     radar_wire_status_t r; espnow_status_from_webui(&r, &w);
     uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
     if (radar_wire_seal(frame, &flen, RADAR_TYPE_STATUS, (uint8_t*)&r, sizeof r,
-                        SIMULACRA_ESPNOW_KEY, s_salt, ++s_counter) != 0) return;
+                        k, s_salt, ++s_counter) != 0) return;
     for (int i = 0; i < 3; i++) esp_now_send(BCAST, frame, flen);   // 3x back-to-back
     ESP_LOGW(ETAG, "answered request (%u B x3)", (unsigned)flen);
 }
@@ -163,6 +228,7 @@ static void respond_once(void)
 static void offer_library(void)
 {
     static learned_template_t snap[LEARN_CAP];
+    const uint8_t *k = fleet_key_get(); if (!k) return;
     size_t n = learn_snapshot(snap, LEARN_CAP);
     if (n == 0) return;
     uint8_t chunks = (uint8_t)((n + LEARN_WIRE_RECS_PER_CHUNK - 1) / LEARN_WIRE_RECS_PER_CHUNK);
@@ -174,7 +240,7 @@ static void offer_library(void)
         if (learn_wire_pack(pl, &plen, &snap[off], nrec, 1, ci, chunks) != 0) continue;
         uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
         if (radar_wire_seal(frame, &flen, RADAR_TYPE_LEARN_OFFER, pl, plen,
-                            SIMULACRA_ESPNOW_KEY, s_salt, ++s_counter) == 0)
+                            k, s_salt, ++s_counter) == 0)
             esp_now_send(BCAST, frame, flen);
         vTaskDelay(pdMS_TO_TICKS(20));   // space chunks so the peer's RX queue drains
     }
@@ -186,6 +252,11 @@ static void espnow_task(void *arg)
     (void)arg;
     uint32_t last_offer = 0, last_fleet = 0;
     for (;;) {
+        if (!fleet_key_have()) {         // seek-enrollment: can't seal; wait for a signed OFFER
+            s_answer = false;            // ignore telemetry requests until keyed
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
         if (s_answer) { s_answer = false; respond_once(); }
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (now - last_offer > 30000) { last_offer = now; offer_library(); }   // every 30 s
@@ -196,6 +267,15 @@ static void espnow_task(void *arg)
 
 void esp_now_link_start(void)
 {
+#ifdef SIMULACRA_FLEET_PROVISION
+    fleet_key_init();
+    if (!fleet_key_have()) {
+        char fp[24]; fleet_id_fingerprint(fp, sizeof fp);
+        ESP_LOGW(ETAG, "fleet: unenrolled — identity %s, seeking enrollment", fp);
+    } else {
+        ESP_LOGW(ETAG, "fleet: enrolled (epoch %u)", (unsigned)fleet_key_epoch());
+    }
+#endif
     // Wi-Fi is already up (coexist STA). Randomize the STA source MAC once (locally-administered).
     uint8_t mac[6]; esp_wifi_get_mac(WIFI_IF_STA, mac);
     esp_fill_random(mac, 6); mac[0] = (mac[0] & 0xFE) | 0x02;      // LAA, unicast

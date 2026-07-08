@@ -1568,6 +1568,30 @@ static void test_fleet_key(void)
     ST_CHECK(fleet_key_prev() && memcmp(fleet_key_prev(), k, 32) == 0,
              "old key retained as prev during grace");
 }
+
+static void test_fleet_open_grace(void)
+{
+    uint8_t kold[32], knew[32];
+    for (int i = 0; i < 32; i++) { kold[i] = (uint8_t)(i + 10); knew[i] = (uint8_t)(i + 200); }
+    fleet_key_set(kold, 10);
+    fleet_key_set(knew, 11);            // rotate: prev = kold, current = knew
+
+    uint8_t salt[4] = { 1, 2, 3, 4 }; uint8_t payload[8] = { 9, 8, 7, 6, 5, 4, 3, 2 };
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+    ST_CHECK(radar_wire_seal(frame, &flen, RADAR_TYPE_STATUS, payload, sizeof payload, kold, salt, 1) == 0,
+             "grace: seal a frame under the old key");
+    uint8_t type, pl[RADAR_FRAME_MAX], os[4]; size_t plen; uint64_t ctr;
+    ST_CHECK(espnow_open_any(frame, flen, &type, pl, &plen, os, &ctr) == 0,
+             "grace: open_any falls back to previous key");
+    ST_CHECK(type == RADAR_TYPE_STATUS && plen == sizeof payload && memcmp(pl, payload, plen) == 0,
+             "grace: payload recovered via prev key");
+
+    uint8_t rnd[32]; for (int i = 0; i < 32; i++) rnd[i] = (uint8_t)(i * 5 + 3);
+    ST_CHECK(radar_wire_seal(frame, &flen, RADAR_TYPE_STATUS, payload, sizeof payload, rnd, salt, 2) == 0,
+             "grace: seal under an unrelated key");
+    ST_CHECK(espnow_open_any(frame, flen, &type, pl, &plen, os, &ctr) != 0,
+             "grace: unknown key rejected by open_any");
+}
 #endif
 
 int churn_selftest_run(void)
@@ -1601,6 +1625,7 @@ int churn_selftest_run(void)
     test_enroll_wire();
 #ifdef SIMULACRA_FLEET_PROVISION
     test_fleet_key();
+    test_fleet_open_grace();
 #endif
 
     // --- M4 templates ---

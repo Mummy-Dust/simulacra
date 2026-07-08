@@ -1546,6 +1546,29 @@ static void test_enroll_wire(void)
     uint8_t bad_pk[32], bad_sk[32]; crypto_box_keypair(bad_pk, bad_sk);
     ST_CHECK(enroll_grant_open(grant, ENROLL_GRANT_LEN, veph_pk, bad_sk, g_key, &g_ep, g_nd) != 0,
              "wrong id_sk cannot open grant");
+
+    // --- identity authentication: the REQUEST must prove possession of id_sk, not just knowledge
+    // of a public id_pk. Forge a request that CLAIMS a victim's id_pk in the clear but seals the
+    // inner box with a different (attacker) secret; opening against the claimed id_pk must fail. ---
+    uint8_t vic_pk[32], vic_sk[32]; crypto_box_keypair(vic_pk, vic_sk);
+    uint8_t forged[ENROLL_REQUEST_LEN];
+    ST_CHECK(enroll_request_build(forged, sizeof forged, vic_pk, id_sk, nonce_d, veph_pk, nonce_v)
+             == ENROLL_REQUEST_LEN, "forged request builds (claims vic_pk, sealed by wrong id_sk)");
+    ST_CHECK(enroll_request_open(forged, ENROLL_REQUEST_LEN, veph_sk, r_idpk, r_nd, r_nv) != 0,
+             "request claiming a foreign id_pk (sealed by wrong id_sk) is rejected");
+
+    // --- per-window binding: a REQUEST is boxed to the current window's Vigil ephemeral, so a
+    // DIFFERENT window's ephemeral secret cannot open it. This is what makes a captured REQUEST
+    // from a previous window useless against a new window (cross-window replay protection). ---
+    uint8_t veph2_pk[32], veph2_sk[32]; crypto_box_keypair(veph2_pk, veph2_sk);
+    ST_CHECK(enroll_request_open(req, ENROLL_REQUEST_LEN, veph2_sk, r_idpk, r_nd, r_nv) != 0,
+             "request bound to one ephemeral is rejected by a different ephemeral");
+
+    // --- granter authentication: the GRANT is sealed FROM the Vigil ephemeral, so opening it with
+    // the wrong ephemeral pubkey as the sender must fail (a decoy won't accept a key from an
+    // impostor that isn't the Vigil ephemeral it just requested from). ---
+    ST_CHECK(enroll_grant_open(grant, ENROLL_GRANT_LEN, veph2_pk, id_sk, g_key, &g_ep, g_nd) != 0,
+             "grant from a different ephemeral (wrong granter) is rejected");
 }
 
 #ifdef SIMULACRA_FLEET_PROVISION

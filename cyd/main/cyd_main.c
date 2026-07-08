@@ -498,6 +498,36 @@ static bool touch_read_xy(int *x, int *y)
     *x = px; *y = py;
     return true;
 }
+#ifdef SIMULACRA_FLEET_PROVISION
+// Fleet-enrollment banner, drawn as a top band over whatever view is up (same technique as the
+// freshness overlay below). Puts the pending decoy's fingerprint ON THE SCREEN so the operator
+// can eyeball-match it to the decoy's serial print and long-press to accept, without a serial
+// console tethered to the CYD. Returns true when it painted the band, so the freshness overlay
+// yields to it. Priority: pending TOFU prompt > open-window status > (nothing).
+static bool draw_enroll_overlay(uint16_t *band, uint32_t now){
+    bool window_open = now < s_pair_until_ms;
+    if (!s_pending && !window_open) return false;
+    radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
+    char l[40];
+    if (s_pending) {
+        radar_gfx_clear(&g, 0x6000);                                   // dark-red alert wash
+        radar_gfx_text(&g, 68, 2,  "ACCEPT DECOY?", 0xFFFF);           // 13 ch, centered
+        int fx = (LCD_W - (int)strlen(s_pending_fp) * 8) / 2;          // 19 ch fingerprint
+        radar_gfx_text(&g, fx, 15, s_pending_fp, 0xFFE0);              // yellow = compare me
+        radar_gfx_text(&g, 32, 28, "hold=accept  wait=deny", 0xC618);  // 22 ch, centered
+    } else {
+        radar_gfx_clear(&g, 0x0180);                                   // dark-green = window open
+        uint32_t rem = (s_pair_until_ms - now + 999) / 1000;
+        snprintf(l, sizeof l, "ENROLL OPEN  %2us", (unsigned)rem);
+        radar_gfx_text(&g, 56, 6, l, 0xFFFF);
+        snprintf(l, sizeof l, "epoch %u   %u allowed",
+                 (unsigned)fleet_db_epoch(), (unsigned)fleet_allow_count());
+        radar_gfx_text(&g, 24, 24, l, 0x07E0);
+    }
+    cyd_flush(0, 40, band, NULL);
+    return true;
+}
+#endif
 // CYD-side freshness overlay: drawn as one extra band over the top of the just-rendered view,
 // so the shared renderer stays untouched. Not shown while data is fresh (<=15s old).
 // The window is wide relative to the ~1s request cadence so an occasional lost
@@ -631,6 +661,9 @@ void app_main(void)
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
             radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+#ifdef SIMULACRA_FLEET_PROVISION
+            if (!draw_enroll_overlay(band, now))
+#endif
             draw_freshness_overlay(band, now);
             sweep=(uint16_t)((sweep+12)%360);
         }

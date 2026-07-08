@@ -71,10 +71,22 @@ target (`#if CONFIG_IDF_TARGET_ESP32C5` → Ward, otherwise Shade).
 
 **Vigil** is a physically separate **Cheap Yellow Display (CYD)** that renders a live **threat radar** —
 rings, sweep, follower dots placed by signal strength, and decoy/population stats — with a
-touch to page between views. It is **receiver-only** and holds no secrets of its own beyond the
-shared key: it *asks* a decoy for a status snapshot on demand, and the decoy answers with a
-short burst of **encrypted, hash-only** telemetry over ESP-NOW. The decoy stays **silent until
-asked**, so the link adds no ambient chatter. Glance at the screen; the decoy stays hidden.
+touch to page between views. By default it is **receiver-only** and holds no secrets of its own
+beyond the shared key: it *asks* a decoy for a status snapshot on demand, and the decoy answers
+with a short burst of **encrypted, hash-only** telemetry over ESP-NOW. The decoy stays **silent
+until asked**, so the link adds no ambient chatter. Glance at the screen; the decoy stays hidden.
+
+Vigil can also be the fleet's **control console.** From a touch **CONTROL** page it pushes a
+behaviour preset — **PAUSE / STEALTH / NORMAL / DENSE / MAX** (MAX = maximum air presence) — to
+every decoy at once over the same encrypted ESP-NOW link. Because control is a sharper capability
+than listening, commands are **Ed25519-signed**: Vigil alone holds the private key, the decoys
+carry only the public key, so **capturing a decoy never yields fleet control**. Every command is
+also **clamped** on arrival, so even a forged or malformed one can't shrink a decoy's crowd below
+the STEALTH floor or otherwise thin its cover. Presets resolve against each board's own ceiling
+(a lean Shade and a dense Ward both do the sensible thing) and persist across reboot. The same
+runtime settings back the on-decoy web dashboard, so both paths write one shared, NVS-durable
+state. Control is a build-time option (`SIMULACRA_CONFIG_CTRL`); a stock Vigil stays purely a
+watch.
 
 Vigil is also the fleet's **librarian.** Because it carries a microSD card, it durably keeps the
 shared libraries the decoys build up — the **learned device archetypes** and the **known-tracker

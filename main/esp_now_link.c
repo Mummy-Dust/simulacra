@@ -91,11 +91,13 @@ static bool    s_enr_pending;
 static void enroll_on_frame(const uint8_t *data, int len)
 {
     if (data[0] == RADAR_TYPE_ENROLL_OFFER) {
-        if (fleet_key_have()) return;                        // already enrolled -> ignore offers
         if (len != 1 + ENROLL_OFFER_LEN) return;
         uint8_t veph[32], nv[24]; uint32_t epoch;
         if (enroll_offer_open(data + 1, ENROLL_OFFER_LEN, SIMULACRA_CTRL_PK, veph, nv, &epoch) != 0)
             return;                                          // not a genuine Vigil offer
+        // Answer when unenrolled, or when the offer carries a newer key (rotation). A same-or-
+        // older epoch offer to an already-keyed decoy is ignored (replay / steady state).
+        if (fleet_key_have() && epoch <= fleet_key_epoch()) return;
         esp_fill_random(s_enr_nonce_d, 24);                  // fresh session
         memcpy(s_enr_veph, veph, 32);
         uint8_t idsk[32]; fleet_id_sk(idsk);

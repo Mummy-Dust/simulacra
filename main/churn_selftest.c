@@ -17,6 +17,8 @@
 #include "radar_ui.h"
 #include "radar_wire.h"
 #include "radar_key.h"
+#include "config_wire.h"
+#include "tweetnacl.h"
 #include "esp_now_link.h"
 #include "law3.h"
 #include "learn.h"
@@ -1461,6 +1463,29 @@ static void test_settings_apply(void)
     churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
 }
 
+static void test_config_wire(void)
+{
+    uint8_t pk[32], sk[64];
+    crypto_sign_keypair(pk, sk);                       // ephemeral test keypair
+    uint8_t nonce[12]; for (int i=0;i<12;i++) nonce[i] = (uint8_t)(i*7+1);
+    config_cmd_t cmd = { .version = CONFIG_WIRE_VER, .preset_id = 3 };
+
+    uint8_t pl[CONFIG_WIRE_PAYLOAD_LEN];
+    int n = config_wire_pack_signed(pl, sizeof pl, &cmd, nonce, sk);
+    ST_CHECK(n == CONFIG_WIRE_PAYLOAD_LEN, "pack returns payload len");
+
+    config_cmd_t got;
+    ST_CHECK(config_wire_open_signed(pl, n, nonce, pk, &got) == 0, "open verifies good sig");
+    ST_CHECK(got.preset_id == 3 && got.version == CONFIG_WIRE_VER, "open recovers cmd");
+
+    pl[0] ^= 0x01;                                      // tamper cmd byte
+    ST_CHECK(config_wire_open_signed(pl, n, nonce, pk, &got) != 0, "tampered cmd fails verify");
+    pl[0] ^= 0x01;                                      // restore
+
+    uint8_t nonce2[12]; memcpy(nonce2, nonce, 12); nonce2[0] ^= 0x01;
+    ST_CHECK(config_wire_open_signed(pl, n, nonce2, pk, &got) != 0, "nonce mismatch fails verify");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1488,6 +1513,7 @@ int churn_selftest_run(void)
     test_churn_runtime_knobs();
     test_settings_resolve();
     test_settings_apply();
+    test_config_wire();
 
     // --- M4 templates ---
     test_templates();

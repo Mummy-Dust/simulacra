@@ -35,3 +35,5 @@ void sim_settings_init(void);
 void sim_settings_get(sim_settings_t *out);
 // Web-UI granular path: clamp, apply, and persist an explicit settings struct.
 void sim_settings_set(const sim_settings_t *s);
+// Current pause state (convenience for the web UI toggle; avoids exposing the struct).
+bool sim_settings_get_paused(void);

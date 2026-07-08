@@ -87,6 +87,8 @@ int sim_settings_apply_preset(sim_preset_t p)
 
 void sim_settings_get(sim_settings_t *out) { *out = s_cur; }
 
+bool sim_settings_get_paused(void) { return s_cur.paused; }
+
 void sim_settings_init(void)
 {
     sim_settings_t s;

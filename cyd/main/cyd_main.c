@@ -386,7 +386,7 @@ static void enroll_process_request(uint32_t now){
     memcpy(s_pending_idpk, idpk, 32); memcpy(s_pending_nd, nd, 24);            // unknown -> TOFU
     enroll_fp(s_pending_fp, sizeof s_pending_fp, idpk);
     s_pending = true;
-    ESP_LOGW(TAG, "enroll: REQUEST from UNKNOWN %s — match the decoy's serial print, then TAP to accept",
+    ESP_LOGW(TAG, "enroll: REQUEST from UNKNOWN %s -- match the decoy's serial print, then TAP to accept",
              s_pending_fp);
 }
 static void enroll_accept_pending(void){
@@ -400,7 +400,7 @@ static void enroll_accept_pending(void){
 static void enroll_rotate(uint32_t now){
     fleet_db_rotate(); fleet_db_save();
     enroll_open_window(now);     // reopen so allowlisted decoys re-enroll to the new epoch
-    ESP_LOGW(TAG, "enroll: ROTATED to epoch %u — window reopened", (unsigned)fleet_db_epoch());
+    ESP_LOGW(TAG, "enroll: ROTATED to epoch %u -- window reopened", (unsigned)fleet_db_epoch());
 }
 #endif
 
@@ -537,7 +537,7 @@ void app_main(void)
     fleet_db_selftest();
     fleet_db_load();                 // restore real card state after the self-test scribbles RAM
 #endif
-    ESP_LOGW(TAG, "fleet: epoch %u, %u decoys allowed — long-press to open a 30s enroll window",
+    ESP_LOGW(TAG, "fleet: epoch %u, %u decoys allowed -- long-press to open a 30s enroll window",
              (unsigned)fleet_db_epoch(), (unsigned)fleet_allow_count());
 #endif
 

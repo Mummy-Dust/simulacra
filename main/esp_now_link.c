@@ -273,7 +273,7 @@ void esp_now_link_start(void)
     fleet_key_init();
     if (!fleet_key_have()) {
         char fp[24]; fleet_id_fingerprint(fp, sizeof fp);
-        ESP_LOGW(ETAG, "fleet: unenrolled — identity %s, seeking enrollment", fp);
+        ESP_LOGW(ETAG, "fleet: unenrolled -- identity %s, seeking enrollment", fp);
     } else {
         ESP_LOGW(ETAG, "fleet: enrolled (epoch %u)", (unsigned)fleet_key_epoch());
     }

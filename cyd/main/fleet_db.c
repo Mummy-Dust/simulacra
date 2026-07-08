@@ -108,7 +108,7 @@ void fleet_db_load(void)
             ESP_LOGW(TAG, "loaded: epoch %u, %u allowed", (unsigned)s_epoch, (unsigned)s_allow_n);
             return;
         }
-        ESP_LOGW(TAG, "fleet.db unreadable/foreign — reinitializing");
+        ESP_LOGW(TAG, "fleet.db unreadable/foreign -- reinitializing");
     }
     // First run (or unreadable): fresh random key, empty allowlist, epoch 1.
     esp_fill_random(s_key, sizeof s_key);

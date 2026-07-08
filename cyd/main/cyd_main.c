@@ -402,6 +402,107 @@ static void enroll_rotate(uint32_t now){
     enroll_open_window(now);     // reopen so allowlisted decoys re-enroll to the new epoch
     ESP_LOGW(TAG, "enroll: ROTATED to epoch %u -- window reopened", (unsigned)fleet_db_epoch());
 }
+
+// ---- Fleet revoke modal (Vigil-local, drawn in full-width 40px bands) ----
+#define FLEET_ROWS_VISIBLE 9        // rows between the header and the button band
+#define FLEET_ROW_Y0       40       // first row top
+#define FLEET_ROW_H        22
+#define FLEET_BTN_Y        258      // UP/DOWN/REVOKE band top
+#define FLEET_EXIT_Y       290      // EXIT band top
+static bool     s_fleet_modal;      // roster modal open
+static int      s_fleet_sel;        // selected allowlist index
+static int      s_fleet_scroll;     // top visible index
+static uint32_t s_fleet_arm_ms;     // REVOKE armed at (0 = disarmed); 3 s confirm window
+
+static void draw_btn(radar_gfx_t *g, int x, int y, int w, const char *label, uint16_t bg){
+    radar_gfx_fill_rect(g, x + 2, y, w - 4, 26, bg);
+    int tx = x + (w - (int)strlen(label) * 8) / 2;
+    radar_gfx_text(g, tx, y + 9, label, 0xFFFF);
+}
+
+static void draw_fleet_modal(uint16_t *band, uint32_t now){
+    int n = (int)fleet_allow_count();
+    if (s_fleet_sel >= n) s_fleet_sel = n > 0 ? n - 1 : 0;
+    if (s_fleet_sel < 0) s_fleet_sel = 0;
+    if (s_fleet_sel < s_fleet_scroll) s_fleet_scroll = s_fleet_sel;
+    if (s_fleet_sel >= s_fleet_scroll + FLEET_ROWS_VISIBLE)
+        s_fleet_scroll = s_fleet_sel - FLEET_ROWS_VISIBLE + 1;
+    bool armed = s_fleet_arm_ms && (uint32_t)(now - s_fleet_arm_ms) < 3000;
+
+    for (int y0 = 0; y0 < LCD_H; y0 += 40){
+        radar_gfx_t g = { band, LCD_W, y0, 40 };
+        radar_gfx_clear(&g, 0x0000);
+        char l[40];
+        snprintf(l, sizeof l, "FLEET ROSTER (%d)", n);
+        radar_gfx_text(&g, 8, 8, l, 0xFFFF);
+        radar_gfx_hline(&g, 0, LCD_W - 1, 30, 0x7BEF);
+        if (n == 0){
+            radar_gfx_text(&g, 8, 60, "no decoys enrolled", 0xC618);
+        } else {
+            for (int r = 0; r < FLEET_ROWS_VISIBLE; r++){
+                int idx = s_fleet_scroll + r;
+                if (idx >= n) break;
+                int ry = FLEET_ROW_Y0 + r * FLEET_ROW_H;
+                if (idx == s_fleet_sel) radar_gfx_fill_rect(&g, 4, ry - 2, LCD_W - 8, 20, 0x001F);
+                char fp[24]; enroll_fp(fp, sizeof fp, fleet_allow_at(idx));
+                radar_gfx_text(&g, 14, ry + 2, fp, idx == s_fleet_sel ? 0xFFFF : 0xC618);
+            }
+        }
+        if (n > 0){
+            draw_btn(&g, 0,   FLEET_BTN_Y, 80, "UP",   0x39C7);
+            draw_btn(&g, 80,  FLEET_BTN_Y, 80, "DOWN", 0x39C7);
+            draw_btn(&g, 160, FLEET_BTN_Y, 80, armed ? "CONFIRM?" : "REVOKE", armed ? 0xF800 : 0x39C7);
+        }
+        draw_btn(&g, 0, FLEET_EXIT_Y, 240, "EXIT", 0x39C7);
+        cyd_flush(y0, 40, band, NULL);
+    }
+}
+
+// Full-width entry bar drawn at the top of the CONTROL page (tap to open the roster).
+static void draw_fleet_bar(uint16_t *band){
+    radar_gfx_t g = { band, LCD_W, 0, 40 };
+    radar_gfx_clear(&g, 0x0000);
+    radar_gfx_fill_rect(&g, 2, 2, LCD_W - 4, 24, 0x02D4);   // dark teal tab
+    radar_gfx_text(&g, 40, 10, "[ FLEET ROSTER ]", 0xFFFF); // 16 ch
+    cyd_flush(0, 28, band, NULL);
+}
+
+static void fleet_do_revoke(uint32_t now){
+    if (s_fleet_sel < 0 || s_fleet_sel >= (int)fleet_allow_count()) return;
+    uint8_t idc[32]; memcpy(idc, fleet_allow_at(s_fleet_sel), 32);   // copy before swap-remove
+    char fp[24]; enroll_fp(fp, sizeof fp, idc);
+    fleet_allow_remove(idc);
+    fleet_db_rotate();
+    fleet_db_save();
+    enroll_open_window(now);                     // survivors auto re-enroll to the new key
+    ESP_LOGW(TAG, "enroll: REVOKED %s -> rotated to epoch %u, window reopened",
+             fp, (unsigned)fleet_db_epoch());
+    s_fleet_arm_ms = 0;
+    s_fleet_modal = false;                       // auto-close so radar/enroll overlay is visible
+    s_fleet_sel = 0; s_fleet_scroll = 0;
+}
+
+static void fleet_modal_touch(int px, int py, uint32_t now){
+    int n = (int)fleet_allow_count();
+    if (py >= FLEET_EXIT_Y){ s_fleet_modal = false; s_fleet_arm_ms = 0; return; }   // EXIT
+    if (n > 0 && py >= FLEET_BTN_Y){                                                // button band
+        if (px < 80){                                                              // UP
+            if (s_fleet_sel > 0) s_fleet_sel--;
+            s_fleet_arm_ms = 0;
+        } else if (px < 160){                                                      // DOWN
+            if (s_fleet_sel < n - 1) s_fleet_sel++;
+            s_fleet_arm_ms = 0;
+        } else {                                                                   // REVOKE
+            if (s_fleet_arm_ms && (uint32_t)(now - s_fleet_arm_ms) < 3000) fleet_do_revoke(now);
+            else s_fleet_arm_ms = now;                                             // arm
+        }
+        return;
+    }
+    if (n > 0 && py >= FLEET_ROW_Y0 && py < FLEET_ROW_Y0 + FLEET_ROWS_VISIBLE * FLEET_ROW_H){
+        int idx = s_fleet_scroll + (py - FLEET_ROW_Y0) / FLEET_ROW_H;              // direct row select
+        if (idx < n){ s_fleet_sel = idx; s_fleet_arm_ms = 0; }
+    }
+}
 #endif
 
 static void broadcast_library(void){
@@ -583,13 +684,21 @@ void app_main(void)
         bool edge = press && !was_press;                 // fresh contact
         was_press = press;
 #ifdef SIMULACRA_FLEET_PROVISION
+        bool modal_open = s_fleet_modal;                 // roster modal owns input while open
+        if (modal_open){
+            if (edge){ fleet_modal_touch(tx, ty, now); radar_ui_note_input(&ui, now); }
+        }
+#else
+        bool modal_open = false;
+#endif
+#ifdef SIMULACRA_FLEET_PROVISION
         // Long-press (>=1.5s) = context action: accept a pending TOFU request, else rotate the
         // fleet key if a window is open, else open a fresh 30s enrollment window. (Short taps
         // keep their normal navigation meaning; the momentary press that begins a hold may still
         // register as a tap — gesture zones are bench-tunable in Task 6/7.)
         static uint32_t s_press_start; static bool s_lp_fired;
         if (edge) { s_press_start = now; s_lp_fired = false; }
-        if (press && !s_lp_fired && (now - s_press_start) >= 1500) {
+        if (press && !s_lp_fired && !s_fleet_modal && (now - s_press_start) >= 1500) {
             s_lp_fired = true;
             if (s_pending)                    enroll_accept_pending();
             else if (now < s_pair_until_ms)   enroll_rotate(now);
@@ -597,10 +706,16 @@ void app_main(void)
             radar_ui_note_input(&ui, now);
         }
 #endif
-        if (edge) {
+        if (edge && !modal_open) {
             if (ui.view == RADAR_VIEW_CONTROL) {
                 radar_ui_note_input(&ui, now);           // keep backlight/idle timer fresh
 #ifdef SIMULACRA_CONFIG_CTRL
+#ifdef SIMULACRA_FLEET_PROVISION
+                if (ty < 28) {                           // top FLEET ROSTER bar -> open roster
+                    s_fleet_modal = true; s_fleet_sel = 0; s_fleet_scroll = 0; s_fleet_arm_ms = 0;
+                    radar_ui_note_input(&ui, now);
+                } else
+#endif
                 if (ty > 200 && tx > 60 && tx < 180) {   // SEND button
                     send_config(ui.sel_preset);
                     radar_ctrl_mark_sent(&ui, now);
@@ -641,6 +756,9 @@ void app_main(void)
         radar_ui_on_tick(&ui, now, s_status.threat_count);
         if (ui.backlight_on != bl_was_on) {
             set_backlight(ui.backlight_on);
+#ifdef SIMULACRA_FLEET_PROVISION
+            if (!ui.backlight_on){ s_fleet_modal = false; s_fleet_arm_ms = 0; }   // sleep closes the modal
+#endif
             // On wake, grant a freshness grace: while asleep no requests go out so s_status_ms is
             // frozen stale, which would paint a spurious "NO DECOY" for ~1s until the first
             // post-wake reply. Only if we'd already seen a decoy; a never-seen decoy keeps
@@ -660,12 +778,23 @@ void app_main(void)
             };
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
-            radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
 #ifdef SIMULACRA_FLEET_PROVISION
-            if (!draw_enroll_overlay(band, now))
+            if (modal_open){
+                draw_fleet_modal(band, now);
+            } else
 #endif
-            draw_freshness_overlay(band, now);
-            sweep=(uint16_t)((sweep+12)%360);
+            {
+                radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+#ifdef SIMULACRA_FLEET_PROVISION
+                bool enr = draw_enroll_overlay(band, now);
+                if (enr)                                { /* enrollment banner owns the top */ }
+                else if (ui.view == RADAR_VIEW_CONTROL) draw_fleet_bar(band);        // entry tab
+                else                                    draw_freshness_overlay(band, now);
+#else
+                draw_freshness_overlay(band, now);
+#endif
+                sweep=(uint16_t)((sweep+12)%360);
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }

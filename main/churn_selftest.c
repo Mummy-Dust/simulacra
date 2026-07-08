@@ -18,6 +18,7 @@
 #include "radar_wire.h"
 #include "radar_key.h"
 #include "config_wire.h"
+#include "enroll_wire.h"
 #include "tweetnacl.h"
 #include "esp_now_link.h"
 #include "law3.h"
@@ -1497,6 +1498,55 @@ static void test_config_wire(void)
     ST_CHECK(config_wire_open_signed(pl, n, nonce2, pk, &got) != 0, "nonce mismatch fails verify");
 }
 
+static void test_enroll_wire(void)
+{
+    uint8_t ctrl_pk[32], ctrl_sk[64];  crypto_sign_keypair(ctrl_pk, ctrl_sk);      // Vigil signing key
+    uint8_t veph_pk[32], veph_sk[32];  crypto_box_keypair(veph_pk, veph_sk);        // Vigil ephemeral
+    uint8_t id_pk[32],  id_sk[32];     crypto_box_keypair(id_pk, id_sk);            // decoy identity
+    uint8_t nonce_v[24], nonce_d[24];
+    for (int i = 0; i < 24; i++) { nonce_v[i] = (uint8_t)(i + 1); nonce_d[i] = (uint8_t)(0x40 + i); }
+    uint32_t epoch = 7;
+    uint8_t k_fleet[32]; for (int i = 0; i < 32; i++) k_fleet[i] = (uint8_t)(0x80 + i);
+
+    // OFFER
+    uint8_t offer[ENROLL_OFFER_LEN];
+    ST_CHECK(enroll_offer_sign(offer, sizeof offer, veph_pk, nonce_v, epoch, ctrl_sk) == ENROLL_OFFER_LEN,
+             "offer signs to expected len");
+    uint8_t o_eph[32], o_nv[24]; uint32_t o_ep;
+    ST_CHECK(enroll_offer_open(offer, ENROLL_OFFER_LEN, ctrl_pk, o_eph, o_nv, &o_ep) == 0, "offer verifies");
+    ST_CHECK(memcmp(o_eph, veph_pk, 32) == 0 && memcmp(o_nv, nonce_v, 24) == 0 && o_ep == epoch,
+             "offer fields recovered");
+    offer[2] ^= 0x01;
+    ST_CHECK(enroll_offer_open(offer, ENROLL_OFFER_LEN, ctrl_pk, o_eph, o_nv, &o_ep) != 0, "tampered offer rejected");
+    offer[2] ^= 0x01;
+    uint8_t wrong_pk[32], wrong_sk[64]; crypto_sign_keypair(wrong_pk, wrong_sk);
+    ST_CHECK(enroll_offer_open(offer, ENROLL_OFFER_LEN, wrong_pk, o_eph, o_nv, &o_ep) != 0, "wrong ctrl_pk rejected");
+
+    // REQUEST
+    uint8_t req[ENROLL_REQUEST_LEN];
+    ST_CHECK(enroll_request_build(req, sizeof req, id_pk, id_sk, nonce_d, veph_pk, nonce_v) == ENROLL_REQUEST_LEN,
+             "request builds to expected len");
+    uint8_t r_idpk[32], r_nd[24], r_nv[24];
+    ST_CHECK(enroll_request_open(req, ENROLL_REQUEST_LEN, veph_sk, r_idpk, r_nd, r_nv) == 0, "request opens");
+    ST_CHECK(memcmp(r_idpk, id_pk, 32) == 0 && memcmp(r_nd, nonce_d, 24) == 0 && memcmp(r_nv, nonce_v, 24) == 0,
+             "request fields recovered (id_pk, nonce_d, echoed nonce_v)");
+    req[81] ^= 0x01;   // flip a ciphertext byte (first box byte)
+    ST_CHECK(enroll_request_open(req, ENROLL_REQUEST_LEN, veph_sk, r_idpk, r_nd, r_nv) != 0, "tampered request rejected");
+    req[81] ^= 0x01;
+
+    // GRANT
+    uint8_t grant[ENROLL_GRANT_LEN];
+    ST_CHECK(enroll_grant_seal(grant, sizeof grant, id_pk, veph_sk, nonce_d, k_fleet, epoch) == ENROLL_GRANT_LEN,
+             "grant seals to expected len");
+    uint8_t g_key[32], g_nd[24]; uint32_t g_ep;
+    ST_CHECK(enroll_grant_open(grant, ENROLL_GRANT_LEN, veph_pk, id_sk, g_key, &g_ep, g_nd) == 0, "grant opens");
+    ST_CHECK(memcmp(g_key, k_fleet, 32) == 0 && g_ep == epoch && memcmp(g_nd, nonce_d, 24) == 0,
+             "grant delivers key+epoch+nonce_d");
+    uint8_t bad_pk[32], bad_sk[32]; crypto_box_keypair(bad_pk, bad_sk);
+    ST_CHECK(enroll_grant_open(grant, ENROLL_GRANT_LEN, veph_pk, bad_sk, g_key, &g_ep, g_nd) != 0,
+             "wrong id_sk cannot open grant");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1525,6 +1575,7 @@ int churn_selftest_run(void)
     test_settings_resolve();
     test_settings_apply();
     test_config_wire();
+    test_enroll_wire();
 
     // --- M4 templates ---
     test_templates();

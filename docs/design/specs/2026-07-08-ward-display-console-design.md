@@ -19,6 +19,12 @@ display + XPT2046 resistive touch + a microSD slot, **no onboard MCU** (identica
 controller family to the CYD "Cheap Yellow Display" that Vigil already runs on). One
 panel is assigned to Ward; the second is a bench/spare.
 
+**Ward host board:** confirmed **ESP32-C5-WIFI6-KIT-N16R8** (ESP32-C5-WROOM-1 module,
+dual USB-C, 16 MB flash / 8 MB PSRAM) — *not* the DevKitC-1. This matters for wiring: the
+N16R8 module breaks out only GPIO `{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,23,24,25,26,27,28}`
+on the two header blocks; **GPIO16–22 are not exposed** (internal to the module's
+flash/PSRAM). The board has no pre-soldered headers.
+
 Design decisions already settled during brainstorming:
 
 - **Distributed, not one-box.** Ward becomes its own screened unit; Vigil stays the
@@ -67,46 +73,47 @@ persistence layer** behind `#if SIMULACRA_DISPLAY`, reusing code that already ex
 | Learned-DB seal/open  | `learn_db_seal/open`, `learn_db_derive_key`   | SD file IO on Ward |
 | SD mount (sdspi)      | CYD `sd_mount()` pattern                       | SPI2 shared bus |
 
-### Hardware wiring (SBT240-W61 ↔ ESP32-C5-DevKitC-1)
+### Hardware wiring (SBT240-W61 ↔ ESP32-C5-WIFI6-KIT-N16R8)
 
-The C5 devkit ships with **no pre-soldered headers** — the operator solders to broken-out
-through-holes, so we have freedom in pin choice, constrained only by pins we must avoid.
+The board ships with **no pre-soldered headers** — the operator solders to broken-out
+through-holes. Of the 22 exposed GPIOs, these are **off-limits**: strapping pins **GPIO2,
+7, 25, 26, 27, 28** (GPIO27 also drives the RGB LED); UART0 console **GPIO11/12**; native
+USB **GPIO13/14**. That leaves **12 usable pins** `{0,1,3,4,5,6,8,9,10,15,23,24}`.
 
-**Pins to avoid on the C5:** strapping pins **GPIO2, GPIO7, GPIO25, GPIO26, GPIO27,
-GPIO28** (GPIO27 also drives the on-board RGB LED) and **MTMS/MTDI**; USB-Serial-JTAG
-**GPIO13 (D-) / GPIO14 (D+)**; UART0 **GPIO11 (TX) / GPIO12 (RX)** (keep for the serial
-console); and the SPI-flash / PSRAM bus pins. **The exact free-pin set MUST be verified
-against the ESP32-C5-DevKitC-1 v1.2 schematic during Task 1** — the candidate map below
-is a starting point, not gospel, which is why every pin is a single `#define` in one
-header (`main/ward_pins.h`).
+**Pin budget is tight.** The full wiring needs 13 signals but only 12 pins are free, so the
+**backlight is tied to 3V3** (always on — Ward is powered, not battery), dropping it to 12
+signals that fit exactly. Display **RST** uses GPIO3 (an output-only JTAG/MTDI pad, safe
+post-boot). The verified map lives entirely in `main/ward_pins.h`.
 
 **Bus plan (cleaner than the CYD):** the C5's general-purpose **SPI2 (GPSPI2)** is free
-(SPI0/1 are the flash/PSRAM bus). Display and SD share **SPI2** as two `spi_bus_add_device`
-handles with separate CS lines (IDF arbitrates the shared bus). Touch stays on the
-**proven bit-banged XPT2046** path from the CYD (its own 5 GPIOs), which sidesteps any
-display/SD ↔ touch clock-speed conflict and maximizes code reuse.
+(the WROOM module's flash/PSRAM SPI is internal, not on the header). Display and SD share
+**SPI2** as two devices with separate CS lines (IDF arbitrates the shared bus). Touch stays
+on the **proven bit-banged XPT2046** path from the CYD (its own 5 GPIOs), sidestepping any
+display/SD ↔ touch clock conflict and maximizing code reuse.
 
-**Candidate pin map (to confirm at bring-up):**
+**Confirmed pin map (from the board pinout; verify GPIO0/1 have no 32 kHz crystal):**
 
-| Signal            | Net on SBT240        | Candidate C5 GPIO | Notes |
-|-------------------|----------------------|-------------------|-------|
-| SPI2 SCLK         | `SCK` (disp) + `SD_SCK` | GPIO4          | shared display+SD clock |
-| SPI2 MOSI         | `SDI` (disp) + `SD_MOSI` | GPIO5        | shared |
-| SPI2 MISO         | `SD_MISO` (+ disp `SDO`) | GPIO3        | SD read; display MISO usually unused |
-| Display CS        | `CS`                 | GPIO0             | |
-| Display DC/RS     | `DC`                 | GPIO1             | |
-| Display RST       | `RST`                | GPIO8             | |
-| Display backlight | `LED` / `BL`         | GPIO9             | on/off (PWM optional) |
-| SD CS             | `SD_CS`              | GPIO10            | confirm not flash-bus |
-| Touch CLK         | `T_CLK`              | GPIO18            | bit-bang |
-| Touch CS          | `T_CS`               | GPIO19            | bit-bang |
-| Touch DIN         | `T_DIN`              | GPIO20            | bit-bang |
-| Touch DO          | `T_DO`               | GPIO21            | bit-bang |
-| Touch IRQ         | `T_IRQ`              | GPIO22            | idle-high, pressed-low |
-| Power             | `VCC` (3V3), `GND`   | 3V3 / GND         | check panel VCC = 3.3 V |
+| Signal            | Net on SBT240        | C5 GPIO | Notes |
+|-------------------|----------------------|---------|-------|
+| SPI2 SCLK         | `SCK` + `SD_SCK`     | 6       | shared display+SD clock |
+| SPI2 MOSI         | `SDI` + `SD_MOSI`    | 23      | shared |
+| SPI2 MISO         | `SD_MISO`            | 24      | SD read; display MISO unused |
+| Display CS        | `CS`                 | 15      | |
+| Display DC/RS     | `DC`                 | 8       | |
+| Display RST       | `RST`                | 3       | MTDI/JTAG pad, output-only |
+| SD CS             | `SD_CS`              | 9       | |
+| Touch CLK         | `T_CLK`              | 0       | out (verify no 32 kHz xtal) |
+| Touch CS          | `T_CS`               | 1       | out (verify no 32 kHz xtal) |
+| Touch DIN         | `T_DIN`              | 4       | out (MTCK/JTAG) |
+| Touch DO          | `T_DO`               | 5       | in  (MTDO/JTAG) |
+| Touch IRQ         | `T_IRQ`              | 10      | in, idle-high |
+| Backlight         | `LED` / `BL`         | —       | **tie to 3V3** (always on) |
+| Power             | `VCC` (3V3), `GND`   | 3V3/GND | drive panel VCC from 3V3 |
 
-> The GPIO numbers above are **provisional**. Task 1 replaces them with schematic-verified
-> values; if any collide with flash/PSRAM/strapping, they move — only `ward_pins.h` changes.
+> Caveats to confirm at bring-up: GPIO0/1 double as the 32.768 kHz crystal pads — usable as
+> assigned **unless a 32 kHz crystal is populated** (none visible in the board photos);
+> GPIO3/4/5 are JTAG (no HW debugger while in use). Want backlight dimming later? Reclaim
+> GPIO13 (native USB) since programming/monitoring goes over the separate UART-USB port.
 
 ### Firmware components
 
@@ -204,11 +211,12 @@ Vigil ── signed CONFIG ─▶ Ward decoy ◀── learn RAM-sync ──▶ 
 
 ## Open questions / risks
 
-1. **Pin map (primary risk).** Provisional GPIOs must be schematic-verified (Task 1);
-   collisions with flash/PSRAM/strapping force reassignment in `ward_pins.h`. Low effort,
-   but blocks bring-up until confirmed.
+1. **Pin map (resolved to the real board).** Now mapped to the exposed GPIOs of the
+   ESP32-C5-WIFI6-KIT-N16R8 (see table). Remaining bench checks: GPIO0/1 free of a 32 kHz
+   crystal, and the JTAG pads (3/4/5) not needed for HW debug. All in one header.
 2. **Panel VCC.** Confirm the SBT240 runs at 3.3 V logic + power (expected for this family)
-   before wiring; some panels want 5 V for the backlight. Verify at bring-up.
+   before wiring; some panels want 5 V for the backlight. Since the backlight is tied to a
+   rail (not a GPIO), pick 3V3 vs 5V based on the panel's LED spec at bring-up.
 3. **Render task vs. radio timing.** The decoy's radios are latency-sensitive; the render
    task must run at low priority / modest fps so it never starves BLE/Wi-Fi churn. Mitigate
    with a capped fps and a dedicated low-priority task; validate in the 10-min soak.

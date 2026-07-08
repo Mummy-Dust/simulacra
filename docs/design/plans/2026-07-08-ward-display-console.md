@@ -43,36 +43,38 @@
 **Interfaces:**
 - Produces: `WARD_SPI_HOST`, `WARD_PIN_SCK/MOSI/MISO/DISP_CS/DC/RST/BL/SD_CS`, `WARD_PIN_T_CLK/T_CS/T_DIN/T_DOUT/T_IRQ`, `WARD_LCD_W`(240)/`WARD_LCD_H`(320) — consumed by Tasks 2, 4, 6.
 
-- [ ] **Step 1: Verify the pin map against the ESP32-C5-DevKitC-1 v1.2 schematic.** Confirm each candidate GPIO is broken out on a header and is NOT: a strapping pin (GPIO2/7/25/26/27/28, MTMS/MTDI), USB-JTAG (GPIO13/14), UART0 (GPIO11/12), RGB-LED (GPIO27), or on the flash/PSRAM bus. Adjust the numbers below to match reality — this is a hardware read, not a code step.
+- [ ] **Step 1: Bench-confirm two caveats before soldering** (the pin map itself is already resolved to the ESP32-C5-WIFI6-KIT-N16R8 exposed header — see `docs/hardware/ward-display-build.md` notes / the pinout images): (a) GPIO0/1 have **no 32.768 kHz crystal** populated (none visible in board photos), and (b) the JTAG pads GPIO3/4/5 won't be needed for a hardware debugger during use. If (a) fails, move `T_CLK`/`T_CS` to GPIO25/26 (strap pins, output-only OK) or reclaim GPIO13. This is a hardware read, not a code step.
 
-- [ ] **Step 2: Write `main/ward_pins.h`** with the verified assignment:
+- [ ] **Step 2: Write `main/ward_pins.h`** with the confirmed assignment:
 
 ```c
 #pragma once
 #include "sdkconfig.h"
 #include "driver/spi_common.h"
 
-// Ward (ESP32-C5) <-> SBT240-W61 (ILI9341 + XPT2046 + microSD).
-// VERIFY every GPIO against the ESP32-C5-DevKitC-1 v1.2 schematic before soldering.
+// Ward (ESP32-C5-WIFI6-KIT-N16R8, ESP32-C5-WROOM-1) <-> SBT240-W61 (ILI9341 + XPT2046 + SD).
+// Exposed header GPIOs: {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,23,24,25,26,27,28}.
+// GPIO16-22 are NOT on the header (internal to the N16R8 flash/PSRAM).
+// Off-limits: strapping 2/7/25/26/27(RGB)/28, UART0 console 11/12, native-USB 13/14.
 #define WARD_LCD_W        240
 #define WARD_LCD_H        320
 
 #define WARD_SPI_HOST     SPI2_HOST      // display + SD share this bus (separate CS)
-#define WARD_PIN_SCK      4
-#define WARD_PIN_MOSI     5
-#define WARD_PIN_MISO     3              // needed for SD reads
-#define WARD_PIN_DISP_CS  0
-#define WARD_PIN_DC       1
-#define WARD_PIN_RST      8
-#define WARD_PIN_BL       9
-#define WARD_PIN_SD_CS    10
+#define WARD_PIN_SCK      6
+#define WARD_PIN_MOSI     23
+#define WARD_PIN_MISO     24             // SD read-back (display is write-only)
+#define WARD_PIN_DISP_CS  15
+#define WARD_PIN_DC       8
+#define WARD_PIN_RST      3              // MTDI/JTAG pad, output-only -> OK post-boot
+#define WARD_PIN_SD_CS    9
+#define WARD_PIN_BL       (-1)           // backlight tied to 3V3 (Ward is powered); no GPIO
 
 // Touch: bit-banged on its own pins (no SPI host needed).
-#define WARD_PIN_T_CLK    18
-#define WARD_PIN_T_CS     19
-#define WARD_PIN_T_DIN    20
-#define WARD_PIN_T_DOUT   21
-#define WARD_PIN_T_IRQ    22
+#define WARD_PIN_T_CLK    0              // out (verify no 32.768kHz xtal on GPIO0/1)
+#define WARD_PIN_T_CS     1              // out
+#define WARD_PIN_T_DIN    4              // out (MTCK/JTAG)
+#define WARD_PIN_T_DOUT   5              // in  (MTDO/JTAG)
+#define WARD_PIN_T_IRQ    10             // in
 ```
 
 - [ ] **Step 3: Add `SIMULACRA_DISPLAY` to the gate forwarder** in `main/CMakeLists.txt` — append it to the `foreach(flag ...)` list (after `SIMULACRA_CONFIG_CTRL`).
@@ -148,12 +150,14 @@ void ward_flush(int y0, int h, const uint16_t *buf, void *ctx){
     xSemaphoreTake(s_flush_done, portMAX_DELAY);
 }
 
-void ward_backlight(bool on){ gpio_set_level(WARD_PIN_BL, on?1:0); }
+void ward_backlight(bool on){ if (WARD_PIN_BL >= 0) gpio_set_level(WARD_PIN_BL, on?1:0); }
 
 bool ward_display_hw_init(void){
     s_flush_done = xSemaphoreCreateBinary();
-    gpio_config_t bl = { .pin_bit_mask=1ULL<<WARD_PIN_BL, .mode=GPIO_MODE_OUTPUT };
-    gpio_config(&bl); ward_backlight(true);
+    if (WARD_PIN_BL >= 0) {   // backlight is tied to 3V3 on this board (BL == -1) -> no-op
+        gpio_config_t bl = { .pin_bit_mask=1ULL<<WARD_PIN_BL, .mode=GPIO_MODE_OUTPUT };
+        gpio_config(&bl); ward_backlight(true);
+    }
 
     spi_bus_config_t bus = { .mosi_io_num=WARD_PIN_MOSI, .sclk_io_num=WARD_PIN_SCK,
         .miso_io_num=WARD_PIN_MISO, .quadwp_io_num=-1, .quadhd_io_num=-1,

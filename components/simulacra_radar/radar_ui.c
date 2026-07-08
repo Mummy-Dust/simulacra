@@ -4,7 +4,14 @@ void radar_ui_reset(radar_ui_t *ui, uint32_t now_ms, uint8_t threat_count)
 {
     ui->view = RADAR_VIEW_RADAR; ui->last_input_ms = now_ms; ui->last_wake_ms = now_ms;
     ui->backlight_on = true; ui->last_threat_count = threat_count;
+    ui->sel_preset = 2;         // default highlight = NORMAL
+    ui->send_flash_ms = 0;
 }
+void radar_ctrl_select_next(radar_ui_t *ui)
+{ ui->sel_preset = (uint8_t)((ui->sel_preset + 1) % RADAR_CTRL_PRESET_COUNT); }
+void radar_ctrl_mark_sent(radar_ui_t *ui, uint32_t now_ms) { ui->send_flash_ms = now_ms; }
+void radar_ui_note_input(radar_ui_t *ui, uint32_t now_ms)
+{ ui->last_input_ms = now_ms; ui->last_wake_ms = now_ms; ui->backlight_on = true; }
 void radar_ui_on_input(radar_ui_t *ui, uint32_t now_ms)
 {
     ui->view = (radar_view_t)((ui->view + 1) % RADAR_VIEW_COUNT);

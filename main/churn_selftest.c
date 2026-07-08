@@ -1027,7 +1027,8 @@ static void test_radar_ui(void)
     radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL,  "input 1 -> detail");
     radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,   "input 2 -> stats");
     radar_ui_on_input(&ui, 1250); ST_CHECK(ui.view == RADAR_VIEW_LIBRARY, "input 3 -> library");
-    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_RADAR,   "input 4 -> wraps");
+    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "input 4 -> control");
+    radar_ui_on_input(&ui, 1350); ST_CHECK(ui.view == RADAR_VIEW_RADAR,   "input 5 -> wraps");
     radar_ui_on_input(&ui, 2000); radar_ui_on_input(&ui, 2000);          // -> stats
     radar_ui_on_tick(&ui, 2000 + RADAR_VIEW_IDLE_MS + 1, 0);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR, "idle returns to radar");
@@ -1046,6 +1047,16 @@ static void test_radar_ui(void)
     ST_CHECK(ui.backlight_on, "new follower still wakes backlight while navigating");
     radar_ui_on_tick(&ui, 10200 + RADAR_VIEW_IDLE_MS + 1, 2);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR, "new follower jumps to radar once idle");
+
+    // CONTROL view joins the cycle and has an independent preset selector.
+    radar_ui_reset(&ui, 20000, 0);
+    for (int i = 0; i < RADAR_VIEW_CONTROL; i++) radar_ui_on_input(&ui, 20000 + i*10);
+    ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "cycle reaches CONTROL");
+    uint8_t p0 = ui.sel_preset;
+    radar_ctrl_select_next(&ui);
+    ST_CHECK(ui.sel_preset == (p0 + 1) % RADAR_CTRL_PRESET_COUNT, "select_next advances preset");
+    radar_ctrl_mark_sent(&ui, 21000);
+    ST_CHECK(ui.send_flash_ms == 21000, "mark_sent stamps the flash");
 }
 
 static void test_radar_wire(void)

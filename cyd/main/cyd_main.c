@@ -779,22 +779,39 @@ void app_main(void)
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
 #ifdef SIMULACRA_FLEET_PROVISION
+            // The CONTROL page is static; re-rendering it every frame would re-flush the FLEET
+            // bar over it each time and flicker. Redraw it only on change (preset / SEND / entry).
+            static int  cs_sel = -1; static bool cs_flash = false; static bool cs_shown = false;
             if (modal_open){
                 draw_fleet_modal(band, now);
-            } else
-#endif
+                cs_shown = false;                            // force CONTROL redraw when the modal closes
+            } else {
+                bool ctrl_static = (ui.view == RADAR_VIEW_CONTROL) &&
+                                   !(s_pending || now < s_pair_until_ms);   // no enroll banner active
+                if (ctrl_static){
+                    bool flash = ctrl.send_flash;
+                    if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash){
+                        radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        draw_fleet_bar(band);
+                        cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
+                    }
+                } else {
+                    cs_shown = false;                        // leaving CONTROL / enroll active -> redraw next entry
+                    radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    bool enr = draw_enroll_overlay(band, now);
+                    if (enr)                                { /* enrollment banner owns the top */ }
+                    else if (ui.view == RADAR_VIEW_CONTROL) draw_fleet_bar(band);
+                    else                                    draw_freshness_overlay(band, now);
+                    sweep=(uint16_t)((sweep+12)%360);
+                }
+            }
+#else
             {
                 radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
-#ifdef SIMULACRA_FLEET_PROVISION
-                bool enr = draw_enroll_overlay(band, now);
-                if (enr)                                { /* enrollment banner owns the top */ }
-                else if (ui.view == RADAR_VIEW_CONTROL) draw_fleet_bar(band);        // entry tab
-                else                                    draw_freshness_overlay(band, now);
-#else
                 draw_freshness_overlay(band, now);
-#endif
                 sweep=(uint16_t)((sweep+12)%360);
             }
+#endif
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }

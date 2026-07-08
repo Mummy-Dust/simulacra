@@ -34,6 +34,7 @@
 #include "sig_store.h"
 #include "threat_escalation.h"
 #include "fleet.h"
+#include "fleet_key.h"
 #include "esp_log.h"
 
 #define GEN_FLOOR_TEST_MIN 4   // lower of the two persona floors (Shade); valid for either build
@@ -1547,6 +1548,28 @@ static void test_enroll_wire(void)
              "wrong id_sk cannot open grant");
 }
 
+#ifdef SIMULACRA_FLEET_PROVISION
+static void test_fleet_key(void)
+{
+    fleet_key_init();
+    ST_CHECK(fleet_id_pk() != NULL, "identity pubkey available after init");
+    char fp1[24]; fleet_id_fingerprint(fp1, sizeof fp1);
+    ST_CHECK(strlen(fp1) == 19, "fingerprint formatted xxxx-xxxx-xxxx-xxxx");
+
+    uint8_t k[32]; for (int i = 0; i < 32; i++) k[i] = (uint8_t)(i * 3 + 1);
+    fleet_key_set(k, 5);
+    ST_CHECK(fleet_key_have() && fleet_key_get() && memcmp(fleet_key_get(), k, 32) == 0,
+             "fleet key stored + readable");
+    ST_CHECK(fleet_key_epoch() == 5, "epoch recorded");
+
+    uint8_t k2[32]; for (int i = 0; i < 32; i++) k2[i] = (uint8_t)(i * 7 + 2);
+    fleet_key_set(k2, 6);
+    ST_CHECK(memcmp(fleet_key_get(), k2, 32) == 0, "rotated key becomes current");
+    ST_CHECK(fleet_key_prev() && memcmp(fleet_key_prev(), k, 32) == 0,
+             "old key retained as prev during grace");
+}
+#endif
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1576,6 +1599,9 @@ int churn_selftest_run(void)
     test_settings_apply();
     test_config_wire();
     test_enroll_wire();
+#ifdef SIMULACRA_FLEET_PROVISION
+    test_fleet_key();
+#endif
 
     // --- M4 templates ---
     test_templates();

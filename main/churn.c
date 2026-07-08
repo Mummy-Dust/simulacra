@@ -17,6 +17,8 @@ static churn_apply_fn s_apply;
 static uint8_t        s_active_target = CHURN_ACTIVE_SET;  // M6: runtime population-match size
 static bool           s_paused;                            // webui: pause the churn rotation
 static float          s_accel = 1.0f;             // M8: dwell shortening multiplier (>= 1.0)
+static uint32_t       s_dwell_lo = CHURN_DWELL_MIN_MS, s_dwell_hi = CHURN_DWELL_MAX_MS;
+static uint32_t       s_cool_lo  = CHURN_COOLDOWN_MIN_MS, s_cool_hi = CHURN_COOLDOWN_MAX_MS;
 
 void churn_set_active_target(uint8_t n)
 {
@@ -36,9 +38,16 @@ static uint32_t rnd_range(uint32_t lo, uint32_t hi)
 
 void churn_set_accel(float mult) { s_accel = (mult < 1.0f) ? 1.0f : mult; }
 
+void churn_set_dwell_ms(uint32_t lo, uint32_t hi)
+{ if (hi < lo) hi = lo; s_dwell_lo = lo; s_dwell_hi = hi; }
+void churn_set_cooldown_ms(uint32_t lo, uint32_t hi)
+{ if (hi < lo) hi = lo; s_cool_lo = lo; s_cool_hi = hi; }
+void churn_get_dwell_ms(uint32_t *lo, uint32_t *hi) { if (lo) *lo = s_dwell_lo; if (hi) *hi = s_dwell_hi; }
+void churn_get_cooldown_ms(uint32_t *lo, uint32_t *hi) { if (lo) *lo = s_cool_lo; if (hi) *hi = s_cool_hi; }
+
 static uint32_t dwell_ms(void)
 {
-    uint32_t d = rnd_range(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+    uint32_t d = rnd_range(s_dwell_lo, s_dwell_hi);
     if (s_accel > 1.0f) d = (uint32_t)((float)d / s_accel);
     return d;
 }
@@ -55,7 +64,7 @@ void churn_init(uint32_t now_ms)
         s_active[i] = id;
         if (id) {
             id->state = ID_ACTIVE;
-            id->active_until_ms = now_ms + rnd_range(1, CHURN_DWELL_MAX_MS); // staggered seed
+            id->active_until_ms = now_ms + rnd_range(1, s_dwell_hi); // staggered seed
         }
     }
 }
@@ -67,7 +76,7 @@ void churn_tick(uint32_t now_ms)
         identity_t *id = s_active[s];
         if (id && now_ms >= id->active_until_ms) {
             id->state = ID_COOLDOWN;
-            id->eligible_at_ms = now_ms + rnd_range(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
+            id->eligible_at_ms = now_ms + rnd_range(s_cool_lo, s_cool_hi);
             identity_t *c = roster_promote_candidate(now_ms);
             s_active[s] = c;
             if (c) {

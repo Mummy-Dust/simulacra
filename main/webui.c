@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "churn.h"
+#include "settings.h"
 #include "roster.h"
 #include "probe.h"
 #include "coexist.h"
@@ -113,8 +114,14 @@ static esp_err_t h_control(httpd_req_t *r)   // body is a tiny {"action":"..."} 
     int got = httpd_req_recv(r, body, len); if (got <= 0) return httpd_resp_send_500(r);
     body[got] = '\0';
     if      (strstr(body, "detect_toggle")) detect_set_enabled(!detect_enabled());
-    else if (strstr(body, "churn_toggle"))  churn_set_paused(!churn_paused());
+    else if (strstr(body, "churn_toggle"))  sim_settings_apply_preset(
+                                                sim_settings_get_paused() ? SIM_PRESET_NORMAL : SIM_PRESET_PAUSE);
     else if (strstr(body, "clear_threats")) detect_clear_threats();
+    else if (strstr(body, "preset_stealth")) sim_settings_apply_preset(SIM_PRESET_STEALTH);
+    else if (strstr(body, "preset_normal"))  sim_settings_apply_preset(SIM_PRESET_NORMAL);
+    else if (strstr(body, "preset_dense"))   sim_settings_apply_preset(SIM_PRESET_DENSE);
+    else if (strstr(body, "preset_max"))     sim_settings_apply_preset(SIM_PRESET_MAX);
+    else if (strstr(body, "preset_pause"))   sim_settings_apply_preset(SIM_PRESET_PAUSE);
     else if (strstr(body, "done"))          s_window_done = true;
     else if (strstr(body, "reboot"))        { httpd_resp_sendstr(r, "{\"ok\":1}"); esp_restart(); }
     return httpd_resp_sendstr(r, "{\"ok\":1}");

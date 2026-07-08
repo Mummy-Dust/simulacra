@@ -42,6 +42,9 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "sig_wire.h"
 #include "sig_store.h"
 #include "fleet.h"
+#include "config_wire.h"
+#include "sim_ctrl_key.h"
+#include "settings.h"
 
 #ifndef SIMULACRA_ESPNOW_CHANNEL
 #define SIMULACRA_ESPNOW_CHANNEL 1
@@ -53,6 +56,7 @@ static uint64_t  s_counter;
 static radar_replay_t s_req_replay;                 // reject replayed requests
 static radar_replay_t s_sync_replay;                // reject replayed LEARN_SYNC from Vigil
 static radar_replay_t s_sig_replay;                 // reject replayed SIG_SYNC from Vigil
+static radar_replay_t s_cfg_replay;                 // reject replayed CONFIG from Vigil
 static volatile bool  s_answer;                     // set by RX cb, consumed by task
 
 // SIG_SYNC reassembly: accumulate one content_version's chunks, then adopt wholesale.
@@ -110,6 +114,20 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         }
         return;
     }
+#ifdef SIMULACRA_CONFIG_CTRL
+    if (type == RADAR_TYPE_CONFIG) {                       // Vigil -> decoy: signed settings preset
+        if (!radar_replay_ok(&s_cfg_replay, salt, ctr)) return;   // replayed command
+        uint8_t nonce12[12];                              // salt(4) || counter(8 BE)
+        memcpy(nonce12, salt, 4);
+        for (int i = 0; i < 8; i++) nonce12[4 + i] = (uint8_t)(ctr >> (56 - 8 * i));
+        config_cmd_t cmd;
+        if (config_wire_open_signed(pl, plen, nonce12, SIMULACRA_CTRL_PK, &cmd) != 0) return;  // bad sig
+        if (cmd.version != CONFIG_WIRE_VER) return;
+        if (sim_settings_apply_preset((sim_preset_t)cmd.preset_id) == 0)
+            ESP_LOGW(ETAG, "config: applied preset %u", (unsigned)cmd.preset_id);
+        return;
+    }
+#endif
 }
 
 // Broadcast our current active synthetic MACs so fleet-mates can self-exclude us from their

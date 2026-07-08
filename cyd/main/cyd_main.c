@@ -14,6 +14,10 @@
 #include "radar_wire.h"
 #include "radar_ui.h"
 #include "radar_key.h"
+#include "config_wire.h"
+#ifdef SIMULACRA_CONFIG_CTRL
+#include "sim_ctrl_sk.h"
+#endif
 #include "learn_wire.h"
 #include "learn_db.h"
 #include "sig_db.h"
@@ -41,6 +45,10 @@
 #define LCD_W    240
 #define LCD_H    320
 #define TOUCH_IRQ_GPIO 36           // XPT2046 T_IRQ, active-LOW on press (pulled high externally)
+#define TOUCH_CLK_GPIO 25
+#define TOUCH_CS_GPIO  33
+#define TOUCH_DIN_GPIO 32
+#define TOUCH_DOUT_GPIO 39          // input-only pin, OK for MISO
 #define ESPNOW_CH 1
 static const char *TAG = "cyd";
 static esp_lcd_panel_handle_t s_panel;
@@ -291,6 +299,22 @@ static void send_request(void){
     if (radar_wire_seal(frame,&flen,RADAR_TYPE_REQUEST,nonce,4,SIMULACRA_ESPNOW_KEY,s_salt,++s_ctr)==0)
         for (int i=0;i<4;i++) esp_now_send(BCAST,frame,flen);
 }
+#ifdef SIMULACRA_CONFIG_CTRL
+static void send_config(uint8_t preset)
+{
+    uint64_t ctr = ++s_ctr;
+    uint8_t nonce12[12]; memcpy(nonce12, s_salt, 4);
+    for (int i = 0; i < 8; i++) nonce12[4+i] = (uint8_t)(ctr >> (56 - 8*i));
+    config_cmd_t cmd = { .version = CONFIG_WIRE_VER, .preset_id = preset };
+    uint8_t pl[CONFIG_WIRE_PAYLOAD_LEN];
+    if (config_wire_pack_signed(pl, sizeof pl, &cmd, nonce12, SIMULACRA_CTRL_SK) < 0) return;
+    uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
+    if (radar_wire_seal(frame, &flen, RADAR_TYPE_CONFIG, pl, sizeof pl,
+                        SIMULACRA_ESPNOW_KEY, s_salt, ctr) == 0)
+        for (int i = 0; i < 4; i++) esp_now_send(BCAST, frame, flen);
+    ESP_LOGW(TAG, "sent CONFIG preset %u", (unsigned)preset);
+}
+#endif
 static void broadcast_library(void){
     if (s_lib_count == 0) return;
     s_lib_sweep++;
@@ -324,8 +348,9 @@ static void net_init(void){
     ESP_LOGW(TAG, "espnow up (ch=%d), requesting...", ESPNOW_CH);
 }
 
-// ---- Touch: press-detection only (no coordinates). XPT2046 T_IRQ is active-LOW on contact;
-// the CYD pulls it high externally when idle. Debounce a HIGH->LOW edge (~200ms). ----
+// ---- Touch: XPT2046 press-detect (T_IRQ, active-LOW on contact; externally pulled high when
+// idle) plus bit-banged coordinate reads. No free SPI host (SPI2=display, SPI3=SD), so the
+// controller is clocked by hand on its dedicated CYD pins. Coarse calibration -> zone taps. ----
 static void touch_init(void){
     gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << TOUCH_IRQ_GPIO,
@@ -335,21 +360,55 @@ static void touch_init(void){
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&cfg);
-}
-static bool touched(void){
-    static int last_level = 1;         // idle = HIGH (external pull-up, not pressed)
-    static uint32_t last_edge_ms = 0;
-    int level = gpio_get_level(TOUCH_IRQ_GPIO);
-    uint32_t now = (uint32_t)(esp_timer_get_time()/1000);
-    bool fresh_press = false;
-    if (last_level == 1 && level == 0 && (uint32_t)(now - last_edge_ms) > 200) {
-        fresh_press = true;
-        last_edge_ms = now;
-    }
-    last_level = level;
-    return fresh_press;
+    gpio_config_t oc = { .pin_bit_mask = (1ULL<<TOUCH_CLK_GPIO)|(1ULL<<TOUCH_CS_GPIO)|(1ULL<<TOUCH_DIN_GPIO),
+        .mode = GPIO_MODE_OUTPUT, .pull_up_en = 0, .pull_down_en = 0, .intr_type = GPIO_INTR_DISABLE };
+    gpio_config(&oc);
+    gpio_config_t ic = { .pin_bit_mask = 1ULL<<TOUCH_DOUT_GPIO, .mode = GPIO_MODE_INPUT,
+        .pull_up_en = 0, .pull_down_en = 0, .intr_type = GPIO_INTR_DISABLE };
+    gpio_config(&ic);
+    gpio_set_level(TOUCH_CS_GPIO, 1);   // idle high
 }
 
+// Bit-banged XPT2046 read (SPI mode 0). cmd 0x90 = X, 0xD0 = Y (12-bit, single-ended).
+static uint16_t xpt_xfer(uint8_t cmd)
+{
+    for (int i = 7; i >= 0; i--) {                       // send command MSB-first
+        gpio_set_level(TOUCH_DIN_GPIO, (cmd >> i) & 1);
+        gpio_set_level(TOUCH_CLK_GPIO, 1); gpio_set_level(TOUCH_CLK_GPIO, 0);
+    }
+    uint16_t v = 0;
+    for (int i = 0; i < 16; i++) {                        // read 16 clocks, take top 12 bits
+        gpio_set_level(TOUCH_CLK_GPIO, 1);
+        v = (uint16_t)((v << 1) | (gpio_get_level(TOUCH_DOUT_GPIO) & 1));
+        gpio_set_level(TOUCH_CLK_GPIO, 0);
+    }
+    return v >> 4;
+}
+
+static bool touch_read_xy(int *x, int *y)
+{
+    if (gpio_get_level(TOUCH_IRQ_GPIO)) return false;    // not pressed (idle high)
+    gpio_set_level(TOUCH_CS_GPIO, 0);
+    uint16_t rx = xpt_xfer(0x90);
+    uint16_t ry = xpt_xfer(0xD0);
+    gpio_set_level(TOUCH_CS_GPIO, 1);
+    if (rx < 60 || ry < 60) return false;                // reject noise/no-contact
+    // Panel-measured calibration (4-corner tap). On this CYD the XPT2046 axes are SWAPPED and
+    // rawY is INVERTED relative to the ILI9341 portrait frame: raw X (~[110..1840]) tracks
+    // screen Y top->bottom; raw Y (~[175..1925]) tracks screen X right->left.
+    #define TCAL_X_MIN 110
+    #define TCAL_X_MAX 1840
+    #define TCAL_Y_MIN 175
+    #define TCAL_Y_MAX 1925
+    int px = (int)((TCAL_Y_MAX - (int)ry) * LCD_W / (TCAL_Y_MAX - TCAL_Y_MIN));   // rawY -> screen X (inverted)
+    int py = (int)(((int)rx - TCAL_X_MIN) * LCD_H / (TCAL_X_MAX - TCAL_X_MIN));   // rawX -> screen Y
+    if (px < 0) px = 0;
+    if (px >= LCD_W) px = LCD_W - 1;
+    if (py < 0) py = 0;
+    if (py >= LCD_H) py = LCD_H - 1;
+    *x = px; *y = py;
+    return true;
+}
 // CYD-side freshness overlay: drawn as one extra band over the top of the just-rendered view,
 // so the shared renderer stays untouched. Not shown while data is fresh (<=15s old).
 // The window is wide relative to the ~1s request cadence so an occasional lost
@@ -390,7 +449,32 @@ void app_main(void)
     ESP_LOGW(TAG, "panel up: live radar loop starting");
     for(;;){
         uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
-        if (touched()) { radar_ui_on_input(&ui, now); send_request(); last_req=now; }
+        int tx, ty;
+        bool press = touch_read_xy(&tx, &ty);
+        static bool was_press = false;
+        bool edge = press && !was_press;                 // fresh contact
+        was_press = press;
+        if (edge) {
+            if (ui.view == RADAR_VIEW_CONTROL) {
+                radar_ui_note_input(&ui, now);           // keep backlight/idle timer fresh
+#ifdef SIMULACRA_CONFIG_CTRL
+                if (ty > 200 && tx > 60 && tx < 180) {   // SEND button
+                    send_config(ui.sel_preset);
+                    radar_ctrl_mark_sent(&ui, now);
+                } else if (tx < 80) {                    // left zone: prev == cycle-around
+                    for (int i = 0; i < RADAR_CTRL_PRESET_COUNT - 1; i++) radar_ctrl_select_next(&ui);
+                } else if (tx > 160) {                   // right zone: next
+                    radar_ctrl_select_next(&ui);
+                } else {                                 // center tap = leave to next view
+                    radar_ui_on_input(&ui, now); send_request(); last_req = now;
+                }
+#else
+                radar_ui_on_input(&ui, now); send_request(); last_req = now;
+#endif
+            } else {
+                radar_ui_on_input(&ui, now); send_request(); last_req = now;
+            }
+        }
         // keep asking every ~1s while the screen is awake so data stays fresh
         if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
         static uint32_t last_sync = 0;
@@ -421,7 +505,9 @@ void app_main(void)
                 .save_age_s  = age_s(now, s_last_save_ms),
                 .save_bytes  = s_save_bytes,
             };
-            radar_render_view(ui.view, &s_status, &lib, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+            radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
+                .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
+            radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
             draw_freshness_overlay(band, now);
             sweep=(uint16_t)((sweep+12)%360);
         }

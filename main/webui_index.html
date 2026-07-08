@@ -17,6 +17,14 @@ padding:8px 12px;margin:4px 4px 0 0;font-size:14px}
 <button onclick=ctl('clear_threats')>Clear threats</button>
 <button onclick=ctl('reboot')>Reboot</button>
 </div>
+<div class=card>
+<b>Presets</b>
+<button onclick=ctl('preset_stealth')>Stealth</button>
+<button onclick=ctl('preset_normal')>Normal</button>
+<button onclick=ctl('preset_dense')>Dense</button>
+<button onclick=ctl('preset_max')>Max</button>
+<button onclick=ctl('preset_pause')>Pause</button>
+</div>
 <div class=card><b>Threat radar</b><div id=threats>&mdash;</div></div>
 <script>
 function row(k,v){return '<div><span class=k>'+k+'</span><span class=v>'+v+'</span></div>'}

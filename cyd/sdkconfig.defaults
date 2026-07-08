@@ -3,3 +3,6 @@ CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 # Long filenames on the SD card (path /sdcard/simulacra/learn.db needs >8.3 names)
 CONFIG_FATFS_LFN_STACK=y
 CONFIG_FATFS_MAX_LFN=255
+# The main task runs the touch/render loop AND signs CONFIG frames inline; TweetNaCl
+# Ed25519 signing needs several KB of stack, well over the 3584 default -> overflow reboot.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288

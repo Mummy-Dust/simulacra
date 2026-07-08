@@ -33,6 +33,12 @@ bool   churn_paused(void);
 // M8: runtime retirement-rate boost. mult >= 1.0 shortens the dwell window of newly
 // promoted identities (mult=1.0 = default behavior). The coordinator decays it back to 1.0.
 void   churn_set_accel(float mult);
+// Runtime dwell/cooldown windows (ms). Default to the CHURN_DWELL_*/CHURN_COOLDOWN_* firmware
+// constants; the settings backend overrides them per preset. lo<=hi enforced by the setter.
+void   churn_set_dwell_ms(uint32_t lo, uint32_t hi);
+void   churn_set_cooldown_ms(uint32_t lo, uint32_t hi);
+void   churn_get_dwell_ms(uint32_t *lo, uint32_t *hi);
+void   churn_get_cooldown_ms(uint32_t *lo, uint32_t *hi);
 void   churn_init(uint32_t now_ms);
 void   churn_tick(uint32_t now_ms);
 size_t churn_active_count(void);                 // non-NULL active slots

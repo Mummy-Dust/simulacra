@@ -3,6 +3,7 @@
 #include "churn_selftest.h"
 #include "roster.h"
 #include "churn.h"
+#include "settings.h"
 #include "templates.h"
 #include "rf_model.h"
 #include "observe.h"
@@ -16,6 +17,8 @@
 #include "radar_ui.h"
 #include "radar_wire.h"
 #include "radar_key.h"
+#include "config_wire.h"
+#include "tweetnacl.h"
 #include "esp_now_link.h"
 #include "law3.h"
 #include "learn.h"
@@ -1024,7 +1027,8 @@ static void test_radar_ui(void)
     radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL,  "input 1 -> detail");
     radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,   "input 2 -> stats");
     radar_ui_on_input(&ui, 1250); ST_CHECK(ui.view == RADAR_VIEW_LIBRARY, "input 3 -> library");
-    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_RADAR,   "input 4 -> wraps");
+    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "input 4 -> control");
+    radar_ui_on_input(&ui, 1350); ST_CHECK(ui.view == RADAR_VIEW_RADAR,   "input 5 -> wraps");
     radar_ui_on_input(&ui, 2000); radar_ui_on_input(&ui, 2000);          // -> stats
     radar_ui_on_tick(&ui, 2000 + RADAR_VIEW_IDLE_MS + 1, 0);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR, "idle returns to radar");
@@ -1043,6 +1047,16 @@ static void test_radar_ui(void)
     ST_CHECK(ui.backlight_on, "new follower still wakes backlight while navigating");
     radar_ui_on_tick(&ui, 10200 + RADAR_VIEW_IDLE_MS + 1, 2);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR, "new follower jumps to radar once idle");
+
+    // CONTROL view joins the cycle and has an independent preset selector.
+    radar_ui_reset(&ui, 20000, 0);
+    for (int i = 0; i < RADAR_VIEW_CONTROL; i++) radar_ui_on_input(&ui, 20000 + i*10);
+    ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "cycle reaches CONTROL");
+    uint8_t p0 = ui.sel_preset;
+    radar_ctrl_select_next(&ui);
+    ST_CHECK(ui.sel_preset == (p0 + 1) % RADAR_CTRL_PRESET_COUNT, "select_next advances preset");
+    radar_ctrl_mark_sent(&ui, 21000);
+    ST_CHECK(ui.send_flash_ms == 21000, "mark_sent stamps the flash");
 }
 
 static void test_radar_wire(void)
@@ -1395,6 +1409,94 @@ static void test_escalation_recurrence(void)
     ST_CHECK(threat_escalation_level(t.sessions_seen, t.places_seen) == ESCALATION_PERSISTENT, "recur: KNOWN PERSISTENT");
 }
 
+static void test_churn_runtime_knobs(void)
+{
+    uint32_t lo = 0, hi = 0;
+    churn_set_dwell_ms(50000, 60000);
+    churn_get_dwell_ms(&lo, &hi);
+    ST_CHECK(lo == 50000 && hi == 60000, "dwell setter/getter round-trip");
+    churn_set_cooldown_ms(400000, 500000);
+    churn_get_cooldown_ms(&lo, &hi);
+    ST_CHECK(lo == 400000 && hi == 500000, "cooldown setter/getter round-trip");
+    // Restore firmware defaults so later tests are unaffected.
+    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
+}
+
+static void test_settings_resolve(void)
+{
+    sim_settings_t s;
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_NORMAL, 16, &s) == 0, "resolve NORMAL ok");
+    ST_CHECK(s.active_target == 16 && !s.paused && s.accel == 1.0f, "NORMAL fills ceiling, running");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_STEALTH, 16, &s) == 0, "resolve STEALTH ok");
+    ST_CHECK(s.active_target == 6 && s.dwell_min_ms >= 300000, "STEALTH ~40% ceiling, long dwell");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_MAX, 16, &s) == 0, "resolve MAX ok");
+    ST_CHECK(s.active_target == 16 && s.accel > 2.0f && s.dwell_max_ms <= 120000, "MAX cranks turnover");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_PAUSE, 16, &s) == 0, "resolve PAUSE ok");
+    ST_CHECK(s.paused && s.active_target == 16, "PAUSE freezes rotation, crowd stays on-air");
+
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_COUNT, 16, &s) == -1, "bad preset rejected");
+
+    // Clamp floors: a hostile 'target=0, dwell=0' can't cross safe bounds.
+    sim_settings_t bad = { .active_target = 0, .paused = false, .accel = 9.0f,
+                           .dwell_min_ms = 0, .dwell_max_ms = 5, .cooldown_min_ms = 0, .cooldown_max_ms = 0 };
+    sim_settings_clamp(&bad, 16);
+    ST_CHECK(bad.active_target >= SIM_TARGET_FLOOR, "clamp raises target to floor");
+    ST_CHECK(bad.dwell_min_ms >= 30000 && bad.accel <= 4.0f && bad.cooldown_min_ms >= 300000, "clamp bounds dwell/accel/cooldown");
+
+    // Ceiling honored on a smaller board (Shade-like ceiling).
+    ST_CHECK(sim_settings_resolve(SIM_PRESET_MAX, 8, &s) == 0 && s.active_target == 8, "MAX clamps to board ceiling");
+}
+
+static void test_settings_apply(void)
+{
+    roster_init(); churn_set_apply(noop_apply);
+    sim_settings_apply_preset(SIM_PRESET_STEALTH);
+    ST_CHECK(churn_active_target() == (uint8_t)((CHURN_ACTIVE_SET*4)/10), "apply STEALTH sets churn target");
+    ST_CHECK(!churn_paused(), "STEALTH is running");
+    uint32_t lo=0,hi=0; churn_get_dwell_ms(&lo,&hi);
+    ST_CHECK(lo == 300000, "apply STEALTH sets churn dwell");
+
+    sim_settings_apply_preset(SIM_PRESET_PAUSE);
+    ST_CHECK(churn_paused(), "apply PAUSE pauses churn");
+
+    ST_CHECK(sim_settings_apply_preset(SIM_PRESET_COUNT) == -1, "apply bad preset rejected");
+
+    sim_settings_t g; sim_settings_get(&g);
+    ST_CHECK(g.paused, "get reflects last applied (PAUSE)");
+
+    // Restore NORMAL so subsequent tests run with defaults.
+    sim_settings_apply_preset(SIM_PRESET_NORMAL);
+    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
+    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
+}
+
+static void test_config_wire(void)
+{
+    uint8_t pk[32], sk[64];
+    crypto_sign_keypair(pk, sk);                       // ephemeral test keypair
+    uint8_t nonce[12]; for (int i=0;i<12;i++) nonce[i] = (uint8_t)(i*7+1);
+    config_cmd_t cmd = { .version = CONFIG_WIRE_VER, .preset_id = 3 };
+
+    uint8_t pl[CONFIG_WIRE_PAYLOAD_LEN];
+    int n = config_wire_pack_signed(pl, sizeof pl, &cmd, nonce, sk);
+    ST_CHECK(n == CONFIG_WIRE_PAYLOAD_LEN, "pack returns payload len");
+
+    config_cmd_t got;
+    ST_CHECK(config_wire_open_signed(pl, n, nonce, pk, &got) == 0, "open verifies good sig");
+    ST_CHECK(got.preset_id == 3 && got.version == CONFIG_WIRE_VER, "open recovers cmd");
+
+    pl[0] ^= 0x01;                                      // tamper cmd byte
+    ST_CHECK(config_wire_open_signed(pl, n, nonce, pk, &got) != 0, "tampered cmd fails verify");
+    pl[0] ^= 0x01;                                      // restore
+
+    uint8_t nonce2[12]; memcpy(nonce2, nonce, 12); nonce2[0] ^= 0x01;
+    ST_CHECK(config_wire_open_signed(pl, n, nonce2, pk, &got) != 0, "nonce mismatch fails verify");
+}
+
 int churn_selftest_run(void)
 {
     s_total = 0; s_fail = 0; s_first_fail = NULL;
@@ -1419,6 +1521,10 @@ int churn_selftest_run(void)
     test_churn_lifecycle();
     test_cooldown();
     test_timeslice();
+    test_churn_runtime_knobs();
+    test_settings_resolve();
+    test_settings_apply();
+    test_config_wire();
 
     // --- M4 templates ---
     test_templates();

@@ -83,13 +83,28 @@ static void draw_library(radar_gfx_t *g, const radar_lib_info_t *lib){
     else ROW("save %lus ago (%luB)",(unsigned long)lib->save_age_s,(unsigned long)lib->save_bytes);
     #undef ROW
 }
+static const char *CTRL_LABELS[5] = { "PAUSE", "STEALTH", "NORMAL", "DENSE", "MAX" };
+static void draw_control(radar_gfx_t *g, const radar_ctrl_info_t *c){
+    radar_gfx_text(g, 8, 6, "CONTROL", COL_FG);
+    uint8_t sel = c ? c->sel_preset : 2;
+    radar_gfx_text(g, 20, 120, "<", COL_DIM);
+    radar_gfx_text(g, 200, 120, ">", COL_DIM);
+    char box[16]; snprintf(box, sizeof box, "[ %s ]", CTRL_LABELS[sel % 5]);
+    radar_gfx_text(g, 70, 120, box, COL_FG);
+    radar_gfx_fill_rect(g, 60, 210, 120, 40, COL_RING);      // SEND button
+    radar_gfx_text(g, 96, 224, c && c->send_flash ? "SENT" : "SEND",
+                   c && c->send_flash ? COL_OK : COL_FG);
+    radar_gfx_text(g, 30, 296, "broadcast to all decoys", COL_DIM);
+}
 void radar_render_view(radar_view_t view, const radar_wire_status_t *st, const radar_lib_info_t *lib,
+                       const radar_ctrl_info_t *ctrl,
                        uint16_t sweep, uint16_t *band, int band_h, int w, int h, radar_flush_fn flush, void *ctx){
     for(int y0=0;y0<h;y0+=band_h){ radar_gfx_t g={ .buf=band, .w=w, .y0=y0, .h=band_h };
         radar_gfx_clear(&g,COL_BG);
         if(view==RADAR_VIEW_DETAIL) draw_detail(&g,st);
         else if(view==RADAR_VIEW_STATS) draw_stats(&g,st);
         else if(view==RADAR_VIEW_LIBRARY) draw_library(&g,lib);
+        else if(view==RADAR_VIEW_CONTROL) draw_control(&g,ctrl);
         else draw_radar(&g,st,sweep);
         flush(y0, band_h, band, ctx); }
 }

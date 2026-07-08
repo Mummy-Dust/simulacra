@@ -267,5 +267,12 @@ void app_main(void)
     ble_svc_gap_init();
 
     nimble_port_freertos_init(nimble_host_task);
+    // TweetNaCl (Ed25519/Curve25519) is stack-hungry: the CHURN_SELFTEST crypto tests and the
+    // SIMULACRA_FLEET_PROVISION identity keygen (fleet_key_init, via esp_now_link_start) both run
+    // in this task and overflow a 4 KB stack. Give them headroom (cf. the Vigil 12288 main-task bump).
+#if CHURN_SELFTEST || defined(SIMULACRA_FLEET_PROVISION)
+    xTaskCreate(simulacra_task, "simulacra", 12288, NULL, 5, NULL);
+#else
     xTaskCreate(simulacra_task, "simulacra", 4096, NULL, 5, NULL);
+#endif
 }

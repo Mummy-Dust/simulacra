@@ -15,8 +15,13 @@
 #include "radar_ui.h"
 #include "radar_key.h"
 #include "config_wire.h"
-#ifdef SIMULACRA_CONFIG_CTRL
+#if defined(SIMULACRA_CONFIG_CTRL) || defined(SIMULACRA_FLEET_PROVISION)
 #include "sim_ctrl_sk.h"
+#endif
+#ifdef SIMULACRA_FLEET_PROVISION
+#include "fleet_db.h"
+#include "enroll_wire.h"
+#include "tweetnacl.h"
 #endif
 #include "learn_wire.h"
 #include "learn_db.h"
@@ -141,6 +146,22 @@ static volatile uint32_t   s_status_ms;          // when it arrived (0 = never)
 static radar_replay_t      s_replay;
 static uint8_t  s_salt[4]; static uint64_t s_ctr;
 
+#ifdef SIMULACRA_FLEET_PROVISION
+// The ESP-NOW transport key is the provisioned fleet key (rotatable), not a baked constant.
+static const uint8_t *tx_key(void){ return fleet_db_key(); }
+// Enrollment authority state (Vigil). Pairing window is open while now < s_pair_until_ms.
+static uint32_t s_pair_until_ms;
+static uint8_t  s_veph_pk[32], s_veph_sk[32];      // one ephemeral keypair per window
+static uint8_t  s_nonce_v[24];                     // challenge for the current window
+static volatile bool s_enrreq_ready;               // a REQUEST frame awaits processing
+static uint8_t  s_enrreq_buf[1 + ENROLL_REQUEST_LEN];
+static bool     s_pending;                         // an unknown id awaits operator accept
+static uint8_t  s_pending_idpk[32], s_pending_nd[24];
+static char     s_pending_fp[24];
+#else
+static const uint8_t *tx_key(void){ return SIMULACRA_ESPNOW_KEY; }
+#endif
+
 #define VIGIL_LIB_CAP 128
 static learned_template_t s_lib[VIGIL_LIB_CAP];
 static size_t             s_lib_count;
@@ -257,7 +278,7 @@ static void broadcast_sig_db(void)
         if (sig_wire_pack(pl, &plen, &s_sigdb[off], nrec, s_sigdb_ver, ci, chunks) != 0) continue;
         uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
         if (radar_wire_seal(frame, &flen, RADAR_TYPE_SIG_SYNC, pl, plen,
-                            SIMULACRA_ESPNOW_KEY, s_salt, ++s_ctr) == 0)
+                            tx_key(), s_salt, ++s_ctr) == 0)
             esp_now_send(BCAST, frame, flen);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -267,8 +288,17 @@ static void broadcast_sig_db(void)
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
     (void)info;
+#ifdef SIMULACRA_FLEET_PROVISION
+    if (len >= 1 && data[0] == RADAR_TYPE_ENROLL_REQUEST) {   // raw (unsealed) enrollment reply
+        if (s_pair_until_ms && (uint32_t)(esp_timer_get_time()/1000) < s_pair_until_ms
+            && len == (int)sizeof s_enrreq_buf && !s_enrreq_ready) {
+            memcpy(s_enrreq_buf, data, len); s_enrreq_ready = true;   // defer heavy crypto to the loop
+        }
+        return;
+    }
+#endif
     uint8_t type, pl[RADAR_FRAME_MAX], salt[4]; size_t plen; uint64_t ctr;
-    if (radar_wire_open(data,(size_t)len,SIMULACRA_ESPNOW_KEY,&type,pl,&plen,salt,&ctr)!=0) return;
+    if (radar_wire_open(data,(size_t)len,tx_key(),&type,pl,&plen,salt,&ctr)!=0) return;
     if (type==RADAR_TYPE_STATUS && plen==sizeof(radar_wire_status_t)) {
         if (!radar_replay_ok(&s_replay,salt,ctr)) return;
         memcpy(&s_status, pl, sizeof s_status);
@@ -296,7 +326,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 static void send_request(void){
     uint8_t nonce[4]; esp_fill_random(nonce,4);
     uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
-    if (radar_wire_seal(frame,&flen,RADAR_TYPE_REQUEST,nonce,4,SIMULACRA_ESPNOW_KEY,s_salt,++s_ctr)==0)
+    if (radar_wire_seal(frame,&flen,RADAR_TYPE_REQUEST,nonce,4,tx_key(),s_salt,++s_ctr)==0)
         for (int i=0;i<4;i++) esp_now_send(BCAST,frame,flen);
 }
 #ifdef SIMULACRA_CONFIG_CTRL
@@ -310,11 +340,70 @@ static void send_config(uint8_t preset)
     if (config_wire_pack_signed(pl, sizeof pl, &cmd, nonce12, SIMULACRA_CTRL_SK) < 0) return;
     uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
     if (radar_wire_seal(frame, &flen, RADAR_TYPE_CONFIG, pl, sizeof pl,
-                        SIMULACRA_ESPNOW_KEY, s_salt, ctr) == 0)
+                        tx_key(), s_salt, ctr) == 0)
         for (int i = 0; i < 4; i++) esp_now_send(BCAST, frame, flen);
     ESP_LOGW(TAG, "sent CONFIG preset %u", (unsigned)preset);
 }
 #endif
+
+#ifdef SIMULACRA_FLEET_PROVISION
+static void enroll_fp(char *out, size_t cap, const uint8_t idpk[32]){
+    uint8_t d[crypto_hash_BYTES]; crypto_hash(d, idpk, 32);      // SHA-512, first 8 bytes
+    snprintf(out, cap, "%02x%02x-%02x%02x-%02x%02x-%02x%02x",
+             d[0],d[1],d[2],d[3],d[4],d[5],d[6],d[7]);
+}
+static void enroll_open_window(uint32_t now){
+    crypto_box_keypair(s_veph_pk, s_veph_sk);
+    esp_fill_random(s_nonce_v, 24);
+    s_pair_until_ms = now + 30000;
+    s_pending = false;
+    ESP_LOGW(TAG, "enroll: pairing window OPEN 30s (epoch %u, %u allowed)",
+             (unsigned)fleet_db_epoch(), (unsigned)fleet_allow_count());
+}
+static void enroll_send_offer(void){
+    uint8_t frame[1 + ENROLL_OFFER_LEN]; frame[0] = RADAR_TYPE_ENROLL_OFFER;
+    if (enroll_offer_sign(frame+1, ENROLL_OFFER_LEN, s_veph_pk, s_nonce_v,
+                          fleet_db_epoch(), SIMULACRA_CTRL_SK) == ENROLL_OFFER_LEN)
+        esp_now_send(BCAST, frame, sizeof frame);
+}
+static void enroll_send_grant(const uint8_t idpk[32], const uint8_t nd[24]){
+    uint8_t frame[1 + ENROLL_GRANT_LEN]; frame[0] = RADAR_TYPE_ENROLL_GRANT;
+    if (enroll_grant_seal(frame+1, ENROLL_GRANT_LEN, idpk, s_veph_sk, nd,
+                          fleet_db_key(), fleet_db_epoch()) == ENROLL_GRANT_LEN) {
+        for (int i=0;i<3;i++) esp_now_send(BCAST, frame, sizeof frame);
+        char fp[24]; enroll_fp(fp, sizeof fp, idpk);
+        ESP_LOGW(TAG, "enroll: GRANT sent to %s (epoch %u)", fp, (unsigned)fleet_db_epoch());
+    }
+}
+// Process a deferred REQUEST in the app loop (not the RX callback: crypto_box_open is heavy).
+static void enroll_process_request(uint32_t now){
+    s_enrreq_ready = false;
+    if (now >= s_pair_until_ms) return;                          // window closed meanwhile
+    uint8_t idpk[32], nd[24], nv_echo[24];
+    if (enroll_request_open(s_enrreq_buf+1, ENROLL_REQUEST_LEN, s_veph_sk, idpk, nd, nv_echo) != 0) return;
+    if (memcmp(nv_echo, s_nonce_v, 24) != 0) return;            // answers a stale/foreign offer
+    if (fleet_allow_contains(idpk)) { enroll_send_grant(idpk, nd); return; }   // known -> auto-grant
+    memcpy(s_pending_idpk, idpk, 32); memcpy(s_pending_nd, nd, 24);            // unknown -> TOFU
+    enroll_fp(s_pending_fp, sizeof s_pending_fp, idpk);
+    s_pending = true;
+    ESP_LOGW(TAG, "enroll: REQUEST from UNKNOWN %s -- match the decoy's serial print, then TAP to accept",
+             s_pending_fp);
+}
+static void enroll_accept_pending(void){
+    if (!s_pending) return;
+    fleet_allow_add(s_pending_idpk);
+    enroll_send_grant(s_pending_idpk, s_pending_nd);
+    fleet_db_save();
+    ESP_LOGW(TAG, "enroll: ACCEPTED %s (%u allowed)", s_pending_fp, (unsigned)fleet_allow_count());
+    s_pending = false;
+}
+static void enroll_rotate(uint32_t now){
+    fleet_db_rotate(); fleet_db_save();
+    enroll_open_window(now);     // reopen so allowlisted decoys re-enroll to the new epoch
+    ESP_LOGW(TAG, "enroll: ROTATED to epoch %u -- window reopened", (unsigned)fleet_db_epoch());
+}
+#endif
+
 static void broadcast_library(void){
     if (s_lib_count == 0) return;
     s_lib_sweep++;
@@ -328,7 +417,7 @@ static void broadcast_library(void){
         if (learn_wire_pack(pl, &plen, &sel[off], nrec, 1, ci, chunks) != 0) continue;
         uint8_t frame[RADAR_FRAME_MAX]; size_t flen;
         if (radar_wire_seal(frame, &flen, RADAR_TYPE_LEARN_SYNC, pl, plen,
-                            SIMULACRA_ESPNOW_KEY, s_salt, ++s_ctr) == 0)
+                            tx_key(), s_salt, ++s_ctr) == 0)
             esp_now_send(BCAST, frame, flen);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -409,6 +498,36 @@ static bool touch_read_xy(int *x, int *y)
     *x = px; *y = py;
     return true;
 }
+#ifdef SIMULACRA_FLEET_PROVISION
+// Fleet-enrollment banner, drawn as a top band over whatever view is up (same technique as the
+// freshness overlay below). Puts the pending decoy's fingerprint ON THE SCREEN so the operator
+// can eyeball-match it to the decoy's serial print and long-press to accept, without a serial
+// console tethered to the CYD. Returns true when it painted the band, so the freshness overlay
+// yields to it. Priority: pending TOFU prompt > open-window status > (nothing).
+static bool draw_enroll_overlay(uint16_t *band, uint32_t now){
+    bool window_open = now < s_pair_until_ms;
+    if (!s_pending && !window_open) return false;
+    radar_gfx_t g = { .buf = band, .w = LCD_W, .y0 = 0, .h = 40 };
+    char l[40];
+    if (s_pending) {
+        radar_gfx_clear(&g, 0x6000);                                   // dark-red alert wash
+        radar_gfx_text(&g, 68, 2,  "ACCEPT DECOY?", 0xFFFF);           // 13 ch, centered
+        int fx = (LCD_W - (int)strlen(s_pending_fp) * 8) / 2;          // 19 ch fingerprint
+        radar_gfx_text(&g, fx, 15, s_pending_fp, 0xFFE0);              // yellow = compare me
+        radar_gfx_text(&g, 32, 28, "hold=accept  wait=deny", 0xC618);  // 22 ch, centered
+    } else {
+        radar_gfx_clear(&g, 0x0180);                                   // dark-green = window open
+        uint32_t rem = (s_pair_until_ms - now + 999) / 1000;
+        snprintf(l, sizeof l, "ENROLL OPEN  %2us", (unsigned)rem);
+        radar_gfx_text(&g, 56, 6, l, 0xFFFF);
+        snprintf(l, sizeof l, "epoch %u   %u allowed",
+                 (unsigned)fleet_db_epoch(), (unsigned)fleet_allow_count());
+        radar_gfx_text(&g, 24, 24, l, 0x07E0);
+    }
+    cyd_flush(0, 40, band, NULL);
+    return true;
+}
+#endif
 // CYD-side freshness overlay: drawn as one extra band over the top of the just-rendered view,
 // so the shared renderer stays untouched. Not shown while data is fresh (<=15s old).
 // The window is wide relative to the ~1s request cadence so an occasional lost
@@ -442,6 +561,15 @@ void app_main(void)
     }
     learn_db_load();
     sig_db_init();
+#ifdef SIMULACRA_FLEET_PROVISION
+    fleet_db_load();
+#ifdef FLEET_SELFTEST
+    fleet_db_selftest();
+    fleet_db_load();                 // restore real card state after the self-test scribbles RAM
+#endif
+    ESP_LOGW(TAG, "fleet: epoch %u, %u decoys allowed -- long-press to open a 30s enroll window",
+             (unsigned)fleet_db_epoch(), (unsigned)fleet_allow_count());
+#endif
 
     radar_ui_t ui; radar_ui_reset(&ui, (uint32_t)(esp_timer_get_time()/1000), 0);
     static uint16_t band[LCD_W*40]; uint16_t sweep=0; uint32_t last_req=0;
@@ -454,6 +582,21 @@ void app_main(void)
         static bool was_press = false;
         bool edge = press && !was_press;                 // fresh contact
         was_press = press;
+#ifdef SIMULACRA_FLEET_PROVISION
+        // Long-press (>=1.5s) = context action: accept a pending TOFU request, else rotate the
+        // fleet key if a window is open, else open a fresh 30s enrollment window. (Short taps
+        // keep their normal navigation meaning; the momentary press that begins a hold may still
+        // register as a tap — gesture zones are bench-tunable in Task 6/7.)
+        static uint32_t s_press_start; static bool s_lp_fired;
+        if (edge) { s_press_start = now; s_lp_fired = false; }
+        if (press && !s_lp_fired && (now - s_press_start) >= 1500) {
+            s_lp_fired = true;
+            if (s_pending)                    enroll_accept_pending();
+            else if (now < s_pair_until_ms)   enroll_rotate(now);
+            else                              enroll_open_window(now);
+            radar_ui_note_input(&ui, now);
+        }
+#endif
         if (edge) {
             if (ui.view == RADAR_VIEW_CONTROL) {
                 radar_ui_note_input(&ui, now);           // keep backlight/idle timer fresh
@@ -477,6 +620,16 @@ void app_main(void)
         }
         // keep asking every ~1s while the screen is awake so data stays fresh
         if (ui.backlight_on && now-last_req > 1000) { send_request(); last_req=now; }
+#ifdef SIMULACRA_FLEET_PROVISION
+        if (s_enrreq_ready) enroll_process_request(now);
+        if (now < s_pair_until_ms) {
+            static uint32_t s_last_offer_tx;
+            if (now - s_last_offer_tx > 1000) { s_last_offer_tx = now; enroll_send_offer(); }
+        } else if (s_pending) {
+            s_pending = false;                    // window closed with no accept == implicit reject
+            ESP_LOGW(TAG, "enroll: window closed, pending request dropped");
+        }
+#endif
         static uint32_t last_sync = 0;
         if (now - last_sync > 20000) { last_sync = now; broadcast_library(); }   // every 20 s
         static uint32_t last_sig = 0;
@@ -508,6 +661,9 @@ void app_main(void)
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
             radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+#ifdef SIMULACRA_FLEET_PROVISION
+            if (!draw_enroll_overlay(band, now))
+#endif
             draw_freshness_overlay(band, now);
             sweep=(uint16_t)((sweep+12)%360);
         }

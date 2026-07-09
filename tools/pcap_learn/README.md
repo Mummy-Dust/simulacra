@@ -1,4 +1,36 @@
-# pcap → learn harness
+# pcap tools (learn harness + signature scan)
+
+Two offline tools that replay a real BLE capture (parsed once by `parse_pcap.py`)
+through **actual firmware code**:
+
+- **`harness`** — the self-learning pipeline (`learn_strip → learn_shape_hash →
+  learn_merge`, `law3_forbidden`): validates it is structure-only on real adverts
+  and emits a **seed library** the Vigil can import.
+- **`sig_scan`** — the tracker/surveillance matcher (`sig_match` + seeded
+  `threat_sig` DB): validates/refines the signatures against real data and does
+  **per-address dwell analysis** (how long each device stayed near you).
+
+Nothing here runs on hardware; it compiles the real firmware C against small shims
+in `host_stubs/`.
+
+## Signature scan (`sig_scan`)
+
+```sh
+python parse_pcap.py capture.pcap > adverts.ndjson
+make sig_scan
+./sig_scan adverts.ndjson
+```
+
+Reports tracker hits by class (AirTag/SmartTag/Tile), an AirTag **selectivity**
+check (should not fire on ordinary Apple traffic), and **dwell** per matched
+address. Caveats worth knowing: the seed DB currently holds only 3 *unconfirmed*
+tracker signatures (no camera/bodycam vectors yet); AirTags use rotating (RPA)
+addresses so dwell can't track them across a moving capture, while Tile/SmartTag
+use static addresses and **can** be tracked — so a drive surfaces persistence for
+the latter but not the former. Distinguishing a follower from a passerby still
+wants a stationary/route capture or the live on-device follower detection.
+
+## Self-learning harness (`harness`)
 
 Offline tool that replays a real BLE capture through the **actual firmware**
 self-learning pipeline (`learn_strip → learn_shape_hash → learn_merge`, plus

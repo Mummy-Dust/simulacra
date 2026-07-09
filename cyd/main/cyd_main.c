@@ -172,6 +172,9 @@ static uint16_t           s_lib_sweep;      // local "time" for merges/age (mono
 #define LEARN_DB_PATH SD_MOUNT_POINT "/simulacra/learn.db"
 #define LEARN_DB_TMP  SD_MOUNT_POINT "/simulacra/learn.tmp"
 #define LEARN_DB_SAVE_MS 30000
+#define LEARN_SEED_PATH SD_MOUNT_POINT "/simulacra/learn.seed"
+#define LEARN_SEED_DONE SD_MOUNT_POINT "/simulacra/learn.seed.done"
+#define LEARN_SEED_MAGIC 0x4C534431u   // "LSD1" (from tools/pcap_learn)
 static uint8_t  s_db_key[32];
 static bool     s_lib_dirty;
 static uint32_t s_last_offer_ms, s_last_sync_ms, s_last_save_ms;  // 0 = never
@@ -212,6 +215,33 @@ static void learn_db_load(void)
         if (learn_regate(&tmp[i]) && learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &tmp[i], s_lib_sweep))
             admitted++;
     ESP_LOGW(TAG, "learndb: loaded %u/%u recs -> lib=%u", (unsigned)admitted, (unsigned)cnt, (unsigned)s_lib_count);
+}
+
+// One-shot import of an offline-generated seed library (tools/pcap_learn). Each record is
+// re-gated (never trust a seed) and merged into the RAM working set; the normal debounced
+// sealed save then persists it. The file is renamed to *.done so it imports only once.
+static void learn_seed_import(void)
+{
+    if (!s_sd_ok) return;
+    FILE *f = fopen(LEARN_SEED_PATH, "rb");
+    if (!f) return;
+    uint32_t magic = 0; uint16_t ver = 0, cnt = 0;
+    if (fread(&magic, 4, 1, f) != 1 || fread(&ver, 2, 1, f) != 1 || fread(&cnt, 2, 1, f) != 1
+        || magic != LEARN_SEED_MAGIC) {
+        fclose(f); ESP_LOGW(TAG, "seed: bad header, ignoring"); return;
+    }
+    unsigned imported = 0, seen = 0;
+    for (uint16_t i = 0; i < cnt; i++) {
+        learned_template_t rec;
+        if (fread(&rec, sizeof rec, 1, f) != 1) break;   // packed 55-B record, LE (matches host)
+        seen++;
+        if (!learn_regate(&rec)) continue;               // budget + Law-3 + shape_hash recompute
+        if (learn_merge_wire(s_lib, &s_lib_count, VIGIL_LIB_CAP, &rec, s_lib_sweep)) imported++;
+    }
+    fclose(f);
+    if (imported) s_lib_dirty = true;                    // debounced sealed learn.db save persists it
+    ESP_LOGW(TAG, "seed: imported %u/%u records -> lib=%u", imported, seen, (unsigned)s_lib_count);
+    remove(LEARN_SEED_DONE); rename(LEARN_SEED_PATH, LEARN_SEED_DONE);   // one-shot
 }
 
 static void learn_db_save(void)
@@ -560,6 +590,7 @@ void app_main(void)
         else ESP_LOGW(TAG, "sd: probe write FAILED");
     }
     learn_db_load();
+    learn_seed_import();     // one-shot: merge an offline pcap-derived seed if present on the card
     sig_db_init();
 #ifdef SIMULACRA_FLEET_PROVISION
     fleet_db_load();

@@ -41,6 +41,16 @@ self-learning pipeline (`learn_strip → learn_shape_hash → learn_merge`, plus
 `law3_forbidden`), to (1) **validate** that the pipeline is structure-only on
 real-world adverts and (2) emit a **seed library** the Vigil can import.
 
+**Advertising-interval enrichment:** the seed's per-shape interval band is set from
+real timing — mirroring the firmware's on-device estimator (gap between consecutive
+sightings of the same device, 20–60000 ms), grouped by advertiser address and taken
+as the **median** device interval per shape (robust to sniffer artifacts) with a tight
+spread. Shapes with too few timed devices fall back to a **family default** (trackers
+slow, iBeacons/wearables faster). Without this, seeded shapes have no interval and
+decoys advertise at a generic ~100–300 ms — a timing tell. A moving capture yields
+thin timing (few sightings/device, RPA rotation), so most shapes use defaults; a
+**stationary capture** produces far better estimates.
+
 Nothing here runs on hardware; it compiles the real `main/learn.c`,
 `components/simulacra_radar/{law3,learn_wire}.c` against small host shims in
 `host_stubs/`.

@@ -22,6 +22,21 @@ class SynthDump(unittest.TestCase):
         self.assertTrue(any(x["company"] in (0x0075, 0x004C) for x in r))
     def test_deterministic_for_seed(self):
         self.assertEqual(self.rows(seed=7), self.rows(seed=7))
+    def test_model_seed_biases_vendor_mix(self):
+        seed_path = os.path.join(HERE, "_tmp_seed.txt")
+        with open(seed_path, "w") as fh:
+            fh.write("POP 10\n")
+            fh.write("V 0087 100 0 0 0 0 0 40 0\n")   # Garmin-heavy, 1000-2000ms bin
+            fh.write("OTHER 0 0 0 0 0 0 0 0\n")
+        out = subprocess.check_output([EXE, "3", "128", seed_path], text=True)
+        rows = [json.loads(l) for l in out.splitlines() if l.strip()]
+        os.remove(seed_path)
+        share = sum(1 for r in rows if r["company"] == 0x0087) / len(rows)
+        # A Garmin-dominated seed yields a Garmin-heavy crowd. The realized share is
+        # capped below GEN_MAX_VENDOR_PCT (~40%): generate.c redirects a proportional
+        # fraction of any over-represented vendor's draws to varied templates (diversity
+        # floor), so a single-vendor seed lands ~0.35, well above the ~0.03 unbiased mix.
+        self.assertGreater(share, 0.25)
 
 if __name__ == "__main__":
     unittest.main()

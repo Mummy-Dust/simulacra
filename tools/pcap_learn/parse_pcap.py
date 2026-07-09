@@ -62,7 +62,8 @@ def main():
         ad = pdu[6:]
         if not ad:
             continue
-        sys.stdout.write(json.dumps({"company": company_of(ad), "ad": ad.hex()}) + "\n")
+        sys.stdout.write(json.dumps({"company": company_of(ad), "ad": ad.hex()},
+                                    separators=(",", ":")) + "\n")
         emitted += 1
     named = {AD_PAYLOAD_TYPES.get(k, f"type{k}"): v for k, v in sorted(counts.items())}
     sys.stderr.write(f"records={recs} adv_pdus={sum(counts.values())} emitted_ad={emitted}\n")

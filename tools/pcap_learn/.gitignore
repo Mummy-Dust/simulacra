@@ -1,0 +1,5 @@
+*.ndjson
+*.seed
+*.err
+harness
+harness.exe

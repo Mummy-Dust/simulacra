@@ -85,20 +85,19 @@ python scorecard.py ../../private/synth.ndjson ../../private/profile.json --json
 
 ```
 DISCRIMINATOR            SEPARABILITY VISIBILITY
-interval_distribution          0.3756 logic
 address_type_mix               0.2997 logic
-vendor_histogram               0.1636 logic
-HEADLINE (max) 0.3756  worst tell: interval_distribution
+vendor_histogram               0.2198 logic
+interval_distribution          0.0030 logic
+HEADLINE (max) 0.2997  worst tell: address_type_mix
 ```
 
-Reading it — **`interval_distribution` (0.38)** is the real top tell: 89% of the
-reference devices are service-data/beacon-style (no mfg company) advertising slowly
-(47% with >2 s median intervals), but the decoys advertise fast — ~45% at 100–200 ms.
-That's the generator's `100 + esp_random()%200` fallback: in `generate.c` the `OTHER`
-(no-mfg) bucket never samples `other_itvl_bins`, so every service-data decoy gets the
-fast fallback. **`address_type_mix` (0.30)**: decoys are 100% static-random while the
-real crowd was ~52% static / 36% RPA / 12% public — decoys never present an RPA.
-**`vendor_histogram` (0.16)** is now honest — see the note below.
+Reading it — **`address_type_mix` (0.30)** is the top tell: decoys are 100%
+static-random while the real crowd was ~52% static / 36% RPA / 12% public, so decoys
+never present an RPA. **`interval_distribution` (0.003)** is now effectively closed:
+`generate.c` samples `other_itvl_bins` for the no-mfg / diversified mass, so the decoy
+cadence matches the real crowd (previously 0.38 — the `OTHER` bucket fell to a fast
+100–300 ms fallback and `other_itvl_bins` was dead code). **`vendor_histogram`
+(0.22)** is device-weighted and honest — see the note below.
 
 > **Why the vendor histogram is device-weighted.** Co-travel correlation tracks
 > distinct entities, not advert volume. An earlier advert-weighted metric scored

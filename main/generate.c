@@ -116,7 +116,7 @@ static int8_t dither_tx(void)   // plausible TX spread; not all at max
 // Draw a diverse built-in template into an identity, avoiding `avoid` (the over-represented company
 // we're diversifying away from — the built-in earbuds-sams template is itself 0x0075). Sets
 // payload/len/itvl/archetype; returns the on-air company (RF_VENDOR_UNKNOWN for service-data).
-static uint16_t diversify_fill(identity_t *id, uint16_t avoid)
+static uint16_t diversify_fill(const rf_model_t *m, identity_t *id, uint16_t avoid)
 {
     const device_template_t *t = templates_pick();
     for (int a = 0; a < 8 && t->company_id == avoid; a++) t = templates_pick();
@@ -124,7 +124,11 @@ static uint16_t diversify_fill(identity_t *id, uint16_t avoid)
     if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) id->payload_len = 0;
     id->archetype_idx = 0;
     for (size_t i = 0; i < templates_count(); i++) if (template_at(i) == t) { id->archetype_idx = (uint8_t)i; break; }
-    id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random() % 200));
+    // Prefer the ambient no-mfg interval distribution over the template's natural cadence, so the
+    // diversified crowd matches the real environment's advertising rate (population realism). Falls
+    // back to the template interval, then a generic 100-300ms, when the model carries no interval data.
+    uint16_t amb = sample_interval(m->other_itvl_bins);
+    id->adv_itvl_ms = amb ? amb : (itvl ? itvl : (uint16_t)(100 + (esp_random() % 200)));
     return cid ? cid : RF_VENDOR_UNKNOWN;
 }
 
@@ -159,13 +163,16 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
         }
 
         if (redirect) {
-            company = diversify_fill(id, company);   // sets payload/len/itvl/archetype
+            company = diversify_fill(m, id, company);   // sets payload/len/itvl/archetype
         } else {
             uint8_t arch=0;
             if (build_for_vendor(company, id->payload, &id->payload_len, &arch)!=0){ id->payload_len=0; }
             id->archetype_idx = arch;
+            // Interval from the model: this vendor's histogram for a real slot, else the ambient
+            // no-mfg (OTHER) histogram. Only fall back to a generic 100-300ms when neither has data.
             uint16_t itvl = 0;
-            if (vi>=0 && slot[vi]>=0) itvl = sample_interval(m->vendors[slot[vi]].itvl_bins);
+            if (vi>=0) itvl = (slot[vi]>=0) ? sample_interval(m->vendors[slot[vi]].itvl_bins)
+                                            : sample_interval(m->other_itvl_bins);
             id->adv_itvl_ms = itvl ? itvl : (uint16_t)(100 + (esp_random()%200));
         }
         id->company_id = company;

@@ -66,8 +66,9 @@ bool learn_strip(const uint8_t *ad, uint8_t len, uint16_t company,
             case AD_TXPOWER: case AD_APPEARANCE:
                 break;                                    // keep verbatim
             case AD_NAME_SHORT: case AD_NAME_CMP:
-                out->name_off = vfrom;                    // replaced at render, not masked
+                out->name_off = vfrom;                    // region overwritten with a synthetic name at render
                 out->name_len = (uint8_t)(vto - vfrom);
+                memset(out->ad + vfrom, 0, (size_t)(vto - vfrom));  // scrub the real name from the stored skeleton
                 break;
             case AD_MFG:
                 if (vto - vfrom >= 2) {                   // keep company id, mask blob

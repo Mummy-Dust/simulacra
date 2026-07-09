@@ -206,6 +206,10 @@ static void test_learn_strip(void)
     ST_CHECK(learn_strip(named, sizeof named, 0x0075, &t), "strip: named earbud accepted");
     ST_CHECK(t.company_id == 0x0075, "strip: company_id preserved");
     ST_CHECK(t.name_len == 8 && t.name_off > 0, "strip: name region captured");
+    bool name_scrubbed = true;
+    for (uint8_t b = t.name_off; b < t.name_off + t.name_len; b++)
+        if (t.ad[b] != 0) name_scrubbed = false;
+    ST_CHECK(name_scrubbed, "strip: local-name value scrubbed from skeleton");
     ST_CHECK((t.rand_mask & (1u << 7)) && (t.rand_mask & (1u << 8)),
              "strip: mfg blob bytes masked");
     ST_CHECK(!(t.rand_mask & (1u << 5)) && !(t.rand_mask & (1u << 6)),

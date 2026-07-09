@@ -6,3 +6,6 @@ sdkconfig.old
 *.map
 managed_components/
 dependencies.lock
+
+# local-only session notes — never commit
+HANDOFF.md

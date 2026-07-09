@@ -9,3 +9,11 @@ dependencies.lock
 
 # local-only session notes — never commit
 HANDOFF.md
+
+# local-only drop zone — anything here is NEVER committed (captures, reference
+# data, notes, screenshots). Safe regardless of file extension.
+private/
+
+# bystander RF captures must never leave this machine (public repo)
+*.pcap
+*.pcapng

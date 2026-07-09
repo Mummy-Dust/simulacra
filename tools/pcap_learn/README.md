@@ -22,8 +22,12 @@ make sig_scan
 ```
 
 Reports tracker hits by class (AirTag/SmartTag/Tile), an AirTag **selectivity**
-check (should not fire on ordinary Apple traffic), and **dwell** per matched
-address. Caveats worth knowing: the seed DB currently holds only 3 *unconfirmed*
+check (should not fire on ordinary Apple traffic), and **continuous-run analysis**
+per matched device: sightings are grouped into encounters (a silence > 60s starts a
+new one), and it reports the **longest continuous run** and the **largest gap**. A
+device *following* you shows one long run with many sightings; a fixed tag you merely
+**passed twice** shows isolated touches with a big gap and a ~0 run (so it is never
+mistaken for co-travel). Caveats worth knowing: the seed DB currently holds only 3 *unconfirmed*
 tracker signatures (no camera/bodycam vectors yet); AirTags use rotating (RPA)
 addresses so dwell can't track them across a moving capture, while Tile/SmartTag
 use static addresses and **can** be tracked — so a drive surfaces persistence for

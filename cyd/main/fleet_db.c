@@ -200,6 +200,19 @@ int fleet_db_selftest(void)
     uint32_t e0 = s_epoch; fleet_db_rotate();
     if (s_epoch != e0 + 1 || memcmp(s_key, key_snap, 32) == 0) fail++;  // new key + epoch bump
 
+    // Composite "revoke" = remove target + rotate key (what the UI's fleet_do_revoke performs).
+    s_allow_n = 0; s_epoch = 4; esp_fill_random(s_key, 32);      // fresh: 2 enrolled
+    uint8_t rvk_key0[32];
+    fleet_allow_add(a); fleet_allow_add(b);
+    memcpy(rvk_key0, s_key, 32);
+    uint32_t rvk_ep0 = s_epoch;
+    fleet_allow_remove(a); fleet_db_rotate();                    // revoke 'a'
+    if (fleet_allow_contains(a)) fail++;                         // target gone
+    if (!fleet_allow_contains(b)) fail++;                        // survivor kept
+    if (fleet_allow_count() != 1) fail++;                        // exactly one left
+    if (s_epoch != rvk_ep0 + 1) fail++;                          // rotated
+    if (memcmp(s_key, rvk_key0, 32) == 0) fail++;                // new key
+
     ESP_LOGW(TAG, "fleet_db selftest: %s (%d fails)", fail ? "FAIL" : "PASS", fail);
     return fail;
 }

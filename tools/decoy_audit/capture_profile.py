@@ -49,43 +49,54 @@ def parse_adverts(path):
 
 def build_profile(adverts):
     at=Counter(a["atype"] for a in adverts)
-    ven=Counter(a["company"] for a in adverts if a["company"])
+    # Per-address aggregation. Co-travel correlation tracks entities, not advert volume,
+    # so the vendor histogram is DEVICE-weighted: one chatty beacon must not dominate.
+    ts=defaultdict(list); dev_co=defaultdict(Counter)
+    for a in adverts:
+        ts[a["addr"]].append(a["ts"])
+        dev_co[a["addr"]][a["company"]] += 1
+    # Each device's vendor = its modal non-zero mfg company; a device with no stable mfg
+    # company (service-data / name-only / RPA) goes to the explicit "none" bucket.
+    ven=Counter()
+    for addr,cos in dev_co.items():
+        nz=[(c,cnt) for c,cnt in cos.items() if c]
+        ven[str(max(nz,key=lambda x:x[1])[0]) if nz else "none"] += 1
     # per-address median interval -> bin
-    ts=defaultdict(list)
-    for a in adverts: ts[a["addr"]].append(a["ts"])
     ibins=[0]*7
     for addr,t in ts.items():
         t.sort()
         gaps=[(t[i+1]-t[i])*1000 for i in range(len(t)-1) if 5<(t[i+1]-t[i])*1000<60000]
         if gaps: ibins[itvl_bin(statistics.median(gaps))]+=1
     n=len(adverts) or 1
-    def norm(counter, keys=None):
-        tot=sum(counter.values()) or 1
-        return {str(k):counter[k]/tot for k in (keys or counter)}
     isum=sum(ibins) or 1
+    vtot=sum(ven.values()) or 1
     return {"n_adverts":len(adverts),"n_addrs":len(ts),
             "atype":{k:at[k]/n for k in ("static","rpa","public")},
             "itvl_bins":[b/isum for b in ibins],
-            "vendor":norm(ven)}
+            "vendor":{k:v/vtot for k,v in ven.items()}}
 
 def write_model_seed(profile, path):
     # convert normalized vendor shares back into integer counts (scale 1000) + interval bins
     vend=profile["vendor"]; ib=profile["itvl_bins"]
-    # spread the global interval histogram across vendors proportionally (coarse but sufficient)
+    # spread the global interval histogram across buckets proportionally (coarse but sufficient)
     binc=[int(round(x*1000)) for x in ib]
+    none_share=vend.get("none",0.0)
+    real=sorted(((c,s) for c,s in vend.items() if c!="none"), key=lambda kv:-kv[1])[:24]
     with open(path,"w") as f:
         f.write("POP 12\n")
-        top=sorted(vend.items(), key=lambda kv:-kv[1])[:24]
-        for cid,share in top:
+        for cid,share in real:
             c=int(round(share*1000))
             f.write("V %04x %d %s\n" % (int(cid), c, " ".join(str(int(share*b)) for b in binc)))
-        f.write("OTHER 0 " + " ".join(str(b) for b in binc) + "\n")
+        # the "none" (no-mfg / service-data) device share drives the model's OTHER bucket, which
+        # the generator turns into service-data/beacon decoys (generate.c build_for_vendor).
+        oc=int(round(none_share*1000))
+        f.write("OTHER %d %s\n" % (oc, " ".join(str(int(none_share*b)) for b in binc)))
 
 def main():
     adv=parse_adverts(sys.argv[1]); prof=build_profile(adv)
     json.dump(prof, open(sys.argv[2],"w"), indent=2)
     if len(sys.argv)>3: write_model_seed(prof, sys.argv[3])
-    sys.stderr.write("adverts=%d addrs=%d\n"%(prof["n_adverts"],prof["n_addrs"]))
+    print("adverts=%d addrs=%d"%(prof["n_adverts"],prof["n_addrs"]))
 
 if __name__ == "__main__":
     main()

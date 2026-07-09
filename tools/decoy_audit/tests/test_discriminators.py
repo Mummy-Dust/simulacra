@@ -18,6 +18,13 @@ class Scores(unittest.TestCase):
     def test_address_type_tell_is_high(self):
         s={d["name"]:d["separability"] for d in D.score_all(self.synth, self.profile)}
         self.assertGreater(s["address_type_mix"], 0.3)  # 100% static vs 40/40/20 real
+    def test_no_mfg_decoys_bucket_to_none(self):
+        # service-data decoys carry company 0xFFFF (RF_VENDOR_UNKNOWN); they must map to the
+        # same "none" bucket the real profile uses, not appear as a literal "65535" vendor.
+        sd = D.synth_distributions([{"atype":"static","itvl_ms":150,"company":65535}
+                                    for _ in range(10)])
+        self.assertIn("none", sd["vendor"])
+        self.assertNotIn("65535", sd["vendor"])
     def test_all_scores_in_unit_range(self):
         for d in D.score_all(self.synth, self.profile):
             self.assertGreaterEqual(d["separability"],0.0)

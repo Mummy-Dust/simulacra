@@ -24,7 +24,9 @@ param(
     [double]$Gate    = [double]::NaN,   # NaN = no gate
     [switch]$Rebuild
 )
-$ErrorActionPreference = "Stop"
+# Native tools (python, cl) may write progress to stderr; "Stop" would abort on that.
+# We check $LASTEXITCODE explicitly after each call instead.
+$ErrorActionPreference = "Continue"
 $tool = $PSScriptRoot
 $exe  = Join-Path $tool "synth_dump.exe"
 

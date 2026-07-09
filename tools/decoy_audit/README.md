@@ -85,19 +85,28 @@ python scorecard.py ../../private/synth.ndjson ../../private/profile.json --json
 
 ```
 DISCRIMINATOR            SEPARABILITY VISIBILITY
-vendor_histogram               0.3401 logic
+interval_distribution          0.3756 logic
 address_type_mix               0.2997 logic
-interval_distribution          0.1367 logic
-HEADLINE (max) 0.3401  worst tell: vendor_histogram
+vendor_histogram               0.1636 logic
+HEADLINE (max) 0.3756  worst tell: interval_distribution
 ```
 
-Reading it: the reference crowd was a near-monoculture (one company id ~95% of
-adverts). The generator's diversity floor (`GEN_MAX_VENDOR_PCT`) deliberately caps
-any single vendor and redistributes to varied templates — good against co-travel
-correlation, but it makes the synthetic vendor histogram diverge from a monoculture
-environment, so `vendor_histogram` is the top tell here. `address_type_mix` is the
-structural runner-up: decoys are 100% static-random, while the real crowd was
-~52% static / 36% RPA / 12% public — decoys never present an RPA.
+Reading it — **`interval_distribution` (0.38)** is the real top tell: 89% of the
+reference devices are service-data/beacon-style (no mfg company) advertising slowly
+(47% with >2 s median intervals), but the decoys advertise fast — ~45% at 100–200 ms.
+That's the generator's `100 + esp_random()%200` fallback: in `generate.c` the `OTHER`
+(no-mfg) bucket never samples `other_itvl_bins`, so every service-data decoy gets the
+fast fallback. **`address_type_mix` (0.30)**: decoys are 100% static-random while the
+real crowd was ~52% static / 36% RPA / 12% public — decoys never present an RPA.
+**`vendor_histogram` (0.16)** is now honest — see the note below.
+
+> **Why the vendor histogram is device-weighted.** Co-travel correlation tracks
+> distinct entities, not advert volume. An earlier advert-weighted metric scored
+> `vendor_histogram` at 0.34 — but that was mostly an artifact: one chatty beacon
+> emitted 17% of the whole capture, and the histogram was built from only the ~8% of
+> devices that expose a `0xFF` company id. Weighting by distinct device and bucketing
+> all no-mfg devices/decoys into an explicit `none` category dropped it to 0.16 and
+> unmasked the interval tell above.
 
 ## Regression gate
 

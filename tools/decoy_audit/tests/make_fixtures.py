@@ -20,6 +20,17 @@ ADVAS=[(bytes([1,2,3,4,5,0xC0]),0x0075),(bytes([1,2,3,4,5,0xC1]),0x0075),
 def sample_pcap(path):
     # Nordic DLT157: 3 static-random, 1 RPA, 1 public
     write_pcap(path, [nordic_record(a, mfg(c)) for a,c in ADVAS])
+def name_only(name=b"HI"):
+    # flags + complete-local-name only: no 0xFF mfg data -> company parses as 0 (the "none" bucket)
+    return bytes([0x02,0x01,0x06]) + bytes([1+len(name),0x09]) + name
+def sample_pcap_weighted(path):
+    # 3 distinct devices: chatty A (0x75, x10 adverts), B (0x87, x1), C (no-mfg, x1).
+    # Advert-weighting would make 0x75 ~0.9; device-weighting makes it 1/3, none 1/3.
+    A=bytes([0x11,0,0,0,0,0xC0]); B=bytes([0x22,0,0,0,0,0xC0]); C=bytes([0x33,0,0,0,0,0xC0])
+    recs=[nordic_record(A, mfg(0x75)) for _ in range(10)]
+    recs.append(nordic_record(B, mfg(0x87)))
+    recs.append(nordic_record(C, name_only()))
+    write_pcap(path, recs)
 def dlt256_record(adva6, ad):
     phdr=bytes(10)                                     # 10-byte LE_LL_WITH_PHDR pseudo-header
     pdu=bytes([0x02, 6+len(ad)]) + adva6 + ad

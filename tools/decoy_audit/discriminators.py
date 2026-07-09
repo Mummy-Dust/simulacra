@@ -31,11 +31,17 @@ def synth_distributions(synth):
     n=len(synth) or 1
     ib=[0]*7
     for x in synth: ib[_itvl_bin(x["itvl_ms"])]+=1
-    ven=Counter(x["company"] for x in synth if x.get("company"))
+    # Bucket decoys with no stable mfg company (service-data templates carry 0xFFFF =
+    # RF_VENDOR_UNKNOWN) into the same "none" category the real profile uses, so the two
+    # histograms are compared like-for-like.
+    ven=Counter()
+    for x in synth:
+        c=x.get("company")
+        ven["none" if (not c or c==0xFFFF) else str(c)] += 1
     vt=sum(ven.values()) or 1
     return {"atype":[at.get(k,0)/n for k in ("static","rpa","public")],
             "itvl_bins":_norm(ib),
-            "vendor":{str(k):v/vt for k,v in ven.items()}}
+            "vendor":{k:v/vt for k,v in ven.items()}}
 
 def _vendor_vectors(sv, pv):
     keys=sorted(set(sv)|set(pv))

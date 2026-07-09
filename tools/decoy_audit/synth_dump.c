@@ -9,6 +9,21 @@ static const char *atype_of(const uint8_t addr[6]) {
     switch (addr[5] >> 6) { case 3: return "static"; case 1: return "rpa";
                             case 0: return "public"; default: return "nrpa"; }
 }
+/* On-air manufacturer company id, parsed from the serialized AD payload EXACTLY as
+   capture_profile.py does on the real side (walk the AD structures, first 0xFF element's
+   little-endian company). 0 = no manufacturer element (service-data / beacon => no-mfg).
+   Measuring the transmitted bytes, not the identity's label, keeps the audit honest:
+   a Tile carries only service-data on air, and an iBeacon carries Apple 0x004C. */
+static unsigned company_onair(const uint8_t *ad, size_t len) {
+    size_t i = 0;
+    while (i + 1 < len) {
+        uint8_t l = ad[i];
+        if (l == 0 || i + 1 + (size_t)l > len) break;
+        if (ad[i + 1] == 0xFF && l >= 3) return ad[i + 2] | (ad[i + 3] << 8);
+        i += 1 + l;
+    }
+    return 0;
+}
 /* Read a model-seed file (produced by capture_profile.py) into an rf_model_t.
    Format: "POP <f>", "V <cid_hex> <count> <b0..b6>", "OTHER <count> <b0..b6>". */
 static int load_model_seed(const char *path, rf_model_t *m) {
@@ -60,7 +75,7 @@ int main(int argc, char **argv) {
         for (int b = 0; b < 6; b++) sprintf(hex + b*2, "%02x", id->addr[b]);
         printf("{\"addr\":\"%s\",\"atype\":\"%s\",\"company\":%u,\"itvl_ms\":%u,"
                "\"tx\":%d,\"arch\":%u,\"plen\":%u}\n",
-               hex, atype_of(id->addr), id->company_id, id->adv_itvl_ms,
+               hex, atype_of(id->addr), company_onair(id->payload, id->payload_len), id->adv_itvl_ms,
                id->tx_power, id->archetype_idx, id->payload_len);
     }
     return 0;

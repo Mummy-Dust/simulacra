@@ -44,6 +44,29 @@ static uint16_t sample_interval(const uint32_t bins[RF_ITVL_BINS])
     return rnd_range16(ITVL_LO[b], ITVL_HI[b]);
 }
 
+// Pick a service-data template (eddystone / tile) weighted by .weight. These families carry NO
+// on-air manufacturer element, so they keep no-mfg (OTHER) decoy mass genuinely no-mfg while still
+// varying WITHIN the beacon families (no service-data-uniformity tell). NULL if none exist.
+static const device_template_t *pick_no_mfg_template(void)
+{
+    uint32_t total = 0;
+    for (size_t i = 0; i < templates_count(); i++) {
+        const device_template_t *t = template_at(i);
+        if (t->family==FMT_EDDYSTONE_UID || t->family==FMT_EDDYSTONE_URL || t->family==FMT_SVC_TRACKER)
+            total += t->weight;
+    }
+    if (!total) return 0;
+    uint32_t r = esp_random() % total;
+    for (size_t i = 0; i < templates_count(); i++) {
+        const device_template_t *t = template_at(i);
+        if (t->family==FMT_EDDYSTONE_UID || t->family==FMT_EDDYSTONE_URL || t->family==FMT_SVC_TRACKER) {
+            if (r < t->weight) return t;
+            r -= t->weight;
+        }
+    }
+    return 0;
+}
+
 // Map a sampled company id -> a built payload + a representative archetype index (always valid).
 // 0x004C -> iBeacon; 0xFFFF (no-mfg) -> a beacon/tracker family; a templated company -> its template;
 // otherwise a generic vendor-mfg carrying that company id.
@@ -78,15 +101,16 @@ static int build_for_vendor(uint16_t company, uint8_t out[31], uint8_t *len, uin
             }
         }
     }
-    // no-mfg observed -> random beacon/tracker template
+    // no-mfg observed -> service-data/beacon template (eddystone/tile). Deliberately NOT iBeacon:
+    // an iBeacon broadcasts Apple 0x004C manufacturer data, so it belongs to the 0x004C vendor slot,
+    // not the no-mfg mass. Keeping OTHER on service-data families makes it no-mfg on air, like real.
     if (company == RF_VENDOR_UNKNOWN) {
-        for (int tries = 0; tries < 8; tries++) {
-            size_t i = esp_random() % templates_count();
-            const device_template_t *t = template_at(i);
-            if (t->family==FMT_IBEACON || t->family==FMT_EDDYSTONE_UID ||
-                t->family==FMT_EDDYSTONE_URL || t->family==FMT_SVC_TRACKER) {
-                uint16_t itvl, cid;
-                if (template_build(t, out, len, &itvl, &cid)==0){ *arch_idx=(uint8_t)i; return 0; }
+        const device_template_t *t = pick_no_mfg_template();
+        if (t) {
+            uint16_t itvl, cid;
+            if (template_build(t, out, len, &itvl, &cid)==0){
+                for (size_t i=0;i<templates_count();i++) if (template_at(i)==t){ *arch_idx=(uint8_t)i; break; }
+                return 0;
             }
         }
     }
@@ -118,8 +142,16 @@ static int8_t dither_tx(void)   // plausible TX spread; not all at max
 // payload/len/itvl/archetype; returns the on-air company (RF_VENDOR_UNKNOWN for service-data).
 static uint16_t diversify_fill(const rf_model_t *m, identity_t *id, uint16_t avoid)
 {
-    const device_template_t *t = templates_pick();
-    for (int a = 0; a < 8 && t->company_id == avoid; a++) t = templates_pick();
+    // When diversifying the no-mfg (OTHER) mass, keep it no-mfg ON AIR: draw only from the
+    // service-data beacon families (eddystone/tile), varied within them. Otherwise (an
+    // over-represented real vendor) diversify across the whole template library.
+    bool no_mfg = (avoid == RF_VENDOR_UNKNOWN);
+    const device_template_t *t = no_mfg ? pick_no_mfg_template() : 0;
+    if (!t) {                       // real over-represented vendor, or no service-data template exists
+        t = templates_pick();
+        for (int a = 0; a < 8 && t->company_id == avoid; a++) t = templates_pick();
+        no_mfg = false;
+    }
     uint16_t itvl = 0, cid = 0;
     if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) id->payload_len = 0;
     id->archetype_idx = 0;
@@ -129,7 +161,9 @@ static uint16_t diversify_fill(const rf_model_t *m, identity_t *id, uint16_t avo
     // back to the template interval, then a generic 100-300ms, when the model carries no interval data.
     uint16_t amb = sample_interval(m->other_itvl_bins);
     id->adv_itvl_ms = amb ? amb : (itvl ? itvl : (uint16_t)(100 + (esp_random() % 200)));
-    return cid ? cid : RF_VENDOR_UNKNOWN;
+    // Service-data beacons carry no on-air manufacturer element; report no-mfg so the label matches
+    // the bytes (a tile's metadata company_id is never broadcast).
+    return no_mfg ? RF_VENDOR_UNKNOWN : (cid ? cid : RF_VENDOR_UNKNOWN);
 }
 
 size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)

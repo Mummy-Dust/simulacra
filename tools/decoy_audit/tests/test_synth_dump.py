@@ -43,6 +43,20 @@ class SynthDump(unittest.TestCase):
         # fraction of any over-represented vendor's draws to varied templates (diversity
         # floor), so a single-vendor seed lands ~0.35, well above the ~0.03 unbiased mix.
         self.assertGreater(share, 0.25)
+    def test_no_mfg_seed_is_no_mfg_on_air(self):
+        # A 100%-no-mfg (OTHER) model must yield decoys that carry NO manufacturer element on air.
+        # synth_dump reports the company PARSED FROM THE SERIALIZED PAYLOAD (like capture_profile on
+        # the real side), so a tile/eddystone decoy reads no-mfg even though its template metadata
+        # names a company, and the OTHER build must not fall back to an iBeacon (Apple 0x004C on air).
+        seed_path = os.path.join(HERE, "_tmp_nomfg_seed.txt")
+        with open(seed_path, "w") as fh:
+            fh.write("POP 12\n")
+            fh.write("OTHER 1000 0 0 100 0 0 0 0\n")   # all no-mfg mass, some interval weight
+        out = subprocess.check_output([EXE, "4", "256", seed_path], text=True)
+        rows = [json.loads(l) for l in out.splitlines() if l.strip()]
+        os.remove(seed_path)
+        no_mfg = sum(1 for r in rows if not r["company"] or r["company"] == 0xFFFF) / len(rows)
+        self.assertGreater(no_mfg, 0.95)
     def test_other_bucket_samples_ambient_intervals(self):
         # No-mfg (OTHER) mass with all interval weight in the >2000ms bin must yield SLOW
         # decoys, not the 100-300ms fallback. Regression guard: generate_roster must sample

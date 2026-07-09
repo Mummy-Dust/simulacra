@@ -85,34 +85,39 @@ python scorecard.py ../../private/synth.ndjson ../../private/profile.json --json
 
 ```
 DISCRIMINATOR            SEPARABILITY VISIBILITY
-vendor_histogram               0.1994 logic
-address_type_mix               0.0034 logic
-interval_distribution          0.0019 logic
-HEADLINE (max) 0.1994  worst tell: vendor_histogram
+interval_distribution          0.0040 logic
+vendor_histogram               0.0019 logic
+address_type_mix               0.0013 logic
+HEADLINE (max) 0.0040  worst tell: interval_distribution
 ```
 
-Reading it — two structural tells have been fixed and the honest headline is down
-from 0.38 to 0.20:
-- **`address_type_mix` (0.003)** — was 0.30 (decoys were 100% static-random, never an
+Reading it — all three v1 tells are now closed; the honest headline is down from
+0.38 to 0.004:
+- **`address_type_mix` (0.001)** — was 0.30 (decoys were 100% static-random, never an
   RPA). `roster.c` now presents a realistic static/RPA/NRPA blend (~52/36/12) via
   `make_random_addr_mixed`; all three are *random* address subtypes, so no real MAC is
   exposed. Verified on the C5: the controller accepts all subtypes (no `set_addr`
   rejections in `churn_adv`).
-- **`interval_distribution` (0.002)** — was 0.38. `generate.c` samples
+- **`interval_distribution` (0.004)** — was 0.38. `generate.c` samples
   `other_itvl_bins` for the no-mfg / diversified mass instead of a fast 100–300 ms
   fallback (`other_itvl_bins` had been dead code), so the decoy cadence matches the
   real crowd's heavy-tailed intervals.
-- **`vendor_histogram` (0.20)** is now the top tell — device-weighted and honest (see
-  the note below). It reflects the decoys carrying template vendors not present in this
-  specific environment; largely environment-shaped rather than a structural defect.
+- **`vendor_histogram` (0.002)** — was 0.20. Two fixes: the audit now parses each
+  decoy's company id from the **serialized payload** (`company_onair`, the same walk
+  `capture_profile._company` runs on the real side) instead of trusting the identity's
+  label — so a Tile reads as no-mfg (service-data only) and an iBeacon reads as Apple
+  `0x004C`, exactly as an over-the-air sniffer would. And `generate.c` now keeps the
+  no-mfg (OTHER) mass on the service-data families (eddystone/tile, varied within them)
+  instead of leaking it into manufacturer/iBeacon templates, so the decoy no-mfg share
+  matches the real crowd's ~89%.
 
-> **Why the vendor histogram is device-weighted.** Co-travel correlation tracks
-> distinct entities, not advert volume. An earlier advert-weighted metric scored
-> `vendor_histogram` at 0.34 — but that was mostly an artifact: one chatty beacon
-> emitted 17% of the whole capture, and the histogram was built from only the ~8% of
-> devices that expose a `0xFF` company id. Weighting by distinct device and bucketing
-> all no-mfg devices/decoys into an explicit `none` category dropped it to 0.16 and
-> unmasked the interval tell above.
+> **Why the vendor histogram is device-weighted and on-air-parsed.** Co-travel
+> correlation tracks distinct entities, not advert volume, so the histogram is
+> DEVICE-weighted (an earlier advert-weighted metric scored 0.34, inflated by one
+> chatty beacon emitting 17% of the capture). And because a real adversary parses the
+> transmitted bytes, the synthetic side is scored on the payload it actually
+> broadcasts, not its internal label — closing a gap where service-data decoys were
+> mislabeled with a manufacturer id.
 
 ## Regression gate
 

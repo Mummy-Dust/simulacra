@@ -67,6 +67,64 @@ static void scrub_name(learned_template_t *r){
         r->ad[b] = 0;
 }
 
+/* ---- advertising-interval enrichment ---------------------------------------
+ * Mirror the firmware's on-device estimator (learn.c: gap between consecutive
+ * sightings of the SAME device, kept if 20..60000 ms, tracking min & max). We
+ * group by advertiser address here, aggregate per shape, and populate the seed's
+ * interval band -- so seeded decoys advertise at a plausible cadence for their
+ * device type instead of the generic 100-300 ms fallback (a timing tell). NOTE:
+ * a moving capture gives few sightings/device (and RPA addresses rotate), so most
+ * shapes fall back to a family default; a STATIONARY capture yields far better
+ * estimates. Same-device ADV_IND vs SCAN_RSP differ, so a device's interval is
+ * attributed to its last-seen shape -- fine in aggregate. */
+#define IV_SLOTS     (1<<18)
+#define IV_MINGAP    20      /* ms: below this = same-event multi-channel burst, not an interval */
+#define IV_MAXGAP    60000   /* ms: above this the device left (separate encounter) */
+#define IV_SHAPE_MIN 5       /* shapes with >= this many timed devices use the estimate, else default */
+
+typedef struct { uint8_t addr[6], used; uint32_t last_ms; uint16_t gmin, nsight; uint32_t shape; } iv_dev_t;
+static iv_dev_t iv[IV_SLOTS];
+static uint32_t iv_hash(const uint8_t a[6]){
+    uint32_t h = 2166136261u; for (int i = 0; i < 6; i++){ h ^= a[i]; h *= 16777619u; } return h & (IV_SLOTS - 1);
+}
+static iv_dev_t *iv_get(const uint8_t a[6]){
+    uint32_t s = iv_hash(a);
+    for (uint32_t p = 0; p < IV_SLOTS; p++){
+        iv_dev_t *d = &iv[(s + p) & (IV_SLOTS - 1)];
+        if (!d->used){ memcpy(d->addr, a, 6); d->used = 1; return d; }
+        if (memcmp(d->addr, a, 6) == 0) return d;
+    }
+    return NULL;
+}
+
+/* Per shape: collect each contributing device's MINIMUM observed gap (~= its advertising
+ * interval), then use the MEDIAN across devices for a robust central estimate (per-device min
+ * is noisy -- occasional ~20ms multi-channel artifacts or inflated values when the sniffer
+ * caught nothing consecutive; the median shrugs both off). Band = a tight spread around it. */
+#define IV_SAMPLE 64
+typedef struct { uint32_t shape; uint16_t mins[IV_SAMPLE]; uint8_t nmins; uint32_t ndev; } iv_shape_t;
+static iv_shape_t ivs[CAP];
+static size_t ivsn;
+static iv_shape_t *ivs_get(uint32_t shape){          /* find-or-create */
+    for (size_t i = 0; i < ivsn; i++) if (ivs[i].shape == shape) return &ivs[i];
+    if (ivsn >= CAP) return NULL;
+    iv_shape_t *e = &ivs[ivsn++]; e->shape = shape; e->nmins = 0; e->ndev = 0; return e;
+}
+static int u16cmp(const void *a, const void *b){ return (int)*(const uint16_t*)a - (int)*(const uint16_t*)b; }
+static iv_shape_t *ivs_find(uint32_t shape){         /* find, no create */
+    for (size_t i = 0; i < ivsn; i++) if (ivs[i].shape == shape) return &ivs[i];
+    return NULL;
+}
+static void family_default(uint8_t fam, uint16_t *lo, uint16_t *hi){
+    switch (fam){
+        case 1:          *lo = 100;  *hi = 900;  break;  /* iBeacon */
+        case 2: case 3:  *lo = 100;  *hi = 1000; break;  /* Eddystone UID/URL */
+        case 4:          *lo = 1000; *hi = 3000; break;  /* svc tracker (Tile-like, slow) */
+        default:         *lo = 200;  *hi = 1500; break;  /* vendor-mfg / mixed */
+    }
+}
+static uint16_t clamp_iv(long v){ if (v < IV_MINGAP) v = IV_MINGAP; if (v > 10240) v = 10240; return (uint16_t)v; }
+
 int main(int argc, char **argv){
     FILE *f = argc > 1 ? fopen(argv[1], "r") : stdin;
     if (!f){ fprintf(stderr, "cannot open input\n"); return 1; }
@@ -97,6 +155,39 @@ int main(int argc, char **argv){
         rec.shape_hash = learn_shape_hash(&rec);
         learn_merge(store, &count, CAP, &rec, sweep++);
         ok++;
+
+        /* interval enrichment: fold this sighting into its device's gap stats */
+        char *tp = strstr(line, "\"ts\":");
+        char *dp = strstr(line, "\"addr\":\"");
+        if (tp && dp && strlen(dp + 8) >= 12){
+            double ts = strtod(tp + 5, NULL);
+            uint8_t a[6];
+            for (int i = 0; i < 6; i++) a[i] = (uint8_t)((hexval(dp[8 + 2*i]) << 4) | hexval(dp[8 + 2*i + 1]));
+            uint32_t now_ms = (uint32_t)(ts * 1000.0);
+            iv_dev_t *d = iv_get(a);
+            if (d){
+                if (d->nsight > 0){
+                    uint32_t gap = now_ms - d->last_ms;          /* modular; ok for gaps < ~49 days */
+                    if (gap >= IV_MINGAP && gap < IV_MAXGAP){
+                        uint16_t g = (uint16_t)gap;
+                        if (d->gmin == 0 || g < d->gmin) d->gmin = g;
+                    }
+                }
+                d->last_ms = now_ms;
+                if (d->nsight < 0xFFFF) d->nsight++;
+                d->shape = rec.shape_hash;
+            }
+        }
+    }
+
+    /* aggregate per-device gap stats into per-shape interval bands (mirror firmware:
+     * a device counts only after >=3 sightings, like LEARN_MIN_SIGHTINGS) */
+    for (size_t i = 0; i < IV_SLOTS; i++){
+        if (!iv[i].used || iv[i].nsight < 3 || iv[i].gmin == 0) continue;
+        iv_shape_t *e = ivs_get(iv[i].shape);
+        if (!e) continue;
+        if (e->nmins < IV_SAMPLE) e->mins[e->nmins++] = iv[i].gmin;
+        e->ndev++;
     }
 
     /* structure-only audit over the deduped store */
@@ -110,9 +201,24 @@ int main(int argc, char **argv){
     /* seed = top-N by reinforce; scrub names; re-gate exactly as the device will */
     static learned_template_t seed[SEED_N];
     size_t sn = learn_top_n(store, count, seed, SEED_N);
-    int regate_fail = 0;
+    int regate_fail = 0; unsigned iv_estimated = 0, iv_default = 0;
     for (size_t i = 0; i < sn; i++){
         scrub_name(&seed[i]);
+        /* interval band: measured from timing if the shape has enough timed devices, else family default */
+        iv_shape_t *e = ivs_find(seed[i].shape_hash);
+        uint16_t lo, hi;
+        if (e && e->ndev >= IV_SHAPE_MIN){
+            qsort(e->mins, e->nmins, sizeof e->mins[0], u16cmp);
+            long med = e->mins[e->nmins / 2];           /* robust central interval */
+            lo = clamp_iv(med * 2 / 3);                 /* tight, realistic spread around it */
+            hi = clamp_iv(med * 3 / 2);
+            iv_estimated++;
+        } else {
+            family_default(seed[i].family, &lo, &hi);
+            iv_default++;
+        }
+        if (hi < lo) hi = lo;
+        seed[i].itvl_min_ms = lo; seed[i].itvl_max_ms = hi;
         if (!learn_regate(&seed[i])) regate_fail++;
     }
 
@@ -146,6 +252,8 @@ int main(int argc, char **argv){
      * HOST compiler packs the struct (an MSVC build without __attribute__((packed)) would
      * otherwise emit padded 60-byte records the firmware's packed fread cannot consume). */
     printf("seed records      : %zu  (regate_fail=%d)\n", sn, regate_fail);
+    printf("interval enrichment: %u from timing (>=%d devices), %u family-default\n",
+           iv_estimated, IV_SHAPE_MIN, iv_default);
     FILE *sf = fopen("learn.seed", "wb");
     if (sf){
         uint32_t magic = 0x4C534431u;  /* "LSD1" */

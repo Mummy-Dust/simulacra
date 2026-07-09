@@ -1,30 +1,54 @@
 #!/usr/bin/env python3
-"""Extract legacy BLE advertising AD payloads from a DLT-256
-(LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR) pcap. Emits one NDJSON object per advert:
-{"company": <int>, "ad": "<hex of AD bytes>"}. Stdlib only.
+"""Extract legacy BLE advertising records from a DLT-256
+(LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR) pcap. Emits one NDJSON object per advert.
+
+Fields (superset used by both tools; keys are stable):
+  ts      float seconds (capture timestamp)
+  company int manufacturer company id (0 if none)      -- learn + scan
+  svc     int 16-bit service-data UUID (0 if none)     -- scan
+  atype   "public"|"static"|"rpa"|"nrpa" address type  -- scan
+  addr    advertiser address, human byte order (hex)    -- scan (dwell grouping)
+  mfg     manufacturer-specific AD value incl company (hex, "" if none) -- scan
+  svcd    service-data-16 AD value incl UUID (hex, "" if none)          -- scan
+  ad      full AD payload (hex)                         -- learn
 
 Record layout (per packet): 10-byte pseudo-header, 4-byte Access Address, then
-the advertising PDU: header byte0 (low nibble = PDU type), byte1 = payload len,
-payload = AdvA(6) + AD structures. Advertising AA = 0x8E89BED6.
+the advertising PDU: header byte0 (low nibble=type, bit6=TxAdd), byte1=len,
+payload=AdvA(6)+AD. Advertising AA = 0x8E89BED6.
 """
 import sys, struct, json
 
 ADV_AA = 0x8E89BED6
-# PDU types (low nibble of PDU header byte0) that carry an AD payload after AdvA(6):
 AD_PAYLOAD_TYPES = {0: "ADV_IND", 2: "ADV_NONCONN_IND", 6: "ADV_SCAN_IND", 4: "SCAN_RSP"}
 
 
-def company_of(ad: bytes) -> int:
-    """First manufacturer-specific (0xFF) AD structure's company id (LE16), else 0."""
+def scan_ad(ad: bytes):
+    """Return (company, svc_uuid, mfg_value, svcdata_value) from an AD payload.
+    mfg_value includes the 2-byte company id; svcdata_value includes the 2-byte UUID."""
+    company, svc, mfg, svcd = 0, 0, b"", b""
     i = 0
     while i + 1 < len(ad):
         l = ad[i]
         if l == 0 or i + 1 + l > len(ad):
             break
-        if ad[i + 1] == 0xFF and l >= 3:
-            return ad[i + 2] | (ad[i + 3] << 8)
+        t = ad[i + 1]
+        v = ad[i + 2:i + 1 + l]
+        if t == 0xFF and not mfg:
+            mfg = v
+            if len(v) >= 2:
+                company = v[0] | (v[1] << 8)
+        elif t == 0x16 and not svcd:
+            svcd = v
+            if len(v) >= 2:
+                svc = v[0] | (v[1] << 8)
         i += 1 + l
-    return 0
+    return company, svc, mfg, svcd
+
+
+def addr_type(txadd: int, adva: bytes) -> str:
+    if txadd == 0:
+        return "public"
+    return {3: "static", 1: "rpa", 0: "nrpa"}.get(adva[5] >> 6, "static")
 
 
 def main():
@@ -41,7 +65,7 @@ def main():
         rh = f.read(16)
         if len(rh) < 16:
             break
-        ts, tu, incl, orig = struct.unpack("<IIII", rh)
+        ts_sec, ts_usec, incl, orig = struct.unpack("<IIII", rh)
         data = f.read(incl)
         if len(data) < incl:
             break
@@ -59,11 +83,22 @@ def main():
         pdu = data[16:16 + plen]                 # AdvA(6) + AD
         if len(pdu) < 6:
             continue
+        adva = pdu[:6]
         ad = pdu[6:]
         if not ad:
             continue
-        sys.stdout.write(json.dumps({"company": company_of(ad), "ad": ad.hex()},
-                                    separators=(",", ":")) + "\n")
+        company, svc, mfg, svcd = scan_ad(ad)
+        obj = {
+            "ts": round(ts_sec + ts_usec / 1e6, 3),
+            "company": company,
+            "svc": svc,
+            "atype": addr_type((h0 >> 6) & 1, adva),
+            "addr": adva[::-1].hex(),
+            "mfg": mfg.hex(),
+            "svcd": svcd.hex(),
+            "ad": ad.hex(),
+        }
+        sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
         emitted += 1
     named = {AD_PAYLOAD_TYPES.get(k, f"type{k}"): v for k, v in sorted(counts.items())}
     sys.stderr.write(f"records={recs} adv_pdus={sum(counts.values())} emitted_ad={emitted}\n")

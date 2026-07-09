@@ -48,7 +48,23 @@ Notes on the host shim:
   `esp_log.h`, `sdkconfig.h`, `host/ble_hs.h`, `host/ble_uuid.h`). `learn_stub.c`
   implements the learn API as no-ops and stubs `rf_model_load_nvs` (no NVS on host).
 
-## Run the pipeline
+## One-step (Windows/PowerShell)
+
+`run.ps1` wraps everything — it builds `synth_dump` if missing, then runs all three
+steps (handling the ASCII-redirect gotcha for you):
+
+```powershell
+.\run.ps1                                   # audit the default bench capture
+.\run.ps1 -Capture ..\..\private\x.pcap -Count 512
+.\run.ps1 -Gate 0.4                         # exit 1 if headline > 0.4 (CI gate)
+.\run.ps1 -Rebuild                          # force a fresh build first
+```
+
+Params: `-Capture`, `-Seed`, `-Count`, `-OutDir`, `-Gate`, `-Rebuild`. Needs `cl`
+on PATH (a "Developer PowerShell for VS", or run vcvars first). The manual steps
+below are the portable/CI form.
+
+## Run the pipeline (manual / portable)
 
 Captures and their intermediates stay under the gitignored `private/`.
 

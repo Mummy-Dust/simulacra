@@ -12,7 +12,9 @@ def build_scorecard(synth, profile):
             "headline_tell":ds[0]["name"] if ds else None}
 
 def _load_ndjson(path):
-    return [json.loads(l) for l in open(path) if l.strip()]
+    # utf-8-sig tolerates a BOM (e.g. if the file was written by a shell that adds one)
+    with open(path, encoding="utf-8-sig") as f:
+        return [json.loads(l) for l in f if l.strip()]
 
 def main():
     ap=argparse.ArgumentParser()

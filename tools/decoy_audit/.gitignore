@@ -1,0 +1,10 @@
+# build artifacts
+synth_dump
+synth_dump.exe
+*.obj
+__pycache__/
+*.pyc
+# test-generated fixtures / temp files
+tests/*.pcap
+tests/_*.txt
+tests/_*.seed

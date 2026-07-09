@@ -85,19 +85,26 @@ python scorecard.py ../../private/synth.ndjson ../../private/profile.json --json
 
 ```
 DISCRIMINATOR            SEPARABILITY VISIBILITY
-address_type_mix               0.2997 logic
-vendor_histogram               0.2198 logic
-interval_distribution          0.0030 logic
-HEADLINE (max) 0.2997  worst tell: address_type_mix
+vendor_histogram               0.1994 logic
+address_type_mix               0.0034 logic
+interval_distribution          0.0019 logic
+HEADLINE (max) 0.1994  worst tell: vendor_histogram
 ```
 
-Reading it — **`address_type_mix` (0.30)** is the top tell: decoys are 100%
-static-random while the real crowd was ~52% static / 36% RPA / 12% public, so decoys
-never present an RPA. **`interval_distribution` (0.003)** is now effectively closed:
-`generate.c` samples `other_itvl_bins` for the no-mfg / diversified mass, so the decoy
-cadence matches the real crowd (previously 0.38 — the `OTHER` bucket fell to a fast
-100–300 ms fallback and `other_itvl_bins` was dead code). **`vendor_histogram`
-(0.22)** is device-weighted and honest — see the note below.
+Reading it — two structural tells have been fixed and the honest headline is down
+from 0.38 to 0.20:
+- **`address_type_mix` (0.003)** — was 0.30 (decoys were 100% static-random, never an
+  RPA). `roster.c` now presents a realistic static/RPA/NRPA blend (~52/36/12) via
+  `make_random_addr_mixed`; all three are *random* address subtypes, so no real MAC is
+  exposed. Verified on the C5: the controller accepts all subtypes (no `set_addr`
+  rejections in `churn_adv`).
+- **`interval_distribution` (0.002)** — was 0.38. `generate.c` samples
+  `other_itvl_bins` for the no-mfg / diversified mass instead of a fast 100–300 ms
+  fallback (`other_itvl_bins` had been dead code), so the decoy cadence matches the
+  real crowd's heavy-tailed intervals.
+- **`vendor_histogram` (0.20)** is now the top tell — device-weighted and honest (see
+  the note below). It reflects the decoys carrying template vendors not present in this
+  specific environment; largely environment-shaped rather than a structural defect.
 
 > **Why the vendor histogram is device-weighted.** Co-travel correlation tracks
 > distinct entities, not advert volume. An earlier advert-weighted metric scored

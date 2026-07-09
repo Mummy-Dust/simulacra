@@ -147,7 +147,7 @@ size_t generate_roster(const rf_model_t *m, identity_t *roster, size_t n)
     size_t built = 0;
     for (size_t r=0;r<n;r++){
         identity_t *id=&roster[r];
-        make_random_static_addr_pub(id->addr);
+        make_random_addr_mixed(id->addr);
         int vi = (k>0)? weighted_pick(counts,k) : -1;
         uint16_t company = (vi>=0)? ids[vi] : RF_VENDOR_UNKNOWN;
 

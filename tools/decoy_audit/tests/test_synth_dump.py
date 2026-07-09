@@ -13,9 +13,15 @@ class SynthDump(unittest.TestCase):
         self.assertEqual(len(r), 64)
         for k in ("addr","atype","company","itvl_ms","tx","arch","plen"):
             self.assertIn(k, r[0])
-    def test_all_addresses_static_random(self):
-        # decoys always use make_random_static_addr_pub -> static
-        self.assertTrue(all(x["atype"] == "static" for x in self.rows()))
+    def test_address_type_is_a_realistic_mix(self):
+        # decoys must present a static/RPA/NRPA blend (like a real crowd), NOT 100% static.
+        # All three types present; static is the plurality but well under 100%.
+        from collections import Counter
+        r = self.rows(seed=9, n=256); c = Counter(x["atype"] for x in r); n = len(r)
+        self.assertGreater(c["rpa"], 0.20*n)      # RPA-looking present (~36% target)
+        self.assertGreater(c["public"], 0.03*n)   # NRPA/"public" present (~12% target)
+        self.assertLess(c["static"], 0.75*n)      # not a static-random monoculture
+        self.assertEqual(set(c) - {"static","rpa","public"}, set())  # no stray types
     def test_intervals_and_company_populated(self):
         r = self.rows()
         self.assertTrue(all(x["itvl_ms"] > 0 for x in r))

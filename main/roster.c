@@ -8,18 +8,37 @@
 static identity_t s_roster[CHURN_ROSTER_SIZE];
 static size_t     s_cursor;
 
-// Build a valid random-static address: 6 random bytes with the two most
-// significant bits set. Regenerates the astronomically rare all-zero / all-ones
-// random part that NimBLE would reject. Shared with generate.c (M6).
-void make_random_static_addr_pub(uint8_t out[6])
+// Build a valid random address whose two most-significant bits are `top2`
+// (0xC0 = static-random, 0x40 = resolvable-private/RPA-looking, 0x00 = non-resolvable-private).
+// 6 random bytes; regenerates the astronomically rare all-zero / all-ones random part that
+// NimBLE would reject. All subtypes are RANDOM addresses, so no real MAC is ever exposed.
+void make_random_addr(uint8_t out[6], uint8_t top2)
 {
     for (;;) {
         for (int i = 0; i < 6; i++) out[i] = (uint8_t)(esp_random() & 0xff);
-        out[5] |= 0xc0;
+        out[5] = (uint8_t)((out[5] & 0x3f) | (top2 & 0xc0));
         int ones = __builtin_popcount(out[5] & 0x3f);
         for (int i = 0; i < 5; i++) ones += __builtin_popcount(out[i]);
         if (ones != 0 && ones != 46) return;
     }
+}
+
+void make_random_static_addr_pub(uint8_t out[6]) { make_random_addr(out, 0xc0); }
+
+// Address-type mix the decoy fleet presents. A real BLE crowd blends random-static peripherals,
+// RPA-rotating phones, and NRPA/other; presenting 100% static-random was the leading tell
+// (see tools/decoy_audit -> address_type_mix). Weights are a representative default calibrated
+// against the bench reference (~52% static / 36% RPA / 12% NRPA).
+static const uint8_t  ATYPE_TOP2[3] = { 0xc0, 0x40, 0x00 };   // static, RPA, NRPA (bits 6-7)
+static const uint16_t ATYPE_W[3]    = {   52,   36,   12 };
+
+// Fill a random address, choosing its subtype by the fleet mix above.
+void make_random_addr_mixed(uint8_t out[6])
+{
+    uint16_t r = (uint16_t)(esp_random() % (ATYPE_W[0] + ATYPE_W[1] + ATYPE_W[2]));
+    uint8_t top2 = 0xc0;
+    for (int i = 0; i < 3; i++) { if (r < ATYPE_W[i]) { top2 = ATYPE_TOP2[i]; break; } r -= ATYPE_W[i]; }
+    make_random_addr(out, top2);
 }
 
 // M4 fallback: build every identity from a randomly-picked archetype bundle (templates.c).
@@ -28,7 +47,7 @@ static void roster_fill_from_templates(void)
 {
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = &s_roster[i];
-        make_random_static_addr_pub(id->addr);
+        make_random_addr_mixed(id->addr);
         const device_template_t *t = templates_pick();
         uint16_t itvl = 0, cid = 0;
         if (template_build(t, id->payload, &id->payload_len, &itvl, &cid) != 0) {

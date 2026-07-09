@@ -15,7 +15,9 @@ void        roster_init(void);
 identity_t *roster_promote_candidate(uint32_t now_ms);  // eligible identity (now IDLE) or NULL
 size_t      roster_count_in_state(id_state_t s);
 identity_t *roster_at(size_t i);                        // for tests
-void        make_random_static_addr_pub(uint8_t out[6]);// shared with generate.c (M6)
+void        make_random_static_addr_pub(uint8_t out[6]);// always static-random (top bits 11)
+void        make_random_addr(uint8_t out[6], uint8_t top2);   // random addr with given top-2-bits
+void        make_random_addr_mixed(uint8_t out[6]);    // random addr, realistic static/RPA/NRPA mix
 // M8 live re-profiling: regenerate ONLY the IDLE identities from a fresh model. ACTIVE and
 // COOLDOWN identities keep their MAC/payload, so the visible crowd turns over gradually
 // (fresh room-matched identities phase in as churn promotes them; no hard swap).

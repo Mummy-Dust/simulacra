@@ -29,7 +29,7 @@ static const uint8_t CH_24[] = { 1, 6, 11 };
 static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
 #endif
 
-typedef struct { uint8_t mac[6]; probe_arch_t arch; } probe_phone_t;
+typedef struct { uint8_t mac[6]; probe_arch_t arch; uint16_t seq; } probe_phone_t;
 static probe_phone_t s_phones[PROBE_MAX_PHONES];
 static int      s_n;
 static int      s_hop;
@@ -59,6 +59,7 @@ void probe_pool_init(void)
     for (int i = 0; i < s_n; i++) {
         probe_random_mac(s_phones[i].mac);
         s_phones[i].arch = probe_pick_archetype();
+        s_phones[i].seq  = (uint16_t)(esp_random() & 0x0FFF);   // random 12-bit base per phone
         mix[s_phones[i].arch]++;
     }
     ESP_LOGW(TAG, "probe pool: %d phones (iphone=%d galaxy=%d pixel=%d android=%d)",
@@ -86,7 +87,11 @@ int probe_inject_burst(uint8_t channel)
         uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
         if (probe_build_request(s_phones[i].mac, channel, s_phones[i].arch, band5, f, &n) != 0)
             continue;                                           // archetype lacks this band (defensive)
-        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, true);
+        uint16_t sc = (uint16_t)(s_phones[i].seq << 4);         // seq -> bits 4..15, frag=0
+        f[22] = (uint8_t)(sc & 0xFF);
+        f[23] = (uint8_t)((sc >> 8) & 0xFF);
+        s_phones[i].seq = (s_phones[i].seq + 1) & 0x0FFF;
+        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, false);  // en_sys_seq=false: use OUR seq
         s_probes_sent++;
     }
     if ((esp_random() % PROBE_ROTATE_EVERY) == 0) {             // retire one fake phone -> fresh MAC + arch

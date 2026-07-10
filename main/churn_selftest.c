@@ -724,7 +724,7 @@ static void test_probe_frame(void)
 {
     const uint8_t mac[6] = {0x12,0x34,0x56,0x78,0x9a,0xbc};
     uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
-    ST_CHECK(probe_build_request(mac, 6, f, &n) == 0 && n >= 24 && n <= PROBE_FRAME_MAX, "probe frame builds, valid length");
+    ST_CHECK(probe_build_request(mac, 6, ARCH_IPHONE, false, f, &n) == 0 && n >= 24 && n <= PROBE_FRAME_MAX, "probe frame builds, valid length");
     ST_CHECK(f[0] == 0x40 && f[1] == 0x00, "frame control = probe request");
     bool da=true, bssid=true, sa=true;
     for (int i=0;i<6;i++){ if (f[4+i]!=0xff) da=false; if (f[16+i]!=0xff) bssid=false; if (f[10+i]!=mac[i]) sa=false; }

@@ -1,40 +1,7 @@
-#include <string.h>
+// Live radio path. The pure frame builder + archetype tables live in probe_frame.c
+// (host-testable); this file owns Wi-Fi bring-up, the fake-phone pool, and injection.
 #include "probe.h"
 #include "esp_random.h"
-
-void probe_random_mac(uint8_t out[6])
-{
-    for (;;) {
-        for (int i = 0; i < 6; i++) out[i] = (uint8_t)(esp_random() & 0xff);
-        out[0] = (uint8_t)((out[0] & 0xFC) | 0x02);   // locally-administered, unicast
-        int zero = 1, ff = 1;
-        for (int i = 0; i < 6; i++) { if (out[i]) zero = 0; if (out[i] != 0xff) ff = 0; }
-        if (!zero && !ff) return;
-    }
-}
-
-int probe_build_request(const uint8_t mac[6], uint8_t channel, uint8_t *out, size_t *out_len)
-{
-    static const uint8_t hdr_tail[] = {
-        0x00, 0x00,                         // SSID IE: id 0, len 0  (WILDCARD -- Law 3)
-        0x01, 0x04, 0x02, 0x04, 0x0b, 0x16, // Supported Rates: 1,2,5.5,11 Mbps
-        0x32, 0x04, 0x0c, 0x12, 0x18, 0x24, // Extended Supported Rates: 6,9,12,18 Mbps
-        0x03, 0x01, 0x00,                   // DS Parameter Set: id 3, len 1, channel (filled below)
-    };
-    uint8_t *p = out;
-    *p++ = 0x40; *p++ = 0x00;               // frame control: mgmt/probe-req, no flags
-    *p++ = 0x00; *p++ = 0x00;               // duration
-    memset(p, 0xff, 6); p += 6;             // DA broadcast
-    memcpy(p, mac, 6); p += 6;              // SA = our randomized MAC
-    memset(p, 0xff, 6); p += 6;             // BSSID broadcast
-    *p++ = 0x00; *p++ = 0x00;               // seq control (driver overwrites when en_sys_seq=true)
-    memcpy(p, hdr_tail, sizeof(hdr_tail)); p += sizeof(hdr_tail);
-    out[p - out - 1] = channel;             // DS param channel = last byte
-    *out_len = (size_t)(p - out);
-    return 0;
-}
-
-// --- live radio path ---
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -62,7 +29,8 @@ static const uint8_t CH_24[] = { 1, 6, 11 };
 static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
 #endif
 
-static uint8_t  s_macs[PROBE_MAX_PHONES][6];
+typedef struct { uint8_t mac[6]; probe_arch_t arch; } probe_phone_t;
+static probe_phone_t s_phones[PROBE_MAX_PHONES];
 static int      s_n;
 static int      s_hop;
 static uint32_t s_probes_sent;   // cumulative probe requests injected (dashboard telemetry)
@@ -87,7 +55,14 @@ int probe_wifi_init(void)
 void probe_pool_init(void)
 {
     s_n = PROBE_PHONES; if (s_n > PROBE_MAX_PHONES) s_n = PROBE_MAX_PHONES;
-    for (int i = 0; i < s_n; i++) probe_random_mac(s_macs[i]);
+    int mix[PROBE_ARCH_COUNT] = {0};
+    for (int i = 0; i < s_n; i++) {
+        probe_random_mac(s_phones[i].mac);
+        s_phones[i].arch = probe_pick_archetype();
+        mix[s_phones[i].arch]++;
+    }
+    ESP_LOGW(TAG, "probe pool: %d phones (iphone=%d galaxy=%d pixel=%d android=%d)",
+             s_n, mix[ARCH_IPHONE], mix[ARCH_GALAXY], mix[ARCH_PIXEL], mix[ARCH_ANDROID]);
 }
 
 int probe_phone_count(void) { return s_n; }
@@ -104,17 +79,23 @@ size_t probe_channels_5g(const uint8_t **out)
 
 int probe_inject_burst(uint8_t channel)
 {
+    bool band5 = (channel >= 36);
     int crc = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
     int rc = 0;
     for (int i = 0; i < s_n; i++) {
         uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
-        probe_build_request(s_macs[i], channel, f, &n);
+        if (probe_build_request(s_phones[i].mac, channel, s_phones[i].arch, band5, f, &n) != 0)
+            continue;                                           // archetype lacks this band (defensive)
         rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, true);
         s_probes_sent++;
     }
-    if ((esp_random() % PROBE_ROTATE_EVERY) == 0)               // retire one fake phone -> fresh MAC
-        probe_random_mac(s_macs[esp_random() % s_n]);
-    ESP_LOGW(TAG, "burst ch=%u phones=%d set_ch_rc=%d tx_rc=%d", channel, s_n, crc, rc);
+    if ((esp_random() % PROBE_ROTATE_EVERY) == 0) {             // retire one fake phone -> fresh MAC + arch
+        int k = esp_random() % s_n;
+        probe_random_mac(s_phones[k].mac);
+        s_phones[k].arch = probe_pick_archetype();
+    }
+    ESP_LOGW(TAG, "burst ch=%u phones=%d band5=%d set_ch_rc=%d tx_rc=%d",
+             channel, s_n, band5, crc, rc);
     return rc;
 }
 

@@ -102,3 +102,45 @@ class Rotation(unittest.TestCase):
         self.assertTrue(per_tick_rot, "no rotations observed")
         # no single instant rotates a large share of the population (no synchronized volley)
         self.assertLess(max(per_tick_rot.values()), 24 // 2, "synchronized rotation volley")
+
+@unittest.skipUnless(os.path.exists(EXE), "synth_dump not built")
+class Lifecycle(unittest.TestCase):
+    def slot_births(self, rows):
+        by_slot = defaultdict(list)
+        for r in sorted(rows, key=lambda r: (r[1], r[0])):
+            if r[5] == "born": by_slot[r[1]].append(r)
+        return by_slot
+
+    def test_population_turns_over(self):
+        rows = sim(21, n=16, ticks=8000, tick_ms=1000)     # ~133 min simulated
+        births = self.slot_births(rows)
+        total_births = sum(len(v) for v in births.values())
+        self.assertGreater(total_births, 16, "no rebirths — population never turned over")
+
+    def test_lifetime_bounded_by_role(self):
+        rows = sim(22, n=24, ticks=12000, tick_ms=1000)
+        births = self.slot_births(rows)
+        for slot, bs in births.items():
+            for a, b in zip(bs, bs[1:]):
+                span = b[0] - a[0]                          # birth-to-rebirth ≈ life_ms
+                role = a[4]
+                cap = 720000 if role == "transient" else 5400000
+                self.assertLessEqual(span, cap + 1000, f"{role} slot {slot} outlived its band: {span} ms")
+
+    def test_no_address_resurrection(self):
+        rows = sim(23, n=24, ticks=10000, tick_ms=1000)
+        seen = set()
+        for _, _, addr, *_ in rows:
+            # an address may repeat only as consecutive same-slot events (already unique per emit);
+            # here every emitted address must be globally unique (fresh 46-bit random each time)
+            self.assertNotIn(addr, seen, "an address reappeared after use")
+            seen.add(addr)
+
+    def test_rebirth_is_fresh(self):
+        rows = sim(24, n=24, ticks=10000, tick_ms=1000)
+        births = self.slot_births(rows)
+        multi = {s: bs for s, bs in births.items() if len(bs) >= 2}
+        self.assertTrue(multi, "no slot was reborn to compare")
+        for slot, bs in multi.items():
+            addrs = [b[2] for b in bs]
+            self.assertEqual(len(addrs), len(set(addrs)), f"slot {slot} reused an address on rebirth")

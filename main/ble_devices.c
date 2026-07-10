@@ -80,11 +80,16 @@ void ble_devices_tick(uint32_t now_ms)
 {
     for (int i = 0; i < s_n; i++) {
         ble_device_t *d = &s_dev[i];
+        if (d->alive && (now_ms - d->born_ms) >= d->life_ms) {
+            dev_spawn(d, now_ms);          // dies; reborn fresh (new subtype/role/behaviour/addr/phase)
+        }
+    }
+    for (int i = 0; i < s_n; i++) {
+        ble_device_t *d = &s_dev[i];
         if (!d->alive) continue;
-        if (d->atype == BLE_ATYPE_STATIC) continue;          // static addresses never rotate
+        if (d->atype == BLE_ATYPE_STATIC) continue;
         if ((int32_t)(now_ms - d->next_rotate_ms) >= 0) {
-            make_random_addr(d->id.addr, top2_for(d->atype)); // new address, SAME subtype
-            // behaviour (payload/itvl/company/tx/archetype) is deliberately unchanged
+            make_random_addr(d->id.addr, top2_for(d->atype));
             d->next_rotate_ms = now_ms + rotate_base(d->atype);
         }
     }

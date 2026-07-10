@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "probe_frame.h"   // PROBE_FRAME_MAX, archetypes, probe_random_mac, probe_build_request
+#include "probe_agents.h"  // independent per-phone agents: seq, lifecycle, due-selection
 
 // Start Wi-Fi raw TX + the injection loop (Wi-Fi-only mode; BLE idle).
 void   probe_start(void);

@@ -76,5 +76,16 @@ void ble_devices_init(int n, uint32_t now_ms)
 int ble_devices_count(void) { return s_n; }
 const ble_device_t *ble_devices_at(int i) { return (i >= 0 && i < s_n) ? &s_dev[i] : 0; }
 
-/* rotation + lifecycle land in Tasks 2-3 */
-void ble_devices_tick(uint32_t now_ms) { (void)now_ms; }
+void ble_devices_tick(uint32_t now_ms)
+{
+    for (int i = 0; i < s_n; i++) {
+        ble_device_t *d = &s_dev[i];
+        if (!d->alive) continue;
+        if (d->atype == BLE_ATYPE_STATIC) continue;          // static addresses never rotate
+        if ((int32_t)(now_ms - d->next_rotate_ms) >= 0) {
+            make_random_addr(d->id.addr, top2_for(d->atype)); // new address, SAME subtype
+            // behaviour (payload/itvl/company/tx/archetype) is deliberately unchanged
+            d->next_rotate_ms = now_ms + rotate_base(d->atype);
+        }
+    }
+}

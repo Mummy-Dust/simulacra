@@ -45,3 +45,60 @@ class Spawn(unittest.TestCase):
     def test_behaviour_populated(self):
         rows = sim(3, n=16)
         self.assertTrue(all(itvl > 0 for *_, itvl in rows), "a device has zero advertising interval")
+
+@unittest.skipUnless(os.path.exists(EXE), "synth_dump not built")
+class Rotation(unittest.TestCase):
+    def segments(self, rows):
+        # group each slot's events into life-segments delimited by 'born'
+        by_slot = defaultdict(list)
+        for r in sorted(rows, key=lambda r: (r[1], r[0])):
+            by_slot[r[1]].append(r)
+        segs = []
+        for slot, evs in by_slot.items():
+            cur = None
+            for e in evs:
+                if e[5] == "born":
+                    if cur: segs.append(cur)
+                    cur = [e]
+                elif cur:
+                    cur.append(e)
+            if cur: segs.append(cur)
+        return segs
+
+    def test_static_never_rotates(self):
+        segs = self.segments(sim(11, n=24, ticks=6000, tick_ms=1000))
+        static_segs = [s for s in segs if s[0][3] == "static"]
+        self.assertTrue(static_segs, "no static devices sampled")
+        for s in static_segs:
+            self.assertEqual([e for e in s if e[5] == "rotate"], [], "a static device rotated")
+
+    def test_rpa_rotation_in_band(self):
+        segs = self.segments(sim(12, n=24, ticks=8000, tick_ms=1000))
+        rots = []
+        for s in segs:
+            if s[0][3] != "rpa": continue
+            ts = [e[0] for e in s if e[5] in ("born", "rotate")]
+            rots += [b - a for a, b in zip(ts, ts[1:])]
+        self.assertTrue(rots, "no RPA rotations observed")
+        # every observed inter-rotation gap sits in the 10-20 min band (ms), allowing tick slack
+        for g in rots:
+            self.assertGreaterEqual(g, 600000 - 1000, f"RPA rotated too fast: {g} ms")
+            self.assertLessEqual(g, 1200000 + 1000, f"RPA rotated too slow: {g} ms")
+
+    def test_behaviour_preserved_across_rotation(self):
+        segs = self.segments(sim(13, n=24, ticks=8000, tick_ms=1000))
+        rotated = [s for s in segs if any(e[5] == "rotate" for e in s)]
+        self.assertTrue(rotated, "no rotations to check continuity on")
+        for s in rotated:
+            companies = set(e[6] for e in s); itvls = set(e[7] for e in s)
+            self.assertEqual(len(companies), 1, "company changed across a rotation")
+            self.assertEqual(len(itvls), 1, "interval changed across a rotation")
+            addrs = [e[2] for e in s]
+            self.assertEqual(len(addrs), len(set(addrs)), "a rotation reused an address")
+
+    def test_rotation_phase_independent(self):
+        rows = sim(14, n=24, ticks=8000, tick_ms=1000)
+        per_tick_rot = Counter(e[0] for e in rows if e[5] == "rotate")
+        self.assertTrue(per_tick_rot, "no rotations observed")
+        # no single instant rotates a large share of the population (no synchronized volley)
+        self.assertLess(max(per_tick_rot.values()), 24 // 2, "synchronized rotation volley")

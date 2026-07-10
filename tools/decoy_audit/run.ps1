@@ -52,7 +52,7 @@ if ($Rebuild -or -not (Test-Path $exe)) {
         cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h `
            /Ihost_stubs /I..\..\main /I..\..\components\simulacra_radar `
            synth_dump.c ble_hs_adv.c learn_stub.c `
-           ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c `
+           ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c `
            /Fe:synth_dump.exe | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 3 }
     } finally { Pop-Location }

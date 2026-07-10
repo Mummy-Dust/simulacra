@@ -1,7 +1,7 @@
 CC ?= cc
 ROOT := ../..
 SRC := synth_dump.c ble_hs_adv.c learn_stub.c \
-       $(ROOT)/main/generate.c $(ROOT)/main/templates.c $(ROOT)/main/roster.c
+       $(ROOT)/main/generate.c $(ROOT)/main/templates.c $(ROOT)/main/roster.c $(ROOT)/main/ble_devices.c
 INC := -Ihost_stubs -I$(ROOT)/main -I$(ROOT)/components/simulacra_radar
 CFLAGS ?= -O2 -Wall -Wno-unused-parameter
 all: synth_dump

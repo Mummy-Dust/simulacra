@@ -4,6 +4,8 @@
 #include "rf_model.h"
 #include "identity.h"
 #include "generate.h"
+#include "ble_devices.h"
+#include "roster.h"
 
 static const char *atype_of(const uint8_t addr[6]) {
     switch (addr[5] >> 6) { case 3: return "static"; case 1: return "rpa";
@@ -54,6 +56,39 @@ static int load_model_seed(const char *path, rf_model_t *m) {
     return 0;
 }
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--devices") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      ndev   = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 16;
+        int      ticks  = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 4000;
+        unsigned tickms = argc > 5 ? (unsigned)strtoul(argv[5], 0, 10) : 1000;
+        srand(seed);
+        roster_init();                                  // build the behaviour library (host: template fallback)
+        uint32_t t = 0;
+        ble_devices_init(ndev, t);
+        static uint8_t prev[BLE_DEVICES_MAX][6];
+        static int     seen[BLE_DEVICES_MAX];
+        memset(seen, 0, sizeof seen);
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            ble_devices_tick(t);
+            int cnt = ble_devices_count();
+            for (int i = 0; i < cnt; i++) {
+                const ble_device_t *d = ble_devices_at(i);
+                if (!seen[i] || memcmp(prev[i], d->id.addr, 6) != 0) {
+                    const char *ev = (d->born_ms == t) ? "born" : "rotate";
+                    const char *at = d->atype == BLE_ATYPE_STATIC ? "static"
+                                   : d->atype == BLE_ATYPE_RPA    ? "rpa" : "nrpa";
+                    const char *ro = d->role  == BLE_ROLE_RESIDENT ? "resident" : "transient";
+                    char hex[13];
+                    for (int b = 0; b < 6; b++) sprintf(hex + b*2, "%02x", d->id.addr[b]);
+                    printf("D %u %d %s %s %s %s %u %u\n", (unsigned)t, i, hex, at, ro, ev,
+                           (unsigned)d->id.company_id, (unsigned)d->id.adv_itvl_ms);
+                    memcpy(prev[i], d->id.addr, 6); seen[i] = 1;
+                }
+            }
+        }
+        return 0;
+    }
     unsigned seed = (argc > 1) ? (unsigned)strtoul(argv[1], 0, 10) : 1;
     size_t   n    = (argc > 2) ? (size_t)strtoul(argv[2], 0, 10) : 64;
     srand(seed);

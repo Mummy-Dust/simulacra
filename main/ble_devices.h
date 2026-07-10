@@ -1,0 +1,31 @@
+#pragma once
+#include <stdint.h>
+#include <stdbool.h>
+#include "identity.h"
+
+// Max concurrent persistent devices per board. The runtime population (set at init) is
+// clamped to this. Perceived density comes from turnover, not from raising this ceiling.
+#define BLE_DEVICES_MAX 32
+
+typedef enum { BLE_ATYPE_STATIC, BLE_ATYPE_RPA, BLE_ATYPE_NRPA } ble_atype_t;
+typedef enum { BLE_ROLE_TRANSIENT, BLE_ROLE_RESIDENT } ble_role_t;
+
+typedef struct {
+    identity_t  id;             // advertising identity: addr + frozen behaviour (payload/itvl/tx/company/arch)
+    ble_atype_t atype;          // fixed for life; selects rotation policy (STATIC never rotates)
+    ble_role_t  role;           // fixed for life; selects the lifetime band
+    uint32_t    born_ms;        // set at spawn; == now on a fresh birth/rebirth
+    uint32_t    life_ms;        // bounded lifetime; on expiry the device dies and is reborn fresh
+    uint32_t    next_rotate_ms; // next address rotation (ignored for STATIC)
+    bool        alive;
+} ble_device_t;
+
+// Spawn `n` persistent devices (clamped to BLE_DEVICES_MAX). Behaviour is drawn from the
+// roster library, so roster_init() MUST have been called first.
+void  ble_devices_init(int n, uint32_t now_ms);
+// One scheduler tick: retire+reincarnate expired devices, then rotate the address of any
+// rotating-subtype device whose next_rotate_ms has passed. Behaviour is preserved across a
+// rotation; only addr changes.
+void  ble_devices_tick(uint32_t now_ms);
+int   ble_devices_count(void);
+const ble_device_t *ble_devices_at(int i);

@@ -13,7 +13,11 @@ static const uint8_t CH[] = { 1, 6, 11 };
 
 // Debug: park on a single 2.4 GHz channel instead of hopping (0 = hop). Used to isolate an
 // injector pinned to the same channel from ambient noise.
-#define SNIFF_FIXED_CH 0
+#define SNIFF_FIXED_CH 1
+
+// Per-frame SA+seq logging: verifies the injector's 802.11 sequence numbers are independent
+// per source MAC (not one shared hardware counter). 0 = counts only.
+#define SNIFF_LOG_FRAMES 1
 
 static void rx_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 {
@@ -24,6 +28,11 @@ static void rx_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     if (f[0] != 0x40) return;            // frame control: probe request
     s_probes++;
     if (f[10] & 0x02) s_rand++;          // source MAC (offset 10) locally-administered
+#if SNIFF_LOG_FRAMES
+    uint16_t seq = (uint16_t)((f[22] | (f[23] << 8)) >> 4);   // 802.11 sequence number (12 bits)
+    ESP_LOGW(TAG, "pr sa=%02x:%02x:%02x:%02x:%02x:%02x seq=%u rssi=%d",
+             f[10], f[11], f[12], f[13], f[14], f[15], (unsigned)seq, p->rx_ctrl.rssi);
+#endif
 }
 
 static void sniff_task(void *arg)

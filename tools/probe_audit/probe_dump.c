@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "probe_frame.h"
+#include "probe_agents.h"
 
 /*
  * Host dumper for the probe-request archetype builder.
@@ -13,6 +14,29 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--agents") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      nag    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 8;
+        int      ticks  = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 2000;
+        unsigned tickms = argc > 5 ? (unsigned)strtoul(argv[5], 0, 10) : 2000;
+        srand(seed);
+        uint32_t t = 0;
+        probe_agents_init(nag, t);
+        for (int s = 0; s < ticks; s++) {
+            t += tickms;
+            probe_agents_lifecycle(t);
+            probe_agent_t *due[PROBE_AGENTS_MAX];
+            int nd = probe_agents_due(t, due, PROBE_AGENTS_MAX);
+            for (int i = 0; i < nd; i++) {
+                uint16_t sq = probe_agent_next_seq(due[i]);
+                printf("E %u ", (unsigned)t);
+                for (int b = 0; b < 6; b++) printf("%02x", due[i]->mac[b]);
+                printf(" %u\n", (unsigned)sq);
+            }
+        }
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--pick") == 0) {
         srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
         int n = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;

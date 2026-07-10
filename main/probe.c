@@ -14,24 +14,20 @@
 static const char *TAG = "probe";
 
 #if CONFIG_IDF_TARGET_ESP32C5
-#define PROBE_PHONES   8
+#define PROBE_PHONES   16
 #define PROBE_USE_5G   1
 #else
-#define PROBE_PHONES   4
+#define PROBE_PHONES   8
 #define PROBE_USE_5G   0
 #endif
-#define PROBE_MAX_PHONES 12
+#define PROBE_MAX_PHONES 16
 #define PROBE_BURST_MS   2000
-#define PROBE_ROTATE_EVERY 15          // ~1-in-15 bursts rotates one fake phone to a fresh MAC
 
 static const uint8_t CH_24[] = { 1, 6, 11 };
 #if PROBE_USE_5G
 static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
 #endif
 
-typedef struct { uint8_t mac[6]; probe_arch_t arch; } probe_phone_t;
-static probe_phone_t s_phones[PROBE_MAX_PHONES];
-static int      s_n;
 static int      s_hop;
 static uint32_t s_probes_sent;   // cumulative probe requests injected (dashboard telemetry)
 
@@ -54,18 +50,13 @@ int probe_wifi_init(void)
 
 void probe_pool_init(void)
 {
-    s_n = PROBE_PHONES; if (s_n > PROBE_MAX_PHONES) s_n = PROBE_MAX_PHONES;
-    int mix[PROBE_ARCH_COUNT] = {0};
-    for (int i = 0; i < s_n; i++) {
-        probe_random_mac(s_phones[i].mac);
-        s_phones[i].arch = probe_pick_archetype();
-        mix[s_phones[i].arch]++;
-    }
-    ESP_LOGW(TAG, "probe pool: %d phones (iphone=%d galaxy=%d pixel=%d android=%d)",
-             s_n, mix[ARCH_IPHONE], mix[ARCH_GALAXY], mix[ARCH_PIXEL], mix[ARCH_ANDROID]);
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    probe_agents_init(PROBE_PHONES, now);
+    ESP_LOGW(TAG, "probe agents: %d (independent seq, jittered scan, lifecycle churn)",
+             probe_agents_count());
 }
 
-int probe_phone_count(void) { return s_n; }
+int probe_phone_count(void) { return probe_agents_count(); }
 
 size_t probe_channels_24(const uint8_t **out) { *out = CH_24; return sizeof(CH_24)/sizeof(CH_24[0]); }
 size_t probe_channels_5g(const uint8_t **out)
@@ -80,22 +71,25 @@ size_t probe_channels_5g(const uint8_t **out)
 int probe_inject_burst(uint8_t channel)
 {
     bool band5 = (channel >= 36);
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    probe_agents_lifecycle(now);                                // birth/death turnover
     int crc = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-    int rc = 0;
-    for (int i = 0; i < s_n; i++) {
+
+    probe_agent_t *due[PROBE_MAX_PHONES];
+    int nd = probe_agents_due(now, due, PROBE_MAX_PHONES);      // decorrelated partial subset
+    int rc = 0, sent = 0;
+    for (int i = 0; i < nd; i++) {
         uint8_t f[PROBE_FRAME_MAX]; size_t n = 0;
-        if (probe_build_request(s_phones[i].mac, channel, s_phones[i].arch, band5, f, &n) != 0)
+        if (probe_build_request(due[i]->mac, channel, due[i]->arch, band5, f, &n) != 0)
             continue;                                           // archetype lacks this band (defensive)
-        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, true);
-        s_probes_sent++;
+        uint16_t sc = (uint16_t)(probe_agent_next_seq(due[i]) << 4);   // seq -> bits 4..15, frag=0
+        f[22] = (uint8_t)(sc & 0xFF);
+        f[23] = (uint8_t)((sc >> 8) & 0xFF);
+        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, false);  // en_sys_seq=false: per-agent seq
+        s_probes_sent++; sent++;
     }
-    if ((esp_random() % PROBE_ROTATE_EVERY) == 0) {             // retire one fake phone -> fresh MAC + arch
-        int k = esp_random() % s_n;
-        probe_random_mac(s_phones[k].mac);
-        s_phones[k].arch = probe_pick_archetype();
-    }
-    ESP_LOGW(TAG, "burst ch=%u phones=%d band5=%d set_ch_rc=%d tx_rc=%d",
-             channel, s_n, band5, crc, rc);
+    ESP_LOGW(TAG, "burst ch=%u due=%d/%d band5=%d set_ch_rc=%d tx_rc=%d",
+             channel, sent, probe_agents_count(), band5, crc, rc);
     return rc;
 }
 

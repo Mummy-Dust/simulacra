@@ -19,7 +19,7 @@ static void agent_spawn(probe_agent_t *a, uint32_t now_ms)
     probe_random_mac(a->mac);
     a->arch    = probe_pick_archetype();
     a->seq     = (uint16_t)(esp_random() & 0x0FFFu);             // fresh random 12-bit base
-    a->duty    = (esp_random() % 4u == 0u) ? DUTY_ACTIVE : DUTY_IDLE;  // ~25% active
+    a->duty    = (esp_random() % 3u == 0u) ? DUTY_ACTIVE : DUTY_IDLE;  // ~33% active
     a->born_ms = now_ms;
     a->life_ms = rnd_range(LIFE_MIN_MS, LIFE_MAX_MS);
     a->alive   = true;

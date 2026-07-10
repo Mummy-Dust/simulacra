@@ -14,13 +14,13 @@
 static const char *TAG = "probe";
 
 #if CONFIG_IDF_TARGET_ESP32C5
-#define PROBE_PHONES   8
+#define PROBE_PHONES   16
 #define PROBE_USE_5G   1
 #else
-#define PROBE_PHONES   4
+#define PROBE_PHONES   8
 #define PROBE_USE_5G   0
 #endif
-#define PROBE_MAX_PHONES 12
+#define PROBE_MAX_PHONES 16
 #define PROBE_BURST_MS   2000
 
 static const uint8_t CH_24[] = { 1, 6, 11 };

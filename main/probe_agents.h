@@ -7,7 +7,7 @@
 // sequence counter, a jittered scan schedule, and a bounded lifetime. The population turns over
 // (birth/death) so the set never stabilizes into a constellation fingerprint. Pure/host-testable:
 // no ESP radio/timer calls; the clock arrives as now_ms, randomness via esp_random().
-#define PROBE_AGENTS_MAX 12
+#define PROBE_AGENTS_MAX 16
 
 typedef enum { DUTY_ACTIVE, DUTY_IDLE } probe_duty_t;
 

@@ -1,16 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "probe_frame.h"   // PROBE_FRAME_MAX, archetypes, probe_random_mac, probe_build_request
 
-#define PROBE_FRAME_MAX 64   // header(24) + wildcard SSID + rates + ext rates + DS param < 64
-
-// Fill a randomized locally-administered, unicast MAC (Wi-Fi analog of BLE random-static).
-void   probe_random_mac(uint8_t out[6]);
-// Build a broadcast (wildcard-SSID) probe request for source `mac` on `channel`.
-// Writes the 802.11 frame to out (<= PROBE_FRAME_MAX) and its length. Returns 0 on success.
-int    probe_build_request(const uint8_t mac[6], uint8_t channel, uint8_t *out, size_t *out_len);
-
-// Start Wi-Fi raw TX + the injection loop (Wi-Fi-only mode; BLE idle). Implemented in Task 2.
+// Start Wi-Fi raw TX + the injection loop (Wi-Fi-only mode; BLE idle).
 void   probe_start(void);
 
 // --- scheduler-callable core (M8 coexistence) ---

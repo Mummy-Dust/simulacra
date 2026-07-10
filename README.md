@@ -102,7 +102,7 @@ v5.4 for the Vigil (classic ESP32). With the IDF environment active:
 ```sh
 # Decoy (Ward / Shade) — from the repo root
 idf.py set-target esp32c5          # or esp32c6 for Shade
-idf.py -DSIMULACRA_ESPNOW=1 build
+idf.py -DSIMULACRA_ESPNOW=1 -DSIMULACRA_CONFIG_CTRL=1 -DSIMULACRA_FLEET_PROVISION=1 build
 idf.py -p <PORT> flash monitor
 
 # Vigil controller — from ./cyd
@@ -114,6 +114,14 @@ idf.py -p <PORT> flash monitor
 
 Build-time gates (`-D…=1`) select each node's role and optional subsystems (fleet control,
 enrollment, self-test). See `docs/` for design specs and per-feature notes.
+
+**Fleet-key regime must match across the whole fleet.** With `-DSIMULACRA_FLEET_PROVISION=1`
+(shown above) the Vigil mints a random fleet key at first boot and grants it to decoys through
+enrollment — so decoys need the flag too, or they fall back to the baked compile-time key, never
+receive the grant, and stay invisible to the controller even while healthy. To run the simpler
+baked-key regime instead, omit `-DSIMULACRA_FLEET_PROVISION=1` from **every** node (all then share
+the key in `components/simulacra_radar/radar_key.h`). Changing any `-D…` flag needs a clean build
+(`rm -rf build sdkconfig`) so the old define doesn't linger.
 
 ## Repository layout
 

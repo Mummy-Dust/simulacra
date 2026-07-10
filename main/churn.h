@@ -22,6 +22,7 @@
 typedef int (*churn_apply_fn)(uint8_t instance, const identity_t *id);
 
 void   churn_set_apply(churn_apply_fn fn);
+// Milestone A: lifetime/rotation owned by ble_devices; these tuning setters are retained (inert) for API compatibility.
 // Set how many active slots churn fills/manages (1..CHURN_ACTIVE_SET). Call before churn_init.
 // Defaults to CHURN_ACTIVE_SET. This is the population-match knob (M6).
 void   churn_set_active_target(uint8_t n);

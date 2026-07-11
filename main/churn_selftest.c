@@ -539,20 +539,28 @@ static void test_tracker(void)
     ST_CHECK(payload_has_svc_uuid16(pay, len, 0xFEED), "tracker svc-data 0xFEED");
 }
 
+// A MAC produced by make_random_addr_mixed/make_random_addr is a valid BLE random
+// address whose top-2 bits select the subtype: 0xC0 static, 0x40 RPA, 0x00 NRPA.
+static bool is_valid_random_top2(uint8_t last)
+{
+    uint8_t top2 = last & 0xc0;
+    return top2 == 0xc0 || top2 == 0x40 || top2 == 0x00;
+}
+
 // Whole-roster structural + Law-3 guard: every identity must be a template-built,
-// budget-fitting, non-popup payload on a random-static MAC.
+// budget-fitting, non-popup payload on a valid random-subtype MAC.
 static void test_roster_payloads(void)
 {
     roster_init();
     bool macs_ok = true, payload_ok = true, no_popup = true, archetype_ok = true;
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = roster_at(i);
-        if ((id->addr[5] & 0xc0) != 0xc0) macs_ok = false;
+        if (!is_valid_random_top2(id->addr[5])) macs_ok = false;
         if (id->payload_len == 0 || id->payload_len > 31) payload_ok = false;
         if (has_apple_popup_subtype(id->payload, id->payload_len)) no_popup = false;
         if (id->archetype_idx >= templates_count() + learn_count()) archetype_ok = false;
     }
-    ST_CHECK(macs_ok, "roster: all MACs random-static");
+    ST_CHECK(macs_ok, "roster: all MACs are a valid random subtype (static/RPA/NRPA)");
     ST_CHECK(payload_ok, "roster: all payloads non-empty and <=31B");
     ST_CHECK(no_popup, "roster: no forbidden Apple subtype anywhere");
     ST_CHECK(archetype_ok, "roster: every identity carries a valid template index");
@@ -665,12 +673,12 @@ static void test_generate(void)
         if (roster[i].company_id==0x0040) c40++;
         if (roster[i].company_id==0x0075) c75++;
         if (roster[i].payload_len==0 || roster[i].payload_len>31) budget=false;
-        if ((roster[i].addr[5]&0xc0)!=0xc0) mac=false;
+        if (!is_valid_random_top2(roster[i].addr[5])) mac=false;
         if (has_apple_popup_subtype(roster[i].payload, roster[i].payload_len)) nopop=false;
         if (roster[i].archetype_idx >= templates_count() + learn_count()) arch=false;
     }
     ST_CHECK(budget, "generated payloads fit 31 bytes");
-    ST_CHECK(mac, "generated MACs are random-static");
+    ST_CHECK(mac, "generated MACs are a valid random subtype (static/RPA/NRPA)");
     ST_CHECK(nopop, "generated roster: no forbidden Apple subtype");
     ST_CHECK(arch, "generated identities carry a valid archetype index");
     ST_CHECK(c40 > c75, "generated vendor mix tracks the observed mix (0x0040 dominant)");
@@ -1401,11 +1409,10 @@ static void test_settings_resolve(void)
 static void test_settings_apply(void)
 {
     roster_init(); churn_set_apply(noop_apply);
+    // Milestone A: churn target/dwell are inert no-ops now (lifetime owned by ble_devices),
+    // so we only assert the settings behavior that still drives churn: pause/resume.
     sim_settings_apply_preset(SIM_PRESET_STEALTH);
-    ST_CHECK(churn_active_target() == (uint8_t)((CHURN_ACTIVE_SET*4)/10), "apply STEALTH sets churn target");
     ST_CHECK(!churn_paused(), "STEALTH is running");
-    uint32_t lo=0,hi=0; churn_get_dwell_ms(&lo,&hi);
-    ST_CHECK(lo == 300000, "apply STEALTH sets churn dwell");
 
     sim_settings_apply_preset(SIM_PRESET_PAUSE);
     ST_CHECK(churn_paused(), "apply PAUSE pauses churn");
@@ -1417,8 +1424,6 @@ static void test_settings_apply(void)
 
     // Restore NORMAL so subsequent tests run with defaults.
     sim_settings_apply_preset(SIM_PRESET_NORMAL);
-    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
-    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
 }
 
 static void test_config_wire(void)
@@ -1573,10 +1578,10 @@ int churn_selftest_run(void)
     bool macs_ok = true, payload_ok = true;
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = roster_at(i);
-        if ((id->addr[5] & 0xc0) != 0xc0) macs_ok = false;     // random-static
+        if (!is_valid_random_top2(id->addr[5])) macs_ok = false;   // static/RPA/NRPA subtype
         if (id->payload_len == 0) payload_ok = false;
     }
-    ST_CHECK(macs_ok, "roster: every MAC is random-static (top 2 bits set)");
+    ST_CHECK(macs_ok, "roster: every MAC is a valid random subtype (static/RPA/NRPA)");
     ST_CHECK(payload_ok, "roster: every identity has a non-empty payload");
 
     identity_t *c = roster_promote_candidate(0);

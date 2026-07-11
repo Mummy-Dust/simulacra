@@ -192,11 +192,32 @@ Owning rotation must reproduce *real* behaviour, not merely "change the address 
   never rotates. A mismatch (e.g. a static address that rotates, or an RPA that never does) is the
   exact tell this milestone closes.
 
-There is **no BLE analog of the Wi-Fi sequence-number gate**: BLE advertising PDUs carry no
-cross-address monotonic counter that the controller stamps, so the `en_sys_seq`-class hardware risk
-does not apply here. The residual hardware question is simply that the controller accepts frequent
-`ble_gap_ext_adv_set_addr` re-applies of all three random subtypes at the rotation cadence — already
-observed working for `set_addr` in `churn_adv` today, and confirmed by the on-air smoke check (§8).
+There is **no BLE analog of the Wi-Fi sequence-number gate** (BLE advertising PDUs carry no
+cross-address monotonic counter that the controller stamps) — but there **is** a NimBLE hardware gate,
+discovered on-air during implementation and just as decisive:
+
+> **RPA addresses cannot be set through the normal host API.** `ble_gap_ext_adv_set_addr()` validates
+> the random-address subtype and **rejects resolvable-private addresses** (top-2-bits `01` / `0x40`)
+> with `EINVAL` — only static (`11`) and NRPA (`00`) pass. Real privacy phones advertise with exactly
+> the RPA subtype this milestone exists to imitate, so this blocks the headline feature. It is also a
+> **pre-existing fleet bug**: on `main`, ~36% of BLE decoy identities (the RPA subtype) have silently
+> failed `set_addr` and never advertised. Worse, `decoy_audit` scored the address-type mix as closed
+> (~0.001) because it measures the *intended, host-side* identities from `synth_dump`, **not on-air
+> reality** — a false-confidence gap this discovery corrects.
+>
+> **Fix (analogous to the Wi-Fi `en_sys_seq=false` byte-control bypass):** the controller transmits
+> whatever six bytes it is handed; only the *host* enforces the subtype rule. So `churn_adv` sets a
+> validation-passing **static stub** via the host API (which flips `rnd_addr_set` so `ext_adv_start`
+> will not overwrite the address on enable), then **overrides** the controller's adv-set random
+> address with the real bytes — including RPA `01` — via the raw `LE_SET_ADV_SET_RND_ADDR` HCI command
+> (`ble_hs_hci_cmd_tx`, forward-declared since it lives in a private NimBLE header). To a *passive*
+> scanner a fabricated `01` address that rotates is indistinguishable from a real IRK-derived RPA
+> (resolution needs an IRK the attacker lacks). **Gate PASSED on-air:** a C5 promiscuous observer sees
+> co-located decoys transmitting RPA (`01`), NRPA (`00`), and static (`11`) addresses, and the
+> `set_addr rc=3` spam is gone. This fix also repairs the pre-existing `main` bug.
+
+The remaining routine hardware expectation is that the controller accepts frequent adv-set random
+address re-applies of all three subtypes at the rotation cadence — confirmed by the same on-air check.
 
 ## 7. Validation bar
 

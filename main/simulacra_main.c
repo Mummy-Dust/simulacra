@@ -43,6 +43,7 @@
 #include "identity.h"
 #include "roster.h"
 #include "churn.h"
+#include "ble_devices.h"
 #include "settings.h"
 #include "churn_adv.h"
 #include "churn_selftest.h"
@@ -135,15 +136,18 @@ static void simulacra_task(void *arg)
     // to the coordinator (it owns churn_tick + Wi-Fi bursts + re-profile). roster_init()
     // MUST precede churn_init(): churn pulls identities straight from the roster pool.
     roster_init();
+    int ndev = 12;
     {
         rf_model_t m;
         if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
             uint8_t at = generate_active_target(&m);
             churn_set_active_target(at);
+            ndev = (int)at;
             ESP_LOGW(TAG, "population-match: pop=%u active_target=%u",
                      (unsigned)(m.pop_ewma + 0.5f), (unsigned)at);
         }
     }
+    ble_devices_init(ndev, (uint32_t)(esp_timer_get_time() / 1000));  // population size; clamped to max
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
     sim_settings_init();   // restore persisted churn tunables (or firmware defaults)

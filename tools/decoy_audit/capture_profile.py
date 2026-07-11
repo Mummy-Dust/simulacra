@@ -67,13 +67,24 @@ def build_profile(adverts):
         t.sort()
         gaps=[(t[i+1]-t[i])*1000 for i in range(len(t)-1) if 5<(t[i+1]-t[i])*1000<60000]
         if gaps: ibins[itvl_bin(statistics.median(gaps))]+=1
+    # Aggregate per-address presence-duration histogram (privacy-safe: bucket counts only).
+    # Buckets match PRESENCE_BINS in analyzers/rotation_audit.py: <1,5,15,30,60,120,>120 min.
+    PRESENCE_BINS=[0,60000,300000,900000,1800000,3600000,7200000,10**12]
+    pbins=[0]*(len(PRESENCE_BINS)-1)
+    for _addr,_t in ts.items():
+        span=(max(_t)-min(_t))*1000            # seconds -> ms
+        for _k in range(len(pbins)):
+            if PRESENCE_BINS[_k]<=span<PRESENCE_BINS[_k+1]: pbins[_k]+=1; break
+    if not ts:
+        sys.stderr.write("capture_profile: no addresses with timestamps; presence_ms_bins all zero\n")
     n=len(adverts) or 1
     isum=sum(ibins) or 1
     vtot=sum(ven.values()) or 1
     return {"n_adverts":len(adverts),"n_addrs":len(ts),
             "atype":{k:at[k]/n for k in ("static","rpa","public")},
             "itvl_bins":[b/isum for b in ibins],
-            "vendor":{k:v/vtot for k,v in ven.items()}}
+            "vendor":{k:v/vtot for k,v in ven.items()},
+            "presence_ms_bins":pbins}
 
 def write_model_seed(profile, path):
     # convert normalized vendor shares back into integer counts (scale 1000) + interval bins

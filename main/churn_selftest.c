@@ -3,6 +3,7 @@
 #include "churn_selftest.h"
 #include "roster.h"
 #include "churn.h"
+#include "ble_devices.h"
 #include "settings.h"
 #include "templates.h"
 #include "rf_model.h"
@@ -51,85 +52,63 @@ static const char *s_first_fail;
 static int noop_apply(uint8_t instance, const identity_t *id)
 { (void)instance; (void)id; return 0; }
 
-static void test_churn_lifecycle(void)
-{
-    roster_init();
-    churn_set_apply(noop_apply);
-    churn_init(0);
-    ST_CHECK(churn_active_count() == CHURN_ACTIVE_SET, "init fills the active set");
-
-    // Force slot 0's identity to expire at t=1000, tick, expect replacement.
-    const identity_t *before = churn_active_at(0);
-    ((identity_t *)before)->active_until_ms = 1000;
-    churn_tick(2000);
-    const identity_t *after = churn_active_at(0);
-    ST_CHECK(after != before, "expired active identity is replaced");
-    ST_CHECK(before->state == ID_COOLDOWN, "retired identity enters COOLDOWN");
-    ST_CHECK(after && after->state == ID_ACTIVE, "promoted identity is ACTIVE");
-}
-
-static void test_cooldown(void)
-{
-    roster_init();
-    churn_set_apply(noop_apply);
-    churn_init(0);
-
-    // Retire slot 0 at t=1000; capture its cooldown deadline.
-    identity_t *retiring = (identity_t *)churn_active_at(0);
-    retiring->active_until_ms = 1000;
-    churn_tick(2000);
-    ST_CHECK(retiring->state == ID_COOLDOWN, "retired -> COOLDOWN");
-    uint32_t elig = retiring->eligible_at_ms;
-    ST_CHECK(elig >= 2000 + CHURN_COOLDOWN_MIN_MS, "cooldown >= min");
-    ST_CHECK(elig <= 2000 + CHURN_COOLDOWN_MAX_MS, "cooldown <= max");
-
-    // Long simulation: this identity never re-enters ACTIVE before eligible_at.
-    bool violated = false;
-    for (uint32_t t = 2000; t < 4000000u; t += 1000) {
-        churn_tick(t);
-        if (t < elig) {
-            for (size_t s = 0; s < CHURN_ACTIVE_SET; s++) {
-                if (churn_active_at(s) == retiring) violated = true;
-            }
-        }
-    }
-    ST_CHECK(!violated, "no MAC reappears within its cooldown window");
-}
-
 static const identity_t *s_rec[CHURN_HW_INSTANCES];
 static int s_apply_calls;
 static int rec_apply(uint8_t instance, const identity_t *id)
 { if (instance < CHURN_HW_INSTANCES) s_rec[instance] = id; s_apply_calls++; return 0; }
 
-static void test_timeslice(void)
+// Fixed population for the churn self-tests: > CHURN_HW_INSTANCES so time-slicing engages.
+#define CHURN_ST_N 8
+
+// Milestone A: churn is now a presenter over ble_devices (lifecycle/rotation live there).
+// This just checks the minimal new-contract wiring: population is visible through churn's
+// accessors, and a tick drives at least one apply.
+static void test_churn_present(void)
 {
     roster_init();
+    ble_devices_init(CHURN_ST_N, 0);
     memset(s_rec, 0, sizeof(s_rec));
     s_apply_calls = 0;
     churn_set_apply(rec_apply);
     churn_init(0);
-    // Freeze dwell so nobody retires mid-test (deterministic coverage).
-    for (int s = 0; s < CHURN_ACTIVE_SET; s++) {
-        identity_t *a = (identity_t *)churn_active_at(s);
-        if (a) a->active_until_ms = 0xFFFFFFFFu;
-    }
 
-    // Collect the identities placed on radios across enough slices to cover the whole active set.
-    int slices = (CHURN_ACTIVE_SET + CHURN_HW_INSTANCES - 1) / CHURN_HW_INSTANCES;
-    const identity_t *seen[CHURN_ACTIVE_SET * 2]; int n = 0;
+    ST_CHECK(churn_active_count() == CHURN_ST_N, "active count mirrors ble_devices population");
+    churn_tick(CHURN_SLICE_MS);
+    ST_CHECK(churn_active_at(0) != NULL, "slot 0 resolves to a live identity");
+    ST_CHECK(s_apply_calls > 0, "a tick drives at least one apply");
+}
+
+static void test_timeslice(void)
+{
+    roster_init();
+    ble_devices_init(CHURN_ST_N, 0);
+    memset(s_rec, 0, sizeof(s_rec));
+    s_apply_calls = 0;
+    churn_set_apply(rec_apply);
+    churn_init(0);
+
+    int n_pop = (int)churn_active_count();
+    ST_CHECK(n_pop == CHURN_ST_N, "active count mirrors ble_devices population");
+    bool all_present = true;
+    for (int i = 0; i < n_pop; i++) if (!churn_active_at((size_t)i)) all_present = false;
+    ST_CHECK(all_present, "every active slot (0..N) resolves to a non-NULL identity");
+
+    // Collect the identities placed on radios across enough slices to cover the whole population.
+    // (Population is well below rotation/lifetime timescales -- device pointers are stable here.)
+    int slices = (n_pop + CHURN_HW_INSTANCES - 1) / CHURN_HW_INSTANCES;
+    const identity_t *seen[CHURN_ST_N * 4]; int n = 0;
     for (int sl = 1; sl <= slices; sl++) {
         churn_tick((uint32_t)sl * CHURN_SLICE_MS);
         for (int i = 0; i < CHURN_HW_INSTANCES; i++) seen[n++] = s_rec[i];
     }
 
-    // Every active identity should appear within ceil(ACTIVE_SET / HW) slices.
+    // Every device should appear within ceil(N / HW) slices.
     int covered = 0;
-    for (int s = 0; s < CHURN_ACTIVE_SET; s++) {
-        const identity_t *a = churn_active_at(s);
+    for (int s = 0; s < n_pop; s++) {
+        const identity_t *a = churn_active_at((size_t)s);
         for (int j = 0; j < n; j++) if (seen[j] == a) { covered++; break; }
     }
-    ST_CHECK(covered == CHURN_ACTIVE_SET,
-             "every active identity is on-air within ceil(ACTIVE_SET/HW) slices");
+    ST_CHECK(covered == n_pop, "every device is on-air within ceil(N/HW) slices");
     ST_CHECK(s_apply_calls > 0, "time-slice drives the apply callback");
 }
 
@@ -560,20 +539,28 @@ static void test_tracker(void)
     ST_CHECK(payload_has_svc_uuid16(pay, len, 0xFEED), "tracker svc-data 0xFEED");
 }
 
+// A MAC produced by make_random_addr_mixed/make_random_addr is a valid BLE random
+// address whose top-2 bits select the subtype: 0xC0 static, 0x40 RPA, 0x00 NRPA.
+static bool is_valid_random_top2(uint8_t last)
+{
+    uint8_t top2 = last & 0xc0;
+    return top2 == 0xc0 || top2 == 0x40 || top2 == 0x00;
+}
+
 // Whole-roster structural + Law-3 guard: every identity must be a template-built,
-// budget-fitting, non-popup payload on a random-static MAC.
+// budget-fitting, non-popup payload on a valid random-subtype MAC.
 static void test_roster_payloads(void)
 {
     roster_init();
     bool macs_ok = true, payload_ok = true, no_popup = true, archetype_ok = true;
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = roster_at(i);
-        if ((id->addr[5] & 0xc0) != 0xc0) macs_ok = false;
+        if (!is_valid_random_top2(id->addr[5])) macs_ok = false;
         if (id->payload_len == 0 || id->payload_len > 31) payload_ok = false;
         if (has_apple_popup_subtype(id->payload, id->payload_len)) no_popup = false;
         if (id->archetype_idx >= templates_count() + learn_count()) archetype_ok = false;
     }
-    ST_CHECK(macs_ok, "roster: all MACs random-static");
+    ST_CHECK(macs_ok, "roster: all MACs are a valid random subtype (static/RPA/NRPA)");
     ST_CHECK(payload_ok, "roster: all payloads non-empty and <=31B");
     ST_CHECK(no_popup, "roster: no forbidden Apple subtype anywhere");
     ST_CHECK(archetype_ok, "roster: every identity carries a valid template index");
@@ -686,12 +673,12 @@ static void test_generate(void)
         if (roster[i].company_id==0x0040) c40++;
         if (roster[i].company_id==0x0075) c75++;
         if (roster[i].payload_len==0 || roster[i].payload_len>31) budget=false;
-        if ((roster[i].addr[5]&0xc0)!=0xc0) mac=false;
+        if (!is_valid_random_top2(roster[i].addr[5])) mac=false;
         if (has_apple_popup_subtype(roster[i].payload, roster[i].payload_len)) nopop=false;
         if (roster[i].archetype_idx >= templates_count() + learn_count()) arch=false;
     }
     ST_CHECK(budget, "generated payloads fit 31 bytes");
-    ST_CHECK(mac, "generated MACs are random-static");
+    ST_CHECK(mac, "generated MACs are a valid random subtype (static/RPA/NRPA)");
     ST_CHECK(nopop, "generated roster: no forbidden Apple subtype");
     ST_CHECK(arch, "generated identities carry a valid archetype index");
     ST_CHECK(c40 > c75, "generated vendor mix tracks the observed mix (0x0040 dominant)");
@@ -739,39 +726,6 @@ static void test_probe_frame(void)
     uint8_t a[6], b[6]; probe_random_mac(a); probe_random_mac(b);
     ST_CHECK((a[0]&0x03)==0x02, "random MAC is locally-administered + unicast");
     ST_CHECK(memcmp(a,b,6)!=0, "random MAC varies across calls");
-}
-
-static void test_accel_rotation(void)
-{
-    roster_init();
-    churn_set_apply(noop_apply);
-    churn_set_accel(1.0f);
-    churn_init(0);
-
-    // With 3x accel, every freshly-promoted dwell is bounded by ~MAX/3.
-    churn_set_accel(3.0f);
-    uint32_t accel_max = 0, now = 10000;
-    for (int k = 0; k < 20; k++) {
-        ((identity_t *)churn_active_at(0))->active_until_ms = now;     // force-retire slot 0
-        churn_tick(now);
-        const identity_t *p = churn_active_at(0);
-        if (p) { uint32_t d = p->active_until_ms - now; if (d > accel_max) accel_max = d; }
-        now += 1000;
-    }
-    ST_CHECK(accel_max <= CHURN_DWELL_MAX_MS / 3 + 1, "accel(3.0) bounds dwell to ~MAX/3");
-    ST_CHECK(accel_max >= CHURN_DWELL_MIN_MS / 3,     "accel(3.0) dwell still >= MIN/3");
-
-    // Decay back to 1.0 restores the full dwell range (some sample exceeds MAX/3).
-    churn_set_accel(1.0f);
-    uint32_t base_max = 0;
-    for (int k = 0; k < 20; k++) {
-        ((identity_t *)churn_active_at(0))->active_until_ms = now;
-        churn_tick(now);
-        const identity_t *p = churn_active_at(0);
-        if (p) { uint32_t d = p->active_until_ms - now; if (d > base_max) base_max = d; }
-        now += 1000;
-    }
-    ST_CHECK(base_max > CHURN_DWELL_MAX_MS / 3, "accel decays to 1.0 -> full dwell range restored");
 }
 
 static void test_drift(void)
@@ -947,20 +901,29 @@ static void test_detect_nvs(void)
 static void test_churn_pause(void)
 {
     roster_init();
-    churn_set_apply(noop_apply);
+    ble_devices_init(CHURN_ST_N, 0);
+    memset(s_rec, 0, sizeof(s_rec));
+    s_apply_calls = 0;
+    churn_set_apply(rec_apply);
     churn_set_paused(false);
     churn_init(0);
-    // Force slot 0 to expire, but pause first: a paused tick must NOT rotate it.
-    const identity_t *before = churn_active_at(0);
-    ((identity_t *)before)->active_until_ms = 1000;
+
+    // First slice always applies (fills the instances from the initial -1 occupancy).
+    churn_tick(CHURN_SLICE_MS);
+    ST_CHECK(s_apply_calls > 0, "initial tick applies the first occupant set");
+
+    // Pause: further ticks -- even across many would-be slice boundaries -- must not apply.
     churn_set_paused(true);
-    churn_tick(2000);
-    ST_CHECK(churn_active_at(0) == before, "paused churn does not rotate identities");
     ST_CHECK(churn_paused(), "pause flag reads back true");
-    // Resume: the expired identity now gets replaced.
+    int calls_before = s_apply_calls;
+    for (uint32_t t = 2 * CHURN_SLICE_MS; t <= 10 * CHURN_SLICE_MS; t += CHURN_SLICE_MS)
+        churn_tick(t);
+    ST_CHECK(s_apply_calls == calls_before, "paused churn issues no apply calls");
+
+    // Resume: the next slice boundary re-applies (time-slice advances the occupant set).
     churn_set_paused(false);
-    churn_tick(3000);
-    ST_CHECK(churn_active_at(0) != before, "resumed churn rotates the expired identity");
+    churn_tick(11 * CHURN_SLICE_MS);
+    ST_CHECK(s_apply_calls > calls_before, "resumed churn applies again");
 }
 
 static void test_detect_clear(void)
@@ -1415,20 +1378,6 @@ static void test_escalation_recurrence(void)
     ST_CHECK(threat_escalation_level(t.sessions_seen, t.places_seen) == ESCALATION_PERSISTENT, "recur: KNOWN PERSISTENT");
 }
 
-static void test_churn_runtime_knobs(void)
-{
-    uint32_t lo = 0, hi = 0;
-    churn_set_dwell_ms(50000, 60000);
-    churn_get_dwell_ms(&lo, &hi);
-    ST_CHECK(lo == 50000 && hi == 60000, "dwell setter/getter round-trip");
-    churn_set_cooldown_ms(400000, 500000);
-    churn_get_cooldown_ms(&lo, &hi);
-    ST_CHECK(lo == 400000 && hi == 500000, "cooldown setter/getter round-trip");
-    // Restore firmware defaults so later tests are unaffected.
-    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
-    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
-}
-
 static void test_settings_resolve(void)
 {
     sim_settings_t s;
@@ -1460,11 +1409,10 @@ static void test_settings_resolve(void)
 static void test_settings_apply(void)
 {
     roster_init(); churn_set_apply(noop_apply);
+    // Milestone A: churn target/dwell are inert no-ops now (lifetime owned by ble_devices),
+    // so we only assert the settings behavior that still drives churn: pause/resume.
     sim_settings_apply_preset(SIM_PRESET_STEALTH);
-    ST_CHECK(churn_active_target() == (uint8_t)((CHURN_ACTIVE_SET*4)/10), "apply STEALTH sets churn target");
     ST_CHECK(!churn_paused(), "STEALTH is running");
-    uint32_t lo=0,hi=0; churn_get_dwell_ms(&lo,&hi);
-    ST_CHECK(lo == 300000, "apply STEALTH sets churn dwell");
 
     sim_settings_apply_preset(SIM_PRESET_PAUSE);
     ST_CHECK(churn_paused(), "apply PAUSE pauses churn");
@@ -1476,8 +1424,6 @@ static void test_settings_apply(void)
 
     // Restore NORMAL so subsequent tests run with defaults.
     sim_settings_apply_preset(SIM_PRESET_NORMAL);
-    churn_set_dwell_ms(CHURN_DWELL_MIN_MS, CHURN_DWELL_MAX_MS);
-    churn_set_cooldown_ms(CHURN_COOLDOWN_MIN_MS, CHURN_COOLDOWN_MAX_MS);
 }
 
 static void test_config_wire(void)
@@ -1632,20 +1578,18 @@ int churn_selftest_run(void)
     bool macs_ok = true, payload_ok = true;
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {
         identity_t *id = roster_at(i);
-        if ((id->addr[5] & 0xc0) != 0xc0) macs_ok = false;     // random-static
+        if (!is_valid_random_top2(id->addr[5])) macs_ok = false;   // static/RPA/NRPA subtype
         if (id->payload_len == 0) payload_ok = false;
     }
-    ST_CHECK(macs_ok, "roster: every MAC is random-static (top 2 bits set)");
+    ST_CHECK(macs_ok, "roster: every MAC is a valid random subtype (static/RPA/NRPA)");
     ST_CHECK(payload_ok, "roster: every identity has a non-empty payload");
 
     identity_t *c = roster_promote_candidate(0);
     ST_CHECK(c != NULL, "promote_candidate returns an identity");
 
     // --- churn lifecycle ---
-    test_churn_lifecycle();
-    test_cooldown();
+    test_churn_present();
     test_timeslice();
-    test_churn_runtime_knobs();
     test_settings_resolve();
     test_settings_apply();
     test_config_wire();
@@ -1689,7 +1633,6 @@ int churn_selftest_run(void)
     test_roster_generate_path();
     test_probe_frame();
     test_drift();
-    test_accel_rotation();
     test_churn_pause();
     test_scheduler_budget();
     test_detect_epochs();

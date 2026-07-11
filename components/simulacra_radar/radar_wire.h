@@ -29,6 +29,7 @@ typedef struct __attribute__((packed)) {
         uint8_t kind, class_id, category, confidence;   // KNOWN-device fields (kind=DETECT_KIND_*)
         uint8_t sessions_seen, places_seen;             // recurrence counters (escalation)
     } threats[RADAR_MAX_THREATS];
+    uint8_t form_restless, form_wandering, form_bound;  // BLE shade-form counts: RPA/NRPA/static
 } radar_wire_status_t;
 
 typedef struct { uint8_t salt[4]; uint64_t counter; bool seen; } radar_replay_t;

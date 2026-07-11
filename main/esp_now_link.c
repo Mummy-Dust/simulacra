@@ -25,6 +25,7 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
         out->threats[i].sessions_seen = in->threats[i].sessions_seen;
         out->threats[i].places_seen = in->threats[i].places_seen;
     }
+    out->form_restless = in->form_restless; out->form_wandering = in->form_wandering; out->form_bound = in->form_bound;
 }
 
 #include "esp_now.h"

@@ -75,6 +75,22 @@ void ble_devices_init(int n, uint32_t now_ms)
 int ble_devices_count(void) { return s_n; }
 const ble_device_t *ble_devices_at(int i) { return (i >= 0 && i < s_n) ? &s_dev[i] : 0; }
 
+void ble_devices_form_counts(uint8_t *restless, uint8_t *wandering, uint8_t *bound)
+{
+    uint8_t r=0,w=0,b=0;
+    for (int i = 0; i < s_n; i++) {
+        if (!s_dev[i].alive) continue;
+        switch (s_dev[i].atype) {
+            case BLE_ATYPE_RPA:  r++; break;   // restless (rotating)
+            case BLE_ATYPE_NRPA: w++; break;   // wandering
+            default:             b++; break;   // static -> bound
+        }
+    }
+    if (restless)  *restless  = r;
+    if (wandering) *wandering = w;
+    if (bound)     *bound     = b;
+}
+
 void ble_devices_tick(uint32_t now_ms)
 {
     for (int i = 0; i < s_n; i++) {

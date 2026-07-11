@@ -89,6 +89,14 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
+    if (argc > 1 && strcmp(argv[1], "--formcounts") == 0) {
+        srand(argc > 2 ? (unsigned)strtoul(argv[2],0,10) : 1);
+        int n = argc > 3 ? (int)strtoul(argv[3],0,10) : 16;
+        roster_init(); ble_devices_init(n, 0);
+        uint8_t r=0,w=0,b=0; ble_devices_form_counts(&r,&w,&b);
+        printf("%u %u %u %d\n", r, w, b, ble_devices_count());
+        return 0;
+    }
     unsigned seed = (argc > 1) ? (unsigned)strtoul(argv[1], 0, 10) : 1;
     size_t   n    = (argc > 2) ? (size_t)strtoul(argv[2], 0, 10) : 64;
     srand(seed);

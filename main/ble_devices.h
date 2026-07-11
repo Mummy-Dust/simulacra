@@ -29,3 +29,6 @@ void  ble_devices_init(int n, uint32_t now_ms);
 void  ble_devices_tick(uint32_t now_ms);
 int   ble_devices_count(void);
 const ble_device_t *ble_devices_at(int i);
+// Shade-form breakdown of the live population by address subtype: restless=RPA (rotating),
+// wandering=NRPA (rotating, no resolvable identity), bound=static (never rotates).
+void  ble_devices_form_counts(uint8_t *restless, uint8_t *wandering, uint8_t *bound);

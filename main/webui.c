@@ -18,6 +18,7 @@
 #include "probe.h"
 #include "coexist.h"
 #include "rf_model.h"
+#include "ble_devices.h"
 
 int webui_build_status_json(char *buf, size_t len, const webui_status_t *st)
 {
@@ -69,6 +70,7 @@ void webui_gather_status(webui_status_t *out)
     out->decoy_paused    = churn_paused();
     out->wifi_config_mode= true;
     out->active_devices  = (uint16_t)churn_active_count();
+    ble_devices_form_counts(&out->form_restless, &out->form_wandering, &out->form_bound);
     out->roster_size     = CHURN_ROSTER_SIZE;
     out->probes_sent     = probe_total_sent();
     out->epoch           = coexist_current_epoch();

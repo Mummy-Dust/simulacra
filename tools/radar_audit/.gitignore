@@ -1,0 +1,8 @@
+# build artifacts
+ui_dump
+ui_dump.exe
+fleet_dump
+fleet_dump.exe
+*.obj
+__pycache__/
+*.pyc

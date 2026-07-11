@@ -1,7 +1,7 @@
 # CYD Necromancer Dashboard — Design
 
 **Date:** 2026-07-11
-**Status:** Approved (visual direction) — spec for review
+**Status:** Approved — decisions locked (§10); implementation plan to follow
 **Design reference:** the rendered mockup (home + board-detail at true 240×320), necromancer-hacker skin.
 **Builds on:** the existing CYD UI framework — `radar_ui_t` (view state machine) + `radar_render_view` (banded full-frame renderer) + the `cyd_main.c` touch loop. This is a **reskin + restructure**, not a rewrite.
 
@@ -24,7 +24,7 @@ Rebuild the CYD front-end as a **polished, on-theme dashboard**: an icon-sigil h
 
 Extend, don't replace, the three existing pieces:
 
-- **`radar_ui_t` view state machine (`radar_ui.{c,h}`)** — add a `RADAR_VIEW_HOME` view and make it the **idle/home** (replacing "idle returns to RADAR"). Change navigation from "tap advances to next view" to **"tap a home sigil → that view; back-target → home."** Keep the idle-return-to-home and backlight-timeout behavior. The threat-wake behavior (a new follower forces the screen on) is preserved but wakes to **home** (or to Hunters if a follower is live — decision in plan).
+- **`radar_ui_t` view state machine (`radar_ui.{c,h}`)** — add a `RADAR_VIEW_HOME` view and make it the **idle/home** (replacing "idle returns to RADAR"). Change navigation from "tap advances to next view" to **"tap a home sigil → that view; back-target → home."** Keep the idle-return-to-home and backlight-timeout behavior. The threat-wake behavior (a new follower forces the screen on) is preserved and wakes to **Hunters** — a live follower is an alert, so the screen jumps straight to the detection view.
 - **`radar_render_view` banded renderer (`radar_render.{c,h}`)** — add a `render_home` path (fleet strip + sigil grid + ticker) and reskin the existing view renderers (DETAIL/STATS/LIBRARY/CONTROL) to the theme. Factor shared primitives (sigil blitter, stat block, pulse dot, chip, hairline) into small helpers so every view shares one visual language.
 - **`cyd_main.c` touch loop** — map taps to the new home-grid hit regions + back-target; dispatch to `radar_ui_on_input` with the selected view. Reskin the fleet modal to match.
 
@@ -41,11 +41,11 @@ Mapping the mockup's sigil grid onto the existing view enum + the new home:
 | **The Living** | STATS (reskinned) | ambient crowd model — population, arrivals, observation depth | `pop_ewma`, `total_obs`, `epoch` |
 | **Rites** | CONTROL (trimmed) | **Dormant/Wake** (the surviving control) + auto-density indicator; dead presets removed | `flags`, settings |
 | **Wards** | LIBRARY / fleet modal | fleet keys / enrolment / the signature library | `fleet_db`, librarian snapshot |
-| **Grimoire** | (v1: fold into STATS or stub) | logs / settings | — |
+| **Grimoire** | INFO (new, minimal) | firmware version, fleet epoch, node roster/liveness — a small "about" stub | build info, `fleet_db`, per-node table |
 
 The **HOME** screen itself: top bar (wordmark + channeling pulse + uptime), the **live fleet strip** (one card per node: name, shade count, activity sparkline, state chip), the **sigil grid**, and an aggregate ticker.
 
-**Shade-form breakdown (Milestone-A showcase).** The board-detail's *restless / wandering / bound* (RPA / NRPA / static) counts are the headline of the new work — but `radar_wire_status_t` carries only the `active_devices` total today. v1 adds **one small wire field**: three `uint8_t` subtype counts on the decoy's status (sourced from `ble_devices`), surfaced in DETAIL. This is the only wire change; if descoped, DETAIL shows the total only.
+**Shade-form breakdown (Milestone-A showcase).** The board-detail's *restless / wandering / bound* (RPA / NRPA / static) counts are the headline of the new work — but `radar_wire_status_t` carries only the `active_devices` total today. v1 adds **one small wire field** (LOCKED): three `uint8_t` subtype counts (restless/wandering/bound) on the decoy's status, sourced from `ble_devices`, surfaced in DETAIL. This is the only wire change. The decoy computes the counts from its live device population; the CYD renders them as the form breakdown.
 
 ## 5. Theme tokens (RGB565-safe)
 
@@ -92,9 +92,9 @@ The render + UI logic is already partly host-testable (the project has `radar_ge
 - **Reuse** — build on `radar_ui` / `radar_render` / `fleet_db` / the signed status wire; do not fork them.
 - **Honest ceiling carried over** — the dashboard reports what the fleet does; it does not change the anti-fingerprinting defense or its co-location ceiling. No UI copy overstates protection ("hidden" is a vibe, not a guarantee).
 
-## 10. Open decisions (resolve in plan / with the operator)
+## 10. Decisions (locked) + known limits
 
-- **Shade-form wire field** — add the 3-byte subtype counts (showcases Milestone A) or ship v1 with the total only? (Recommend: add it — small, high-demo-value.)
-- **Follower-wake target** — a new hunter wakes to HOME vs jumps straight to HUNTERS. (Recommend: HUNTERS, since it's an alert.)
-- **Grimoire tile** — stub, or fold logs into STATS for v1.
-- **Fleet size on the strip** — 3 nodes fit cleanly; if the fleet grows past 3, the strip needs paging/scroll (later).
+- **Shade-form wire field — LOCKED IN.** Add the 3-byte subtype counts (restless/wandering/bound) to the decoy status; DETAIL renders the form breakdown (the Milestone-A showcase).
+- **Follower-wake target — LOCKED: HUNTERS.** A new hunter wakes the screen straight to the detection view.
+- **Grimoire — LOCKED: minimal INFO stub.** Firmware version, fleet epoch, node roster/liveness in v1; full logs viewer is later. Keeps the 6-tile grid complete.
+- **Known limit — fleet size on the strip.** 3 nodes fit cleanly; past 3, the strip needs paging/scroll (deferred).

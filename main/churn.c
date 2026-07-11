@@ -2,8 +2,6 @@
 #include <stdbool.h>
 #include "churn.h"
 #include "ble_devices.h"
-#include "trace.h"
-#include "esp_random.h"
 
 // Presenter state: which device index occupies each hardware instance, and the address last
 // applied there (so a rotation — same device, new address — triggers a single re-apply).

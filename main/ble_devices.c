@@ -1,7 +1,6 @@
 #include "ble_devices.h"
 #include "roster.h"
 #include "esp_random.h"
-#include <string.h>
 
 // Role split (user-chosen): ~70% transient / ~30% resident.
 #define ROLE_RESIDENT_PCT   30

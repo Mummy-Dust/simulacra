@@ -749,7 +749,20 @@ void app_main(void)
         }
 #endif
         if (edge && !modal_open) {
-            if (ui.view == RADAR_VIEW_CONTROL) {
+            if (ui.view == RADAR_VIEW_HOME) {
+                // HOME sigil grid -> jump to that view. Geometry mirrors draw_home: 2 cols split at
+                // x=120, 3 rows of 64px starting at y=104 (CIRCLE/HUNTERS / LIVING/RITES / WARDS/GRIMOIRE).
+                // The fleet strip (y 30..100) taps into the live radar. Topbar / gaps just keep awake.
+                static const radar_view_t GRID[6] = {
+                    RADAR_VIEW_RADAR,   RADAR_VIEW_DETAIL,     // CIRCLE   HUNTERS
+                    RADAR_VIEW_STATS,   RADAR_VIEW_CONTROL,    // LIVING   RITES
+                    RADAR_VIEW_LIBRARY, RADAR_VIEW_INFO };     // WARDS    GRIMOIRE
+                radar_view_t v = RADAR_VIEW_COUNT;             // sentinel: no target
+                if (ty >= 104 && ty < 296)      v = GRID[((ty - 104) / 64) * 2 + (tx >= 120 ? 1 : 0)];
+                else if (ty >= 30 && ty < 100)  v = RADAR_VIEW_RADAR;
+                if (v != RADAR_VIEW_COUNT) { radar_ui_select_view(&ui, v, now); send_request(); last_req = now; }
+                else                       radar_ui_note_input(&ui, now);
+            } else if (ui.view == RADAR_VIEW_CONTROL) {
                 radar_ui_note_input(&ui, now);           // keep backlight/idle timer fresh
 #ifdef SIMULACRA_CONFIG_CTRL
 #ifdef SIMULACRA_FLEET_PROVISION

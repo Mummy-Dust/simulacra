@@ -1,6 +1,8 @@
 #include "radar_render.h"
 #include "radar_gfx.h"
 #include "radar_geom.h"
+#include "radar_theme.h"
+#include "radar_sigil.h"
 #include "sig_class_name.h"
 #include "threat_escalation.h"
 #include <stdio.h>
@@ -96,15 +98,54 @@ static void draw_control(radar_gfx_t *g, const radar_ctrl_info_t *c){
                    c && c->send_flash ? COL_OK : COL_FG);
     radar_gfx_text(g, 30, 296, "broadcast to all decoys", COL_DIM);
 }
-void radar_render_view(radar_view_t view, const radar_wire_status_t *st, const radar_lib_info_t *lib,
-                       const radar_ctrl_info_t *ctrl,
+// ---- necromancer HOME: fleet strip + sigil grid + ticker (theme palette) ----
+static void draw_home(radar_gfx_t *g, const radar_node_view_t *nodes, int nc){
+    radar_gfx_clear(g, COL_VOID);
+    radar_gfx_fill_rect(g, 0, 0, 240, 26, COL_CRYPT);
+    radar_gfx_hline(g, 0, 239, 26, COL_EDGE);
+    radar_sigil_draw(g, SIGIL_CIRCLE, 12, 13, 7, COL_ARCANE);
+    radar_gfx_text(g, 26, 9, "SIMULACRA", COL_BONE);
+    int cols = nc < 1 ? 0 : (nc > 3 ? 3 : nc);
+    for(int i=0;i<cols;i++){
+        int x=i*80, y=30;
+        radar_gfx_fill_rect(g, x+2, y, 76, 70, COL_CRYPT);
+        uint16_t sc = nodes[i].alive ? COL_CHANNEL : COL_ASH;
+        char b[10]; snprintf(b,sizeof b,"N%u",(unsigned)nodes[i].id); radar_gfx_text(g, x+8, y+6, b, COL_BONE);
+        radar_gfx_fill_rect(g, x+68, y+8, 4, 4, sc);
+        snprintf(b,sizeof b,"%u",(unsigned)(nodes[i].alive?nodes[i].st->active_devices:0)); radar_gfx_text(g, x+8, y+26, b, COL_BONE);
+        radar_gfx_text(g, x+8, y+52, nodes[i].alive?"CHANNEL":"SILENT", sc);
+    }
+    static const sigil_id_t sig[6]={SIGIL_CIRCLE,SIGIL_HUNTER,SIGIL_LIVING,SIGIL_RITE,SIGIL_WARD,SIGIL_GRIMOIRE};
+    static const char *lbl[6]={"CIRCLE","HUNTERS","LIVING","RITES","WARDS","GRIMOIRE"};
+    for(int i=0;i<6;i++){
+        int cx=(i%2)*120, cy=104+(i/2)*64;
+        radar_gfx_fill_rect(g, cx+1, cy+1, 118, 62, COL_CRYPT);
+        radar_sigil_draw(g, sig[i], cx+22, cy+31, 12, COL_ARCANE);
+        radar_gfx_text(g, cx+42, cy+27, lbl[i], COL_BONE);
+    }
+    radar_gfx_hline(g, 0, 239, 298, COL_EDGE);
+    radar_gfx_text(g, 6, 304, "THE CIRCLE CHANNELS", COL_ASH);
+}
+static void draw_info(radar_gfx_t *g, const radar_wire_status_t *st){
+    radar_gfx_clear(g, COL_VOID);
+    radar_gfx_text(g, 8, 10, "GRIMOIRE", COL_BONE);
+    char l[40];
+    snprintf(l,sizeof l,"epoch %u",(unsigned)st->epoch);        radar_gfx_text(g, 8, 40, l, COL_ASH);
+    snprintf(l,sizeof l,"up %lus",(unsigned long)st->uptime_s); radar_gfx_text(g, 8, 58, l, COL_ASH);
+    radar_gfx_text(g, 8, 92, "simulacra cyd v1", COL_ARCANE);
+}
+void radar_render_view(radar_view_t view, const radar_wire_status_t *st,
+                       const radar_node_view_t *nodes, int node_count,
+                       const radar_lib_info_t *lib, const radar_ctrl_info_t *ctrl,
                        uint16_t sweep, uint16_t *band, int band_h, int w, int h, radar_flush_fn flush, void *ctx){
     for(int y0=0;y0<h;y0+=band_h){ radar_gfx_t g={ .buf=band, .w=w, .y0=y0, .h=band_h };
         radar_gfx_clear(&g,COL_BG);
-        if(view==RADAR_VIEW_DETAIL) draw_detail(&g,st);
+        if(view==RADAR_VIEW_HOME) draw_home(&g,nodes,node_count);
+        else if(view==RADAR_VIEW_DETAIL) draw_detail(&g,st);
         else if(view==RADAR_VIEW_STATS) draw_stats(&g,st);
         else if(view==RADAR_VIEW_LIBRARY) draw_library(&g,lib);
         else if(view==RADAR_VIEW_CONTROL) draw_control(&g,ctrl);
+        else if(view==RADAR_VIEW_INFO) draw_info(&g,st);
         else draw_radar(&g,st,sweep);
         flush(y0, band_h, band, ctx); }
 }

@@ -809,6 +809,12 @@ void app_main(void)
             };
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
+            // HOME fleet-strip node view. First increment: one node from the last received status;
+            // per-node fan-out (keyed by sender via fleet_status) lands in the next iteration.
+            // Liveness = fresh status within 15s (signed compare: recv task can be a few ms ahead of `now`).
+            bool s_fresh = (s_status_ms != 0 && (int32_t)(now - s_status_ms) <= 15000);
+            radar_node_view_t nv[1] = {{ .id = 0, .st = &s_status, .alive = s_fresh }};
+            int nvc = 1;
 #ifdef SIMULACRA_FLEET_PROVISION
             // The CONTROL page is static; re-rendering it every frame would re-flush the FLEET
             // bar over it each time and flicker. Redraw it only on change (preset / SEND / entry).
@@ -822,24 +828,25 @@ void app_main(void)
                 if (ctrl_static){
                     bool flash = ctrl.send_flash;
                     if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash){
-                        radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                         draw_fleet_bar(band);
                         cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
                     }
                 } else {
                     cs_shown = false;                        // leaving CONTROL / enroll active -> redraw next entry
-                    radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                     bool enr = draw_enroll_overlay(band, now);
                     if (enr)                                { /* enrollment banner owns the top */ }
                     else if (ui.view == RADAR_VIEW_CONTROL) draw_fleet_bar(band);
+                    else if (ui.view == RADAR_VIEW_HOME)    { /* HOME strip shows liveness itself */ }
                     else                                    draw_freshness_overlay(band, now);
                     sweep=(uint16_t)((sweep+12)%360);
                 }
             }
 #else
             {
-                radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
-                draw_freshness_overlay(band, now);
+                radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                if (ui.view != RADAR_VIEW_HOME) draw_freshness_overlay(band, now);
                 sweep=(uint16_t)((sweep+12)%360);
             }
 #endif

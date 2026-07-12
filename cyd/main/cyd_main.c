@@ -12,6 +12,7 @@
 #include "radar_render.h"
 #include "radar_gfx.h"
 #include "radar_wire.h"
+#include "fleet_status.h"
 #include "radar_ui.h"
 #include "radar_key.h"
 #include "config_wire.h"
@@ -141,8 +142,17 @@ static bool sd_mount(void)
 
 // ---- ESP-NOW radar link (STA on a fixed channel, broadcast, AES-GCM via radar_wire) ----
 static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-static radar_wire_status_t s_status;             // last good status
+static radar_wire_status_t s_status;             // last good status (any node — legacy single-node views)
 static volatile uint32_t   s_status_ms;          // when it arrived (0 = never)
+static fleet_status_t      s_fleet;              // per-node status table, keyed by sender (HOME strip)
+static uint8_t s_node_mac[FLEET_STATUS_MAX][6];  // first-seen MAC registry -> stable small node id
+static int     s_node_n;
+// Map a sender MAC to a stable 0-based node id (label N0/N1/N2...). Registry full -> fold onto N0.
+static uint8_t node_id_for(const uint8_t *mac){
+    for (int i = 0; i < s_node_n; i++) if (memcmp(s_node_mac[i], mac, 6) == 0) return (uint8_t)i;
+    if (s_node_n < FLEET_STATUS_MAX){ memcpy(s_node_mac[s_node_n], mac, 6); return (uint8_t)s_node_n++; }
+    return 0;
+}
 static radar_replay_t      s_replay;
 static uint8_t  s_salt[4]; static uint64_t s_ctr;
 
@@ -317,7 +327,6 @@ static void broadcast_sig_db(void)
 }
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
-    (void)info;
 #ifdef SIMULACRA_FLEET_PROVISION
     if (len >= 1 && data[0] == RADAR_TYPE_ENROLL_REQUEST) {   // raw (unsealed) enrollment reply
         if (s_pair_until_ms && (uint32_t)(esp_timer_get_time()/1000) < s_pair_until_ms
@@ -335,7 +344,9 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         if (s_status.threat_count > RADAR_MAX_THREATS)      // never trust the wire field: threats[] is fixed-size
             s_status.threat_count = RADAR_MAX_THREATS;      // (a conforming decoy already clamps; this guards the renderer regardless)
         s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
-        ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
+        if (info) fleet_status_upsert(&s_fleet, node_id_for(info->src_addr), &s_status, s_status_ms);
+        ESP_LOGW(TAG, "status rx: N%u decoys=%u threats=%u up=%lus",
+                 (unsigned)(info ? node_id_for(info->src_addr) : 0),
                  (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,
                  (unsigned long)s_status.uptime_s);
         return;
@@ -809,12 +820,20 @@ void app_main(void)
             };
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
-            // HOME fleet-strip node view. First increment: one node from the last received status;
-            // per-node fan-out (keyed by sender via fleet_status) lands in the next iteration.
-            // Liveness = fresh status within 15s (signed compare: recv task can be a few ms ahead of `now`).
-            bool s_fresh = (s_status_ms != 0 && (int32_t)(now - s_status_ms) <= 15000);
-            radar_node_view_t nv[1] = {{ .id = 0, .st = &s_status, .alive = s_fresh }};
-            int nvc = 1;
+            // HOME fleet-strip node view: one card per sender, fanned out from the fleet table.
+            // Liveness comes from fleet_status_at (stale after FLEET_STATUS_STALE_MS). Until any
+            // decoy is heard, show a single SILENT placeholder so HOME is never blank.
+            radar_node_view_t nv[FLEET_STATUS_MAX]; int nvc = 0;
+            for (int i = 0; i < fleet_status_count(&s_fleet) && nvc < FLEET_STATUS_MAX; i++) {
+                uint8_t nid; const radar_wire_status_t *nst; bool nal;
+                if (fleet_status_at(&s_fleet, i, &nid, &nst, &nal, now)) {
+                    nv[nvc].id = nid; nv[nvc].st = nst; nv[nvc].alive = nal; nvc++;
+                }
+            }
+            if (nvc == 0) {
+                bool s_fresh = (s_status_ms != 0 && (int32_t)(now - s_status_ms) <= 15000);
+                nv[0].id = 0; nv[0].st = &s_status; nv[0].alive = s_fresh; nvc = 1;
+            }
 #ifdef SIMULACRA_FLEET_PROVISION
             // The CONTROL page is static; re-rendering it every frame would re-flush the FLEET
             // bar over it each time and flicker. Redraw it only on change (preset / SEND / entry).

@@ -17,3 +17,9 @@ private/
 # bystander RF captures must never leave this machine (public repo)
 *.pcap
 *.pcapng
+
+# host-compile artifacts from local tests (can embed absolute paths / username)
+*.obj
+*.exe
+*.pyc
+__pycache__/

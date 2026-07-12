@@ -6,22 +6,24 @@
 #include "sig_class_name.h"
 #include "threat_escalation.h"
 #include <stdio.h>
-#define COL_BG 0x0000
-#define COL_FG 0xFFFF
-#define COL_DIM 0x7BEF
-#define COL_RING 0x2965
-#define COL_OK 0x07E0
-#define COL_WARN 0xF800
-#define COL_SWEEP 0x0400
+// Legacy view colors now alias the necromancer theme so every sub-view (radar/followers/stats/
+// library/control) reskins from one place and stays cohesive with HOME. See radar_theme.h.
+#define COL_BG    COL_VOID
+#define COL_FG    COL_BONE
+#define COL_DIM   COL_ASH
+#define COL_RING  COL_EDGE
+#define COL_OK    COL_CHANNEL
+#define COL_WARN  COL_HUNTER
+#define COL_SWEEP RGB565(0x3A,0x22,0x55)   // dim arcane — the radar sweep's trailing energy
 #define RCX 120
 #define RCY 120
 #define RR 100
 
-static uint16_t threat_color(uint8_t ep){ return ep>=5?COL_WARN:(ep>=2?0xFD20:0xFFE0); }
+static uint16_t threat_color(uint8_t ep){ return ep>=5?COL_HUNTER:(ep>=2?COL_WARD:COL_ARCANE); }
 static uint16_t escalation_color(detect_escalation_t e){
-    return e==ESCALATION_PERSISTENT ? 0xF800   // red
-         : e==ESCALATION_RECURRING  ? 0xFD20    // orange
-                                    : 0xFFE0;   // yellow (NEW)
+    return e==ESCALATION_PERSISTENT ? COL_HUNTER   // red   — a confirmed follower
+         : e==ESCALATION_RECURRING  ? COL_WARD     // amber — seen across sessions
+                                    : COL_ARCANE;  // arcane — NEW this session
 }
 
 static void draw_radar(radar_gfx_t *g, const radar_wire_status_t *st, uint16_t sweep){

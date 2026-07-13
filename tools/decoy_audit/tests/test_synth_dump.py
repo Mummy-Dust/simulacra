@@ -11,7 +11,7 @@ class SynthDump(unittest.TestCase):
     def test_emits_n_rows_with_keys(self):
         r = self.rows(n=64)
         self.assertEqual(len(r), 64)
-        for k in ("addr","atype","company","itvl_ms","tx","arch","plen"):
+        for k in ("addr","atype","company","itvl_ms","tx","arch","plen","ad"):
             self.assertIn(k, r[0])
     def test_address_type_is_a_realistic_mix(self):
         # decoys must present a static/RPA/NRPA blend (like a real crowd), NOT 100% static.
@@ -22,6 +22,16 @@ class SynthDump(unittest.TestCase):
         self.assertGreater(c["public"], 0.03*n)   # NRPA/"public" present (~12% target)
         self.assertLess(c["static"], 0.75*n)      # not a static-random monoculture
         self.assertEqual(set(c) - {"static","rpa","public"}, set())  # no stray types
+    def test_ad_structure_signature_is_faithful(self):
+        # Each decoy's AD-type signature must contain only the element types the firmware
+        # actually advertises (flags/uuid16/name/svc-data/mfg), with flags always first.
+        r = self.rows(seed=9, n=256)
+        allowed = {"01","02","03","08","09","16","ff"}
+        for x in r:
+            types = x["ad"].split(",")
+            self.assertTrue(x["ad"], "empty AD signature")
+            self.assertEqual(types[0], "01")                 # flags element leads
+            self.assertLessEqual(set(types), allowed, x["ad"])
     def test_intervals_and_company_populated(self):
         r = self.rows()
         self.assertTrue(all(x["itvl_ms"] > 0 for x in r))

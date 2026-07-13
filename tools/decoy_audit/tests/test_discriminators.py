@@ -31,5 +31,27 @@ class Scores(unittest.TestCase):
             self.assertLessEqual(d["separability"],1.0)
             self.assertEqual(d["visibility"],"logic")
 
+class ADStructure(unittest.TestCase):
+    def _prof(self, ad_sig):
+        return {"atype":{},"itvl_bins":[0]*7,"vendor":{},"ad_sig":ad_sig}
+    def test_synth_distributions_has_ad_sig(self):
+        sd=D.synth_distributions([{"atype":"static","itvl_ms":150,"company":0x75,"ad":"01,ff"}])
+        self.assertAlmostEqual(sd["ad_sig"]["01,ff"], 1.0, places=6)
+    def test_identical_structure_scores_zero(self):
+        synth=[{"atype":"static","itvl_ms":150,"company":0x75,"ad":"01,ff"} for _ in range(10)]
+        s={d["name"]:d["separability"] for d in D.score_all(synth, self._prof({"01,ff":1.0}))}
+        self.assertAlmostEqual(s["ad_structure"], 0.0, places=6)
+    def test_disjoint_structure_scores_high(self):
+        # decoys only ever emit "01,ff"; the real crowd only "01,03,16" -> trivially separable
+        synth=[{"atype":"static","itvl_ms":150,"company":0x75,"ad":"01,ff"} for _ in range(10)]
+        s={d["name"]:d["separability"] for d in D.score_all(synth, self._prof({"01,03,16":1.0}))}
+        self.assertGreater(s["ad_structure"], 0.9)
+    def test_missing_profile_ad_sig_scores_zero(self):
+        # an older profile.json without ad_sig -> no evidence, not a false positive
+        synth=[{"atype":"static","itvl_ms":150,"company":0x75,"ad":"01,ff"}]
+        prof={"atype":{},"itvl_bins":[0]*7,"vendor":{}}
+        s={d["name"]:d["separability"] for d in D.score_all(synth, prof)}
+        self.assertEqual(s["ad_structure"], 0.0)
+
 if __name__=="__main__":
     unittest.main()

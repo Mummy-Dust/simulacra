@@ -12,6 +12,7 @@
 #include "radar_render.h"
 #include "radar_gfx.h"
 #include "radar_wire.h"
+#include "fleet_status.h"
 #include "radar_ui.h"
 #include "radar_key.h"
 #include "config_wire.h"
@@ -141,8 +142,17 @@ static bool sd_mount(void)
 
 // ---- ESP-NOW radar link (STA on a fixed channel, broadcast, AES-GCM via radar_wire) ----
 static const uint8_t BCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-static radar_wire_status_t s_status;             // last good status
+static radar_wire_status_t s_status;             // last good status (any node — legacy single-node views)
 static volatile uint32_t   s_status_ms;          // when it arrived (0 = never)
+static fleet_status_t      s_fleet;              // per-node status table, keyed by sender (HOME strip)
+static uint8_t s_node_mac[FLEET_STATUS_MAX][6];  // first-seen MAC registry -> stable small node id
+static int     s_node_n;
+// Map a sender MAC to a stable 0-based node id (label N0/N1/N2...). Registry full -> fold onto N0.
+static uint8_t node_id_for(const uint8_t *mac){
+    for (int i = 0; i < s_node_n; i++) if (memcmp(s_node_mac[i], mac, 6) == 0) return (uint8_t)i;
+    if (s_node_n < FLEET_STATUS_MAX){ memcpy(s_node_mac[s_node_n], mac, 6); return (uint8_t)s_node_n++; }
+    return 0;
+}
 static radar_replay_t      s_replay;
 static uint8_t  s_salt[4]; static uint64_t s_ctr;
 
@@ -317,7 +327,6 @@ static void broadcast_sig_db(void)
 }
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len){
-    (void)info;
 #ifdef SIMULACRA_FLEET_PROVISION
     if (len >= 1 && data[0] == RADAR_TYPE_ENROLL_REQUEST) {   // raw (unsealed) enrollment reply
         if (s_pair_until_ms && (uint32_t)(esp_timer_get_time()/1000) < s_pair_until_ms
@@ -335,9 +344,11 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         if (s_status.threat_count > RADAR_MAX_THREATS)      // never trust the wire field: threats[] is fixed-size
             s_status.threat_count = RADAR_MAX_THREATS;      // (a conforming decoy already clamps; this guards the renderer regardless)
         s_status_ms = (uint32_t)(esp_timer_get_time()/1000);
-        ESP_LOGW(TAG, "status rx: decoys=%u threats=%u up=%lus",
-                 (unsigned)s_status.active_devices, (unsigned)s_status.threat_count,
-                 (unsigned long)s_status.uptime_s);
+        uint8_t nid = info ? node_id_for(info->src_addr) : 0;
+        if (info) fleet_status_upsert(&s_fleet, nid, &s_status, s_status_ms);
+        ESP_LOGW(TAG, "status rx: N%u decoys=%u threats=%u up=%lus",
+                 (unsigned)nid, (unsigned)s_status.active_devices,
+                 (unsigned)s_status.threat_count, (unsigned long)s_status.uptime_s);
         return;
     }
     if (type==RADAR_TYPE_LEARN_OFFER) {
@@ -738,7 +749,20 @@ void app_main(void)
         }
 #endif
         if (edge && !modal_open) {
-            if (ui.view == RADAR_VIEW_CONTROL) {
+            if (ui.view == RADAR_VIEW_HOME) {
+                // HOME sigil grid -> jump to that view. Geometry mirrors draw_home: 2 cols split at
+                // x=120, 3 rows of 64px starting at y=104 (CIRCLE/HUNTERS / LIVING/RITES / WARDS/GRIMOIRE).
+                // The fleet strip (y 30..100) taps into the live radar. Topbar / gaps just keep awake.
+                static const radar_view_t GRID[6] = {
+                    RADAR_VIEW_RADAR,   RADAR_VIEW_DETAIL,     // CIRCLE   HUNTERS
+                    RADAR_VIEW_STATS,   RADAR_VIEW_CONTROL,    // LIVING   RITES
+                    RADAR_VIEW_LIBRARY, RADAR_VIEW_INFO };     // WARDS    GRIMOIRE
+                radar_view_t v = RADAR_VIEW_COUNT;             // sentinel: no target
+                if (ty >= 104 && ty < 296)      v = GRID[((ty - 104) / 64) * 2 + (tx >= 120 ? 1 : 0)];
+                else if (ty >= 30 && ty < 100)  v = RADAR_VIEW_RADAR;
+                if (v != RADAR_VIEW_COUNT) { radar_ui_select_view(&ui, v, now); send_request(); last_req = now; }
+                else                       radar_ui_note_input(&ui, now);
+            } else if (ui.view == RADAR_VIEW_CONTROL) {
                 radar_ui_note_input(&ui, now);           // keep backlight/idle timer fresh
 #ifdef SIMULACRA_CONFIG_CTRL
 #ifdef SIMULACRA_FLEET_PROVISION
@@ -747,15 +771,17 @@ void app_main(void)
                     radar_ui_note_input(&ui, now);
                 } else
 #endif
-                if (ty > 200 && tx > 60 && tx < 180) {   // SEND button
+                if (ty < 40) {                           // top strip = BACK to HOME (drawn "< BACK")
+                    radar_ui_on_input(&ui, now);
+                } else if (ty > 200 && tx > 60 && tx < 180) {   // SEND button
                     send_config(ui.sel_preset);
                     radar_ctrl_mark_sent(&ui, now);
                 } else if (tx < 80) {                    // left zone: prev == cycle-around
                     for (int i = 0; i < RADAR_CTRL_PRESET_COUNT - 1; i++) radar_ctrl_select_next(&ui);
                 } else if (tx > 160) {                   // right zone: next
                     radar_ctrl_select_next(&ui);
-                } else {                                 // center tap = leave to next view
-                    radar_ui_on_input(&ui, now); send_request(); last_req = now;
+                } else {                                 // center (preset label) = stay put
+                    radar_ui_note_input(&ui, now);
                 }
 #else
                 radar_ui_on_input(&ui, now); send_request(); last_req = now;
@@ -809,6 +835,20 @@ void app_main(void)
             };
             radar_ctrl_info_t ctrl = { .sel_preset = ui.sel_preset,
                 .send_flash = (ui.send_flash_ms && (now - ui.send_flash_ms) < RADAR_CTRL_FLASH_MS) };
+            // HOME fleet-strip node view: one card per sender, fanned out from the fleet table.
+            // Liveness comes from fleet_status_at (stale after FLEET_STATUS_STALE_MS). Until any
+            // decoy is heard, show a single SILENT placeholder so HOME is never blank.
+            radar_node_view_t nv[FLEET_STATUS_MAX]; int nvc = 0;
+            for (int i = 0; i < fleet_status_count(&s_fleet) && nvc < FLEET_STATUS_MAX; i++) {
+                uint8_t nid; const radar_wire_status_t *nst; bool nal;
+                if (fleet_status_at(&s_fleet, i, &nid, &nst, &nal, now)) {
+                    nv[nvc].id = nid; nv[nvc].st = nst; nv[nvc].alive = nal; nvc++;
+                }
+            }
+            if (nvc == 0) {
+                bool s_fresh = (s_status_ms != 0 && (int32_t)(now - s_status_ms) <= 15000);
+                nv[0].id = 0; nv[0].st = &s_status; nv[0].alive = s_fresh; nvc = 1;
+            }
 #ifdef SIMULACRA_FLEET_PROVISION
             // The CONTROL page is static; re-rendering it every frame would re-flush the FLEET
             // bar over it each time and flicker. Redraw it only on change (preset / SEND / entry).
@@ -822,25 +862,39 @@ void app_main(void)
                 if (ctrl_static){
                     bool flash = ctrl.send_flash;
                     if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash){
-                        radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                         draw_fleet_bar(band);
                         cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
                     }
                 } else {
                     cs_shown = false;                        // leaving CONTROL / enroll active -> redraw next entry
-                    radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                     bool enr = draw_enroll_overlay(band, now);
                     if (enr)                                { /* enrollment banner owns the top */ }
                     else if (ui.view == RADAR_VIEW_CONTROL) draw_fleet_bar(band);
+                    else if (ui.view == RADAR_VIEW_HOME)    { /* HOME strip shows liveness itself */ }
                     else                                    draw_freshness_overlay(band, now);
                     sweep=(uint16_t)((sweep+12)%360);
                 }
             }
 #else
             {
-                radar_render_view(ui.view, &s_status, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
-                draw_freshness_overlay(band, now);
-                sweep=(uint16_t)((sweep+12)%360);
+                // CONTROL is static; redrawing it every loop blocks the loop on SPI flushes and
+                // starves the touch poll (short back-taps get missed). Redraw it only on change so
+                // the loop stays free to sample touch -> snappy back gesture.
+                static int cs_sel = -1; static bool cs_flash = false; static bool cs_shown = false;
+                if (ui.view == RADAR_VIEW_CONTROL) {
+                    bool flash = ctrl.send_flash;
+                    if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash) {
+                        radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
+                    }
+                } else {
+                    cs_shown = false;                    // force a fresh CONTROL redraw on re-entry
+                    radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    if (ui.view != RADAR_VIEW_HOME) draw_freshness_overlay(band, now);
+                    sweep=(uint16_t)((sweep+12)%360);
+                }
             }
 #endif
         }

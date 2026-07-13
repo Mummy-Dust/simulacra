@@ -19,6 +19,7 @@ typedef struct {
     uint8_t  active_target;      // churn active-target (population match)
     uint8_t  threat_count;       // valid entries in threats[]
     detect_threat_t threats[DETECT_MAX_THREATS];
+    uint8_t  form_restless, form_wandering, form_bound;   // BLE shade-form counts: RPA/NRPA/static
 } webui_status_t;
 
 // Pure: render st into buf as JSON. Returns bytes written (excl. NUL), or -1 if

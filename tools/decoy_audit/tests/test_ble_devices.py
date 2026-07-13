@@ -144,3 +144,10 @@ class Lifecycle(unittest.TestCase):
         for slot, bs in multi.items():
             addrs = [b[2] for b in bs]
             self.assertEqual(len(addrs), len(set(addrs)), f"slot {slot} reused an address on rebirth")
+
+    def test_form_counts_sum_to_population(self):
+        # a --formcounts subcommand prints "R W B N" (restless/wandering/bound/total)
+        out = subprocess.check_output([EXE,"--formcounts","7","24"],text=True).split()
+        r,w,b,n = map(int,out)
+        self.assertEqual(r+w+b, n, "form counts must partition the population")
+        self.assertEqual(n, 24)

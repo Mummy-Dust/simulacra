@@ -771,15 +771,17 @@ void app_main(void)
                     radar_ui_note_input(&ui, now);
                 } else
 #endif
-                if (ty > 200 && tx > 60 && tx < 180) {   // SEND button
+                if (ty < 40) {                           // top strip = BACK to HOME (drawn "< BACK")
+                    radar_ui_on_input(&ui, now);
+                } else if (ty > 200 && tx > 60 && tx < 180) {   // SEND button
                     send_config(ui.sel_preset);
                     radar_ctrl_mark_sent(&ui, now);
                 } else if (tx < 80) {                    // left zone: prev == cycle-around
                     for (int i = 0; i < RADAR_CTRL_PRESET_COUNT - 1; i++) radar_ctrl_select_next(&ui);
                 } else if (tx > 160) {                   // right zone: next
                     radar_ctrl_select_next(&ui);
-                } else {                                 // center tap = leave to next view
-                    radar_ui_on_input(&ui, now); send_request(); last_req = now;
+                } else {                                 // center (preset label) = stay put
+                    radar_ui_note_input(&ui, now);
                 }
 #else
                 radar_ui_on_input(&ui, now); send_request(); last_req = now;
@@ -877,9 +879,22 @@ void app_main(void)
             }
 #else
             {
-                radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
-                if (ui.view != RADAR_VIEW_HOME) draw_freshness_overlay(band, now);
-                sweep=(uint16_t)((sweep+12)%360);
+                // CONTROL is static; redrawing it every loop blocks the loop on SPI flushes and
+                // starves the touch poll (short back-taps get missed). Redraw it only on change so
+                // the loop stays free to sample touch -> snappy back gesture.
+                static int cs_sel = -1; static bool cs_flash = false; static bool cs_shown = false;
+                if (ui.view == RADAR_VIEW_CONTROL) {
+                    bool flash = ctrl.send_flash;
+                    if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash) {
+                        radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
+                    }
+                } else {
+                    cs_shown = false;                    // force a fresh CONTROL redraw on re-entry
+                    radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    if (ui.view != RADAR_VIEW_HOME) draw_freshness_overlay(band, now);
+                    sweep=(uint16_t)((sweep+12)%360);
+                }
             }
 #endif
         }

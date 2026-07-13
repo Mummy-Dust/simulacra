@@ -89,7 +89,8 @@ static void draw_library(radar_gfx_t *g, const radar_lib_info_t *lib){
 }
 static const char *CTRL_LABELS[5] = { "PAUSE", "STEALTH", "NORMAL", "DENSE", "MAX" };
 static void draw_control(radar_gfx_t *g, const radar_ctrl_info_t *c){
-    radar_gfx_text(g, 8, 6, "CONTROL", COL_FG);
+    radar_gfx_text(g, 8, 6, "< BACK", COL_ARCANE);       // top strip taps home
+    radar_gfx_text(g, 152, 6, "CONTROL", COL_ASH);
     uint8_t sel = c ? c->sel_preset : 2;
     radar_gfx_text(g, 20, 120, "<", COL_DIM);
     radar_gfx_text(g, 200, 120, ">", COL_DIM);
@@ -118,7 +119,7 @@ static void draw_home(radar_gfx_t *g, const radar_node_view_t *nodes, int nc){
         radar_gfx_text(g, x+8, y+52, nodes[i].alive?"CHANNEL":"SILENT", sc);
     }
     static const sigil_id_t sig[6]={SIGIL_CIRCLE,SIGIL_HUNTER,SIGIL_LIVING,SIGIL_RITE,SIGIL_WARD,SIGIL_GRIMOIRE};
-    static const char *lbl[6]={"CIRCLE","HUNTERS","LIVING","RITES","WARDS","GRIMOIRE"};
+    static const char *lbl[6]={"RADAR","FOLLOWERS","DECOYS","CONTROL","LIBRARY","INFO"};
     for(int i=0;i<6;i++){
         int cx=(i%2)*120, cy=104+(i/2)*64;
         radar_gfx_fill_rect(g, cx+1, cy+1, 118, 62, COL_CRYPT);
@@ -126,11 +127,11 @@ static void draw_home(radar_gfx_t *g, const radar_node_view_t *nodes, int nc){
         radar_gfx_text(g, cx+42, cy+27, lbl[i], COL_BONE);
     }
     radar_gfx_hline(g, 0, 239, 298, COL_EDGE);
-    radar_gfx_text(g, 6, 304, "THE CIRCLE CHANNELS", COL_ASH);
+    radar_gfx_text(g, 6, 304, "TAP AN ICON TO OPEN", COL_ASH);
 }
 static void draw_info(radar_gfx_t *g, const radar_wire_status_t *st){
     radar_gfx_clear(g, COL_VOID);
-    radar_gfx_text(g, 8, 10, "GRIMOIRE", COL_BONE);
+    radar_gfx_text(g, 8, 10, "INFO", COL_BONE);
     char l[40];
     snprintf(l,sizeof l,"epoch %u",(unsigned)st->epoch);        radar_gfx_text(g, 8, 40, l, COL_ASH);
     snprintf(l,sizeof l,"up %lus",(unsigned long)st->uptime_s); radar_gfx_text(g, 8, 58, l, COL_ASH);

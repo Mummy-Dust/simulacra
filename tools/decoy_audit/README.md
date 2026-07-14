@@ -178,6 +178,22 @@ a **PASS structure audit (0 leaked identity bytes)**. Enabling those shapes move
 reproducing a real observed shape is at least as faithful as a hand-built template. The strip→render
 round-trip is validated: faithful and identity-safe.
 
+## Presence-duration tell
+
+The **presence_duration** discriminator scores how long each address stays observable
+(per-address, the passive-sniffer projection of rotation + lifetime) against the real crowd's
+`presence_ms_bins`. It needs the temporal `synth_dump --devices` run, so pass it with
+`scorecard.py --devices <run>` (run.ps1 does this automatically). Bins: <1/5/15/30/60/120/>120 min.
+
+> **The metric was wrong before.** `rotation_audit` measured presence as the born→last-rotate
+> span, scoring a non-rotating STATIC address (~half the fleet) as **0** — a false 0.78 alarm. The
+> correct per-address presence is the gap until the same slot's next address replaces it; the honest
+> tell is ~**0.13**. To close the real residual — real ambient has a ~15% long-lived static tail the
+> churning fleet lacked — `BLE_ROLE_PERSISTENT` gives a slice (~28%) of static devices a 4–12 h
+> lifetime (only static can persist; RPA/NRPA rotate regardless). Presence JSD **0.13 → 0.084**.
+> The remainder is an honest ceiling: presence is address-weighted, and a fleet that must churn to
+> defeat tracking necessarily emits many short-lived addresses.
+
 ## Deferred slices
 
 - **AD-structure discriminator** — DONE (2026-07-13). Scored on the AD element-type
@@ -187,8 +203,10 @@ round-trip is validated: faithful and identity-safe.
   serializer needed. A byte-value discriminator stays deferred (payloads are largely random
   per-advert, so exact bytes would measure noise, not structure).
 - **Learned-shape path** — DONE (2026-07-13). See "Learned-shape audit" below.
-- **Physical-only discriminators** — RSSI/TX spread, lifespan cohort — need a
-  decoy-only capture as a clean label source.
+- **Presence / lifespan cohort** — DONE (2026-07-13). See "Presence-duration tell" above.
+- **RSSI / TX-power spread** — still deferred: a physical-layer tell that needs a **decoy-only
+  capture** as a clean label source (`long.pcap` carries RSSI but is real+decoy mixed, so signal
+  alone can't label which adverts are decoys).
 
 ## Privacy
 

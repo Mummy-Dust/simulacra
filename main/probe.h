@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include "probe_frame.h"   // PROBE_FRAME_MAX, archetypes, probe_random_mac, probe_build_request
 #include "probe_agents.h"  // independent per-phone agents: seq, lifecycle, due-selection
@@ -20,6 +21,8 @@ int    probe_inject_burst(uint8_t channel);
 int    probe_phone_count(void);
 // Cumulative count of probe requests injected since boot (dashboard telemetry).
 uint32_t probe_total_sent(void);
+// TX health: false once too many consecutive injections have failed (alive but not transmitting).
+bool   probe_tx_healthy(void);
 // Channel hop sets for the scheduler: fills *out, returns count. 5g returns 0 on 2.4-only personas.
 size_t probe_channels_24(const uint8_t **out);
 size_t probe_channels_5g(const uint8_t **out);

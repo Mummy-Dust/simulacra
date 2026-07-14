@@ -10,6 +10,7 @@ typedef struct {
     uint32_t uptime_s;
     bool     decoy_paused;       // churn rotation paused via the UI
     bool     wifi_config_mode;   // true while the config AP is up
+    bool     tx_degraded;        // probe TX wedged (alive but not injecting) -> health flag bit2
     uint16_t active_devices;     // churn_active_count()
     uint16_t roster_size;        // CHURN_ROSTER_SIZE
     uint32_t probes_sent;        // cumulative Wi-Fi probes injected

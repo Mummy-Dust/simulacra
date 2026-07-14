@@ -22,6 +22,9 @@ static const char *TAG = "probe";
 #endif
 #define PROBE_MAX_PHONES 16
 #define PROBE_BURST_MS   2000
+// TX health: this many CONSECUTIVE esp_wifi_80211_tx failures means the decoy is alive but not
+// actually injecting (radio/driver wedged) -> report degraded. A single success clears it.
+#define PROBE_TX_FAIL_THRESH 16
 
 static const uint8_t CH_24[] = { 1, 6, 11 };
 #if PROBE_USE_5G
@@ -30,6 +33,7 @@ static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
 
 static int      s_hop;
 static uint32_t s_probes_sent;   // cumulative probe requests injected (dashboard telemetry)
+static uint16_t s_tx_consec_fail; // consecutive TX failures (reset on any success) -> health flag
 
 int probe_wifi_init(void)
 {
@@ -86,6 +90,8 @@ int probe_inject_burst(uint8_t channel)
         f[22] = (uint8_t)(sc & 0xFF);
         f[23] = (uint8_t)((sc >> 8) & 0xFF);
         rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, false);  // en_sys_seq=false: per-agent seq
+        if (rc != 0) { if (s_tx_consec_fail < 0xFFFF) s_tx_consec_fail++; }
+        else s_tx_consec_fail = 0;
         s_probes_sent++; sent++;
     }
     ESP_LOGW(TAG, "burst ch=%u due=%d/%d band5=%d set_ch_rc=%d tx_rc=%d",
@@ -94,6 +100,11 @@ int probe_inject_burst(uint8_t channel)
 }
 
 uint32_t probe_total_sent(void) { return s_probes_sent; }
+
+// TX health for the dashboard: false once PROBE_TX_FAIL_THRESH sends in a row have failed (the
+// decoy reports fine but isn't injecting). Clears on the next successful TX. Catches a wedged
+// radio/driver -- NOT the en_sys_seq regression (successful TX with a bad seq; that needs a sniffer).
+bool probe_tx_healthy(void) { return s_tx_consec_fail < PROBE_TX_FAIL_THRESH; }
 
 // Dev mode (SIMULACRA_PROBE): forever-loop wrapper over the scheduler core.
 static uint8_t next_channel(void)

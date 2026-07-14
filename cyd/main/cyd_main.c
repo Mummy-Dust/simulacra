@@ -810,7 +810,11 @@ void app_main(void)
         if (s_lib_dirty && now - last_save > LEARN_DB_SAVE_MS) {
             last_save = now; s_lib_dirty = false; learn_db_save();
         }
-        radar_ui_on_tick(&ui, now, s_status.threat_count);
+        // Fleet-wide view: fold every alive node into one status so the sub-views (radar/
+        // followers/decoys) show the whole fleet, not whichever node reported last. HOME still
+        // renders per-node cards from s_fleet; the aggregate drives the sub-views + the tick logic.
+        radar_wire_status_t agg; fleet_status_aggregate(&s_fleet, now, &agg);
+        radar_ui_on_tick(&ui, now, agg.threat_count);
         if (ui.backlight_on != bl_was_on) {
             set_backlight(ui.backlight_on);
 #ifdef SIMULACRA_FLEET_PROVISION
@@ -862,13 +866,13 @@ void app_main(void)
                 if (ctrl_static){
                     bool flash = ctrl.send_flash;
                     if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash){
-                        radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        radar_render_view(ui.view, &agg, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                         draw_fleet_bar(band);
                         cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
                     }
                 } else {
                     cs_shown = false;                        // leaving CONTROL / enroll active -> redraw next entry
-                    radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    radar_render_view(ui.view, &agg, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                     bool enr = draw_enroll_overlay(band, now);
                     if (enr)                                { /* enrollment banner owns the top */ }
                     else if (ui.view == RADAR_VIEW_CONTROL) draw_fleet_bar(band);
@@ -886,12 +890,12 @@ void app_main(void)
                 if (ui.view == RADAR_VIEW_CONTROL) {
                     bool flash = ctrl.send_flash;
                     if (!cs_shown || cs_sel != ui.sel_preset || cs_flash != flash) {
-                        radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                        radar_render_view(ui.view, &agg, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                         cs_sel = ui.sel_preset; cs_flash = flash; cs_shown = true;
                     }
                 } else {
                     cs_shown = false;                    // force a fresh CONTROL redraw on re-entry
-                    radar_render_view(ui.view, &s_status, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
+                    radar_render_view(ui.view, &agg, nv, nvc, &lib, &ctrl, sweep, band, 40, LCD_W, LCD_H, cyd_flush, NULL);
                     if (ui.view != RADAR_VIEW_HOME) draw_freshness_overlay(band, now);
                     sweep=(uint16_t)((sweep+12)%360);
                 }

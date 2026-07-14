@@ -88,25 +88,28 @@ python scorecard.py ../../private/synth.ndjson ../../private/profile.json --json
 
 ```
 DISCRIMINATOR            SEPARABILITY VISIBILITY
-ad_structure                   0.8767 logic     <- added 2026-07-13
-interval_distribution          0.0040 logic
-vendor_histogram               0.0019 logic
-address_type_mix               0.0013 logic
-HEADLINE (max) 0.8767  worst tell: ad_structure
+ad_structure                   0.1526 logic     <- added + closed 2026-07-13
+interval_distribution          0.0026 logic
+address_type_mix               0.0019 logic
+vendor_histogram               0.0015 logic
+HEADLINE (max) 0.1526  worst tell: ad_structure
 ```
 
-**AD-structure is the dominant open tell (0.88).** Adding it (2026-07-13) exposed a large gap
-the three distributional tells were blind to: the decoys advertise beacon-rich payloads while
-real ambient BLE is mostly terse. Real signatures are `01` flags-only **53%**, `01,03`
-flags+uuid **21%**, `01,ff` flags+mfg **11%**; the decoys are `01,03,16` (eddystone/tile
-service-data) **86%** and `01,ff` **13%** — they emit *none* of the flags-only / flags+uuid
-majority. A fingerprinter flags "advertises a full service-data payload" as decoy-like. Fix
-target: the generator needs a large share of minimal advertisers (flags-only, flags+uuid16) to
-match the real crowd's terseness. NOTE: `long.pcap` is real-ambient+decoy *mixed*, so this is a
-relative measure; the structural direction (decoys over-advertise) is robust regardless.
+**AD-structure: found at 0.88, closed to 0.15 (2026-07-13).** Adding the tell exposed a gap the
+three distributional tells were blind to — the decoys advertised beacon-rich payloads (`01,03,16`
+service-data **86%**) while real ambient BLE is terse (`01` flags-only **53%**, `01,03` flags+uuid
+**21%**, `01,ff` flags+mfg **11%**). Fix: two minimal-advertiser families (`FMT_FLAGS_ONLY` → `01`,
+`FMT_SVC_UUID16` → `01,03`) and a reweighted no-mfg structural mix in `generate.c`
+(`pick_no_mfg_template`: ~62% flags-only, ~24% flags+uuid16, ~14% service-data beacon). Decoys now
+match the real crowd on the two biggest signatures almost exactly (`01` 0.527 vs 0.527, `01,03` 0.20
+vs 0.21). The residual 0.15 is the deliberate tracker/beacon persona (`01,03,16` ~14%, ~0 in *this*
+capture but present in real environments) plus real signatures the decoys don't emit by design
+(empty adverts 9%, flags+name 5%, flags+TX-power 1%). Driving it lower would over-fit one capture's
+beacon count and delete the beacon persona. NOTE: `long.pcap` is real-ambient+decoy *mixed*, a
+relative measure; the structural direction is robust regardless.
 
 The three distributional tells remain closed; the honest headline history is 0.38 → 0.004
-(distributional) → 0.88 once AD structure is measured:
+(distributional) → 0.88 (AD structure found) → 0.15 (AD structure closed):
 - **`address_type_mix` (0.001)** — was 0.30 (decoys were 100% static-random, never an
   RPA). `roster.c` now presents a realistic static/RPA/NRPA blend (~52/36/12) via
   `make_random_addr_mixed`; all three are *random* address subtypes, so no real MAC is

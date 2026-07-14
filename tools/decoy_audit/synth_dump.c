@@ -6,6 +6,8 @@
 #include "generate.h"
 #include "ble_devices.h"
 #include "roster.h"
+#include "learn.h"
+#include "learn_record.h"
 
 static const char *atype_of(const uint8_t addr[6]) {
     switch (addr[5] >> 6) { case 3: return "static"; case 1: return "rpa";
@@ -69,6 +71,37 @@ static int load_model_seed(const char *path, rf_model_t *m) {
     m->total_obs = (uint32_t)total;
     return 0;
 }
+/* Load a pcap_learn LSD1 seed (8-byte header + 55-byte little-endian records, the format
+   tools/pcap_learn/harness.c writes) into the real learn store, so generate_roster reproduces
+   the learned shapes via learn_render. Returns records added, or -1 on error. */
+static int load_learn_seed(const char *path) {
+    FILE *fp = fopen(path, "rb"); if (!fp) return -1;
+    unsigned char h[8];
+    if (fread(h, 1, 8, fp) != 8) { fclose(fp); return -1; }
+    uint32_t magic = (uint32_t)h[0] | ((uint32_t)h[1] << 8) | ((uint32_t)h[2] << 16) | ((uint32_t)h[3] << 24);
+    uint16_t cnt = (uint16_t)(h[6] | (h[7] << 8));
+    if (magic != 0x4C534431u) { fclose(fp); return -1; }   // "LSD1"
+    int n = 0;
+    for (uint16_t i = 0; i < cnt; i++) {
+        unsigned char b[55]; if (fread(b, 1, 55, fp) != 55) break;
+        learned_template_t t; memset(&t, 0, sizeof t); int p = 0;
+        memcpy(t.ad, b + p, 31); p += 31;
+        t.ad_len = b[p++]; t.name_off = b[p++]; t.name_len = b[p++];
+        t.rand_mask = (uint32_t)b[p] | ((uint32_t)b[p+1] << 8) | ((uint32_t)b[p+2] << 16) | ((uint32_t)b[p+3] << 24); p += 4;
+        t.company_id = (uint16_t)(b[p] | (b[p+1] << 8)); p += 2;
+        t.svc_uuid   = (uint16_t)(b[p] | (b[p+1] << 8)); p += 2;
+        t.family = b[p++];
+        t.itvl_min_ms = (uint16_t)(b[p] | (b[p+1] << 8)); p += 2;
+        t.itvl_max_ms = (uint16_t)(b[p] | (b[p+1] << 8)); p += 2;
+        t.shape_hash = (uint32_t)b[p] | ((uint32_t)b[p+1] << 8) | ((uint32_t)b[p+2] << 16) | ((uint32_t)b[p+3] << 24); p += 4;
+        t.reinforce_count = (uint16_t)(b[p] | (b[p+1] << 8)); p += 2;
+        t.last_seen_sweep = (uint16_t)(b[p] | (b[p+1] << 8)); p += 2;
+        if (learn_store_add(&t, t.last_seen_sweep)) n++;
+    }
+    fclose(fp);
+    return n;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--devices") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
@@ -122,6 +155,14 @@ int main(int argc, char **argv) {
         m.vendors[0].company_id = 0x0075; m.vendors[0].count = 30; m.vendors[0].itvl_bins[2] = 30;
         m.vendors[1].company_id = 0x004C; m.vendors[1].count = 10; m.vendors[1].itvl_bins[2] = 10;
         m.other_count = 10; m.other_itvl_bins[3] = 10; m.total_obs = 50; m.pop_ewma = 12.0f;
+    }
+    // Optional 4th arg: a pcap_learn learn.seed. Loading it makes learn_count()>0, so
+    // generate_roster reproduces the learned shapes (self-learning path) instead of only
+    // the built-in templates. Absent -> learn_count()==0, identical to the template-only audit.
+    if (argc > 4) {
+        int lc = load_learn_seed(argv[4]);
+        fprintf(stderr, "learn.seed: %d records loaded (learn_count=%u)\n",
+                lc, (unsigned)learn_count());
     }
     if (n > 256) n = 256;
     static identity_t roster[256];

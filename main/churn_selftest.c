@@ -991,36 +991,37 @@ static void test_radar_geometry(void)
 static void test_radar_ui(void)
 {
     radar_ui_t ui;
+    // Reset lands on the HOME dashboard grid (not radar), backlight on.
     radar_ui_reset(&ui, 1000, 0);
-    ST_CHECK(ui.view == RADAR_VIEW_RADAR && ui.backlight_on, "reset: radar + bl on");
-    radar_ui_on_input(&ui, 1100); ST_CHECK(ui.view == RADAR_VIEW_DETAIL,  "input 1 -> detail");
-    radar_ui_on_input(&ui, 1200); ST_CHECK(ui.view == RADAR_VIEW_STATS,   "input 2 -> stats");
-    radar_ui_on_input(&ui, 1250); ST_CHECK(ui.view == RADAR_VIEW_LIBRARY, "input 3 -> library");
-    radar_ui_on_input(&ui, 1300); ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "input 4 -> control");
-    radar_ui_on_input(&ui, 1350); ST_CHECK(ui.view == RADAR_VIEW_RADAR,   "input 5 -> wraps");
-    radar_ui_on_input(&ui, 2000); radar_ui_on_input(&ui, 2000);          // -> stats
+    ST_CHECK(ui.view == RADAR_VIEW_HOME && ui.backlight_on, "reset: home + bl on");
+    // A HOME sigil tap jumps straight to the chosen view; a tap in a sub-view returns HOME.
+    radar_ui_select_view(&ui, RADAR_VIEW_DETAIL, 1100);  ST_CHECK(ui.view == RADAR_VIEW_DETAIL,  "select -> detail");
+    radar_ui_select_view(&ui, RADAR_VIEW_LIBRARY, 1200); ST_CHECK(ui.view == RADAR_VIEW_LIBRARY, "select -> library");
+    radar_ui_on_input(&ui, 1300);                        ST_CHECK(ui.view == RADAR_VIEW_HOME,    "input -> back home");
+    // Idle on a data view returns to HOME while the crowd is clear.
+    radar_ui_select_view(&ui, RADAR_VIEW_STATS, 2000);
     radar_ui_on_tick(&ui, 2000 + RADAR_VIEW_IDLE_MS + 1, 0);
-    ST_CHECK(ui.view == RADAR_VIEW_RADAR, "idle returns to radar");
+    ST_CHECK(ui.view == RADAR_VIEW_HOME, "idle returns to home");
     radar_ui_on_tick(&ui, 2000 + RADAR_BL_IDLE_MS + 2, 0);
     ST_CHECK(!ui.backlight_on, "clear + idle sleeps backlight");
     radar_ui_on_tick(&ui, 999999, 1);
     ST_CHECK(ui.backlight_on && ui.view == RADAR_VIEW_RADAR, "new follower wakes + radar");
 
-    // A new follower must NOT yank the view back to radar while the user is actively navigating
-    // (recent input) -- that is the "random snap-back while reading a page" bug. It still wakes
-    // the backlight, and once the user goes idle a new follower does jump to radar as an alert.
+    // A new follower must NOT yank the view to radar while the user is actively navigating
+    // (recent input) -- the "random snap-back while reading a page" bug. It still wakes the
+    // backlight, and once the user goes idle a new follower does jump to radar as an alert.
     radar_ui_reset(&ui, 10000, 0);
-    radar_ui_on_input(&ui, 10100);                 // -> detail, actively navigating
-    radar_ui_on_tick(&ui, 10200, 1);               // new follower arrives mid-navigation
+    radar_ui_select_view(&ui, RADAR_VIEW_DETAIL, 10100);   // actively navigating
+    radar_ui_on_tick(&ui, 10200, 1);                       // new follower arrives mid-navigation
     ST_CHECK(ui.view == RADAR_VIEW_DETAIL, "new follower keeps page while navigating");
     ST_CHECK(ui.backlight_on, "new follower still wakes backlight while navigating");
     radar_ui_on_tick(&ui, 10200 + RADAR_VIEW_IDLE_MS + 1, 2);
     ST_CHECK(ui.view == RADAR_VIEW_RADAR, "new follower jumps to radar once idle");
 
-    // CONTROL view joins the cycle and has an independent preset selector.
+    // CONTROL view is reached by a direct tap and has an independent preset selector.
     radar_ui_reset(&ui, 20000, 0);
-    for (int i = 0; i < RADAR_VIEW_CONTROL; i++) radar_ui_on_input(&ui, 20000 + i*10);
-    ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "cycle reaches CONTROL");
+    radar_ui_select_view(&ui, RADAR_VIEW_CONTROL, 20000);
+    ST_CHECK(ui.view == RADAR_VIEW_CONTROL, "select reaches CONTROL");
     uint8_t p0 = ui.sel_preset;
     radar_ctrl_select_next(&ui);
     ST_CHECK(ui.sel_preset == (p0 + 1) % RADAR_CTRL_PRESET_COUNT, "select_next advances preset");

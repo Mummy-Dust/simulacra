@@ -17,24 +17,29 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Capture = "$PSScriptRoot\..\..\private\long.pcap",
+    [string]$Capture,                   # default: <repo>\private\long.pcap (resolved below)
     [int]$Seed       = 1,
     [int]$Count      = 256,
-    [string]$OutDir  = "$PSScriptRoot\..\..\private",
+    [string]$OutDir,                    # default: <repo>\private (resolved below)
     [double]$Gate    = [double]::NaN,   # NaN = no gate
     [switch]$Rebuild
 )
 # Native tools (python, cl) may write progress to stderr; "Stop" would abort on that.
 # We check $LASTEXITCODE explicitly after each call instead.
 $ErrorActionPreference = "Continue"
-$tool = $PSScriptRoot
+# $PSScriptRoot is empty in some invocation modes (dot-source / -File with a relative path),
+# which made the param-time defaults resolve to a bogus 'C:\..\..\private'. Derive the tool dir
+# robustly here and fill any unset defaults from it.
+$tool = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $Capture) { $Capture = Join-Path $tool "..\..\private\long.pcap" }
+if (-not $OutDir)  { $OutDir  = Join-Path $tool "..\..\private" }
 $exe  = Join-Path $tool "synth_dump.exe"
 
 # --- resolve paths -------------------------------------------------------
 if (-not (Test-Path $Capture)) { Write-Error "capture not found: $Capture"; exit 2 }
-if (-not (Test-Path $OutDir))  { New-Item -ItemType Directory -Path $OutDir | Out-Null }
-$Capture   = (Resolve-Path $Capture).Path
-$OutDir    = (Resolve-Path $OutDir).Path
+New-Item -ItemType Directory -Force -Path $OutDir -ErrorAction SilentlyContinue | Out-Null
+$Capture = (Resolve-Path -LiteralPath $Capture).Path
+$OutDir  = (Resolve-Path -LiteralPath $OutDir).Path
 $profileJson   = Join-Path $OutDir "profile.json"
 $modelSeed = Join-Path $OutDir "model.seed"
 $synth     = Join-Path $OutDir "synth.ndjson"

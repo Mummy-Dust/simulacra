@@ -36,8 +36,9 @@ MSVC (this host has no gcc/clang) — from `tools/decoy_audit/`:
 ```
 cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h ^
    /Ihost_stubs /I..\..\main /I..\..\components\simulacra_radar ^
-   synth_dump.c ble_hs_adv.c learn_stub.c ^
+   synth_dump.c ble_hs_adv.c roster_stub.c ^
    ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c ^
+   ..\..\main\learn.c ..\..\components\simulacra_radar\law3.c ..\..\components\simulacra_radar\learn_wire.c ^
    /Fe:synth_dump.exe
 ```
 
@@ -48,8 +49,9 @@ Notes on the host shim:
   and supplies a portable `__builtin_popcount` that MSVC lacks.
 - The real `main/` headers win for quoted includes, so `churn.h`/`learn.h` are the
   real ones; only the leaf host headers are stubbed (`host_stubs/`: `esp_random.h`,
-  `esp_log.h`, `sdkconfig.h`, `host/ble_hs.h`, `host/ble_uuid.h`). `learn_stub.c`
-  implements the learn API as no-ops and stubs `rf_model_load_nvs` (no NVS on host).
+  `esp_log.h`, `sdkconfig.h`, `nvs.h`, `host/ble_hs.h`, `host/ble_uuid.h`). The audit
+  builds the **real** `main/learn.c` (+ `law3.c`, `learn_wire.c`) so it can measure
+  self-learned shapes; `roster_stub.c` supplies the one leftover `rf_model_load_nvs`.
 
 ## One-step (Windows/PowerShell)
 
@@ -149,6 +151,33 @@ for which Jensen–Shannon divergence is the natural separability measure. The
 FPR-pinned **per-device** calibration described in the design spec arrives with the
 physical-only slice (per-advert "looks synthetic" tells), where that framing applies.
 
+## Learned-shape audit
+
+The audit builds the **real** `main/learn.c`, so it can score the decoys' *self-learned*
+shapes, not just the built-in templates. Enable it by passing a `learn.seed` as the 4th
+`synth_dump` arg — that loads the learned library into the real store, so `generate_roster`
+reproduces those shapes via `learn_render` (exactly as the firmware does). Absent, the audit
+is template-only and byte-identical to before.
+
+Produce a seed from a real capture with the existing `tools/pcap_learn` harness (it replays the
+capture through the actual firmware pipeline `learn_strip → learn_shape_hash → learn_merge` and
+runs a structure-only leak audit):
+
+```
+# from tools/pcap_learn/  (cmd redirection: PowerShell '>' would UTF-16 the NDJSON)
+cmd /c "python parse_pcap.py ..\..\private\long.pcap > ..\..\private\adverts.ndjson"
+harness ..\..\private\adverts.ndjson          # writes learn.seed (CWD); prints the leak audit
+# then, from tools/decoy_audit/
+synth_dump 1 256 ..\..\private\model.seed ..\..\private\learn.seed | ... | scorecard.py ...
+```
+
+**Result (`private/long.pcap`):** the harness stripped 182k adverts to **4** learned shapes
+(iBeacon/Samsung mfg; 98.6% of the terse-majority adverts have nothing distinctive to learn) with
+a **PASS structure audit (0 leaked identity bytes)**. Enabling those shapes moved the headline
+**0.15 → 0.12** — self-learning introduces *no* new tell and marginally *improves* realism, because
+reproducing a real observed shape is at least as faithful as a hand-built template. The strip→render
+round-trip is validated: faithful and identity-safe.
+
 ## Deferred slices
 
 - **AD-structure discriminator** — DONE (2026-07-13). Scored on the AD element-type
@@ -157,11 +186,9 @@ physical-only slice (per-advert "looks synthetic" tells), where that framing app
   so the host type-sequence matches the on-air structure faithfully — no byte-accurate
   serializer needed. A byte-value discriminator stays deferred (payloads are largely random
   per-advert, so exact bytes would measure noise, not structure).
+- **Learned-shape path** — DONE (2026-07-13). See "Learned-shape audit" below.
 - **Physical-only discriminators** — RSSI/TX spread, lifespan cohort — need a
   decoy-only capture as a clean label source.
-- **Learned-shape path** — currently disabled via `learn_stub.c`; enabling it
-  (compile the real `main/learn.c` + a seeded library) is a later slice once the
-  built-in-template baseline is trusted.
 
 ## Privacy
 

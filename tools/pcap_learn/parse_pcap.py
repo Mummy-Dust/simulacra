@@ -19,6 +19,7 @@ payload=AdvA(6)+AD. Advertising AA = 0x8E89BED6.
 import sys, struct, json
 
 ADV_AA = 0x8E89BED6
+AA_LE = bytes.fromhex("d6be898e")   # advertising access address, little-endian on the wire
 AD_PAYLOAD_TYPES = {0: "ADV_IND", 2: "ADV_NONCONN_IND", 6: "ADV_SCAN_IND", 4: "SCAN_RSP"}
 
 
@@ -58,8 +59,8 @@ def main():
     f = open(sys.argv[1], "rb")
     gh = f.read(24)
     magic, vma, vmi, tz, sig, snap, dlt = struct.unpack("<IHHIIII", gh)
-    if dlt != 256:
-        sys.stderr.write(f"warning: DLT={dlt}, expected 256 (LE_LL_WITH_PHDR)\n")
+    # DLT-agnostic: locate the advertising AA by scanning each record (handles Nordic DLT157 and
+    # DLT256 alike), rather than assuming a fixed pseudo-header length. Matches capture_profile.py.
     counts, emitted, recs = {}, 0, 0
     while True:
         rh = f.read(16)
@@ -70,17 +71,18 @@ def main():
         if len(data) < incl:
             break
         recs += 1
-        if len(data) < 16:
+        off = data.find(AA_LE)
+        if off < 0 or off + 6 > len(data):
             continue
-        aa = struct.unpack("<I", data[10:14])[0]
-        if aa != ADV_AA:
+        pdu = data[off + 4:]                      # skip the 4-byte AA -> advertising PDU
+        if len(pdu) < 8:
             continue
-        h0, plen = data[14], data[15]
+        h0, plen = pdu[0], pdu[1]
         ptype = h0 & 0x0F
         counts[ptype] = counts.get(ptype, 0) + 1
         if ptype not in AD_PAYLOAD_TYPES:
             continue
-        pdu = data[16:16 + plen]                 # AdvA(6) + AD
+        pdu = pdu[2:2 + plen]                     # AdvA(6) + AD
         if len(pdu) < 6:
             continue
         adva = pdu[:6]

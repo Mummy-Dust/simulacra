@@ -32,6 +32,47 @@ class SynthDump(unittest.TestCase):
             self.assertTrue(x["ad"], "empty AD signature")
             self.assertEqual(types[0], "01")                 # flags element leads
             self.assertLessEqual(set(types), allowed, x["ad"])
+    # --- learned-shape path (synth_dump --learn) ---
+    def _write_seed(self, path, records):
+        import struct
+        with open(path, "wb") as f:
+            f.write(struct.pack("<IHH", 0x4C534431, 1, len(records)))  # "LSD1" ver=1 count
+            for r in records: f.write(r)
+    def _mfg_learned_record(self, company=0x0075):
+        import struct
+        ad = bytes([0x02,0x01,0x06, 0x05,0xFF, company & 0xFF, company >> 8, 0x11, 0x22])  # flags + mfg
+        b = bytearray(55); b[0:len(ad)] = ad
+        b[31] = len(ad)                                   # ad_len (name_off/name_len stay 0)
+        b[34:38] = struct.pack("<I", 0xC0)               # rand_mask
+        b[38:40] = struct.pack("<H", company)            # company_id
+        b[42] = 0                                         # family = FMT_VENDOR_MFG
+        b[43:45] = struct.pack("<H", 100); b[45:47] = struct.pack("<H", 200)  # itvl band
+        b[51:53] = struct.pack("<H", 5); b[53:55] = struct.pack("<H", 1)      # reinforce, sweep
+        return bytes(b)
+    def _model_075(self, path):
+        with open(path, "w") as f: f.write("POP 12\nV 0075 100 0 0 30 0 0 0 0\nOTHER 20 0 0 20 0 0 0 0\n")
+    def test_learn_seed_loads_and_is_used(self):
+        # A well-formed LSD1 seed loads into the real learn store and the generator reproduces it:
+        # learned records get arch >= templates_count(), beyond any built-in template index.
+        import json
+        seed = os.path.join(HERE, "_learn.seed"); model = os.path.join(HERE, "_learn.model")
+        self._write_seed(seed, [self._mfg_learned_record(0x0075)]); self._model_075(model)
+        base    = subprocess.run([EXE, "1", "128", model],       capture_output=True, text=True)
+        learned = subprocess.run([EXE, "1", "128", model, seed], capture_output=True, text=True)
+        os.remove(seed); os.remove(model)
+        self.assertIn("learn_count=1", learned.stderr)
+        bmax = max(json.loads(l)["arch"] for l in base.stdout.splitlines() if l.strip())
+        lmax = max(json.loads(l)["arch"] for l in learned.stdout.splitlines() if l.strip())
+        self.assertGreater(lmax, bmax)   # a learned archetype (index past the template range) was used
+    def test_bad_magic_seed_ignored(self):
+        # A malformed seed is ignored (no crash, learn_count stays 0, still generates a full crowd).
+        seed = os.path.join(HERE, "_bad.seed"); model = os.path.join(HERE, "_bad.model")
+        with open(seed, "wb") as f: f.write(b"BAD!" + b"\x00"*4 + b"\x11"*55)
+        self._model_075(model)
+        r = subprocess.run([EXE, "1", "64", model, seed], capture_output=True, text=True)
+        os.remove(seed); os.remove(model)
+        self.assertIn("learn_count=0", r.stderr)
+        self.assertEqual(len([l for l in r.stdout.splitlines() if l.strip()]), 64)
     def test_intervals_and_company_populated(self):
         r = self.rows()
         self.assertTrue(all(x["itvl_ms"] > 0 for x in r))

@@ -43,6 +43,7 @@ $OutDir  = (Resolve-Path -LiteralPath $OutDir).Path
 $profileJson   = Join-Path $OutDir "profile.json"
 $modelSeed = Join-Path $OutDir "model.seed"
 $synth     = Join-Path $OutDir "synth.ndjson"
+$devices   = Join-Path $OutDir "devices.txt"
 $card      = Join-Path $OutDir "card.json"
 
 # --- build synth_dump if missing or -Rebuild -----------------------------
@@ -74,10 +75,14 @@ Write-Host "[2/3] generating $Count decoys (seed $Seed) ..." -ForegroundColor Cy
 $rows = & $exe $Seed $Count $modelSeed
 if ($LASTEXITCODE -ne 0) { Write-Error "synth_dump failed"; exit 5 }
 Set-Content -Path $synth -Value $rows -Encoding ascii
+# Temporal run for the presence-duration tell: ~6 h at 1 s/tick so the >120 min bin is reachable.
+$devrows = & $exe --devices $Seed 24 22000 1000
+if ($LASTEXITCODE -ne 0) { Write-Error "synth_dump --devices failed"; exit 5 }
+Set-Content -Path $devices -Value $devrows -Encoding ascii
 
 # --- 3. scorecard --------------------------------------------------------
 Write-Host "[3/3] scoring ..." -ForegroundColor Cyan
-$scArgs = @((Join-Path $tool "scorecard.py"), $synth, $profileJson, "--json", $card)
+$scArgs = @((Join-Path $tool "scorecard.py"), $synth, $profileJson, "--devices", $devices, "--json", $card)
 if (-not [double]::IsNaN($Gate)) { $scArgs += @("--gate", $Gate) }
 python @scArgs
 $rc = $LASTEXITCODE

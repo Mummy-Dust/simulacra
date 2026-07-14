@@ -13,6 +13,11 @@
 #define TRANSIENT_MAX_MS   720000u    // 12 min
 #define RESIDENT_MIN_MS   1800000u    // 30 min
 #define RESIDENT_MAX_MS   5400000u    // 90 min
+// Persistent "infrastructure" band: a slice of STATIC devices hold one address for hours, matching
+// the real ambient >2h presence tail. ~28% of the static 52% -> ~15% of the fleet.
+#define PERSISTENT_PCT_OF_STATIC  28
+#define PERSISTENT_MIN_MS  14400000u  // 4 h  (outlives any normal session -> the address persists)
+#define PERSISTENT_MAX_MS  43200000u  // 12 h
 // Rotation cadence per subtype (independent phase + wide jitter). STATIC never rotates.
 #define RPA_ROT_MIN_MS     600000u    // 10 min
 #define RPA_ROT_MAX_MS    1200000u    // 20 min
@@ -55,10 +60,18 @@ static void dev_spawn(ble_device_t *d, uint32_t now_ms)
     d->id = *src;                                   // copy behaviour (and its addr, overwritten next)
     d->atype = pick_atype();
     make_random_addr(d->id.addr, top2_for(d->atype));
-    d->role = (esp_random() % 100u < ROLE_RESIDENT_PCT) ? BLE_ROLE_RESIDENT : BLE_ROLE_TRANSIENT;
+    // A slice of static devices are PERSISTENT infrastructure (one address held for hours);
+    // everyone else churns on the transient/resident bands. Only static can persist on air --
+    // an RPA/NRPA device rotates its address regardless of how long the device itself lives.
+    if (d->atype == BLE_ATYPE_STATIC && (esp_random() % 100u) < PERSISTENT_PCT_OF_STATIC) {
+        d->role    = BLE_ROLE_PERSISTENT;
+        d->life_ms = rnd_range(PERSISTENT_MIN_MS, PERSISTENT_MAX_MS);
+    } else {
+        d->role    = (esp_random() % 100u < ROLE_RESIDENT_PCT) ? BLE_ROLE_RESIDENT : BLE_ROLE_TRANSIENT;
+        d->life_ms = (d->role == BLE_ROLE_RESIDENT) ? rnd_range(RESIDENT_MIN_MS, RESIDENT_MAX_MS)
+                                                    : rnd_range(TRANSIENT_MIN_MS, TRANSIENT_MAX_MS);
+    }
     d->born_ms = now_ms;
-    d->life_ms = (d->role == BLE_ROLE_RESIDENT) ? rnd_range(RESIDENT_MIN_MS, RESIDENT_MAX_MS)
-                                                : rnd_range(TRANSIENT_MIN_MS, TRANSIENT_MAX_MS);
     d->alive = true;
     // Independent rotation phase: first rotation is a full jittered interval out from birth.
     d->next_rotate_ms = (d->atype == BLE_ATYPE_STATIC) ? 0 : now_ms + rotate_base(d->atype);

@@ -75,6 +75,7 @@ def main():
     for slot, births in by_slot.items():
         births = sorted(births, key=lambda x: x[0])
         for r_a, r_b in zip(births, births[1:]):
+            if r_a[4] == "persistent": continue         # infrastructure: no lifetime cap by design
             cap = TRANSIENT_CAP if r_a[4] == "transient" else RESIDENT_CAP
             if r_b[0] - r_a[0] > cap + 1000:
                 fails.append(f"{r_a[4]} lifetime over cap: {r_b[0] - r_a[0]} ms")
@@ -101,13 +102,20 @@ def main():
         import json
         prof = json.load(open(a.profile)).get("presence_ms_bins")
         if prof:
-            durs = []
-            for s in segs:
-                durs.append(s[-1][0] - s[0][0])
+            # Per-ADDRESS presence = how long each address stays observable = the gap until the
+            # SAME SLOT's next address replaces it (last address in a slot -> to sim end). NOT the
+            # within-segment span (born->last-rotate), which scores a non-rotating static address
+            # as 0 and badly under-counts presence -- the whole point capture_profile measures.
+            tmax = max(r[0] for r in rows)
+            slot_ts = defaultdict(list)
+            for r in rows: slot_ts[r[1]].append(r[0])
             synth = [0] * (len(PRESENCE_BINS) - 1)
-            for d in durs:
-                for k in range(len(PRESENCE_BINS) - 1):
-                    if PRESENCE_BINS[k] <= d < PRESENCE_BINS[k+1]: synth[k] += 1; break
+            for ts in slot_ts.values():
+                ts.sort()
+                for i in range(len(ts)):
+                    d = (ts[i+1] if i+1 < len(ts) else tmax) - ts[i]
+                    for k in range(len(PRESENCE_BINS) - 1):
+                        if PRESENCE_BINS[k] <= d < PRESENCE_BINS[k+1]: synth[k] += 1; break
             print(f"presence-duration JSD vs real: {jsd(synth, prof):.4f}")
 
     if fails:

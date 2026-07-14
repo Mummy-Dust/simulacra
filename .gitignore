@@ -23,3 +23,6 @@ private/
 *.exe
 *.pyc
 __pycache__/
+
+# editor / IDE folders (Visual Studio) — can embed absolute paths
+.vs/

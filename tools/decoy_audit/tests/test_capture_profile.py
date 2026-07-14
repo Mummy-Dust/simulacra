@@ -42,6 +42,19 @@ class Profile(unittest.TestCase):
         txt = open(seed).read(); os.remove(seed)
         other = [l for l in txt.splitlines() if l.startswith("OTHER")][0]
         self.assertGreater(int(other.split()[1]), 0)  # the no-mfg device share -> nonzero OTHER count
+    def test_ad_structure_signature(self):
+        # every sample advert is flags + mfg (the mfg() fixture) -> the "01,ff" signature
+        ad = self.prof["ad_sig"]
+        self.assertAlmostEqual(sum(ad.values()), 1.0, places=6)
+        self.assertAlmostEqual(ad["01,ff"], 1.0, places=6)
+    def test_ad_structure_is_device_weighted(self):
+        # chatty A (10x flags+mfg) + B (flags+mfg) + C (flags+name) -> "01,ff" 2/3, "01,09" 1/3,
+        # NOT advert-weighted (which would make "01,ff" ~0.92).
+        p = os.path.join(HERE, "sample_weighted.pcap")
+        make_fixtures.sample_pcap_weighted(p)
+        ad = cp.build_profile(cp.parse_adverts(p))["ad_sig"]
+        self.assertAlmostEqual(ad["01,ff"], 2/3, places=2)
+        self.assertAlmostEqual(ad["01,09"], 1/3, places=2)
     def test_dlt256_decodes_identically(self):
         # the scan-for-AA reader must yield the same adverts for DLT256 framing
         p256 = os.path.join(HERE, "sample_dlt256.pcap")

@@ -24,7 +24,10 @@ defines our exposure.
 - **`discriminators.py` + `scorecard.py`** — score each tell as the Jensen–Shannon
   divergence (base-2, in `[0,1]`) between the synthetic and real distributions:
   `0` when synth matches real (never fires on a faithful crowd), `1` when disjoint.
-  `scorecard.py` ranks them and reports the max as the headline.
+  `scorecard.py` ranks them and reports the max as the headline. Tells: address-type mix,
+  interval distribution, vendor histogram, and **AD structure** (the ordered AD element-type
+  signature each device advertises, e.g. `01,03,16` — device-weighted, what a sniffer reads
+  off the raw advert).
 
 ## Build `synth_dump`
 
@@ -34,7 +37,7 @@ MSVC (this host has no gcc/clang) — from `tools/decoy_audit/`:
 cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h ^
    /Ihost_stubs /I..\..\main /I..\..\components\simulacra_radar ^
    synth_dump.c ble_hs_adv.c learn_stub.c ^
-   ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ^
+   ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c ^
    /Fe:synth_dump.exe
 ```
 
@@ -81,18 +84,32 @@ python scorecard.py ../../private/synth.ndjson ../../private/profile.json --json
 > `| Out-File -Encoding ascii` instead (or run step 2 under `cmd`/bash).
 > `scorecard.py` also tolerates a BOM defensively.
 
-### Baseline (2026-07-09, `private/long.pcap`: 193,363 adverts / 689 advertisers)
+### Baseline (`private/long.pcap`: 193,363 adverts / 689 advertisers)
 
 ```
 DISCRIMINATOR            SEPARABILITY VISIBILITY
-interval_distribution          0.0040 logic
-vendor_histogram               0.0019 logic
-address_type_mix               0.0013 logic
-HEADLINE (max) 0.0040  worst tell: interval_distribution
+ad_structure                   0.1526 logic     <- added + closed 2026-07-13
+interval_distribution          0.0026 logic
+address_type_mix               0.0019 logic
+vendor_histogram               0.0015 logic
+HEADLINE (max) 0.1526  worst tell: ad_structure
 ```
 
-Reading it — all three v1 tells are now closed; the honest headline is down from
-0.38 to 0.004:
+**AD-structure: found at 0.88, closed to 0.15 (2026-07-13).** Adding the tell exposed a gap the
+three distributional tells were blind to — the decoys advertised beacon-rich payloads (`01,03,16`
+service-data **86%**) while real ambient BLE is terse (`01` flags-only **53%**, `01,03` flags+uuid
+**21%**, `01,ff` flags+mfg **11%**). Fix: two minimal-advertiser families (`FMT_FLAGS_ONLY` → `01`,
+`FMT_SVC_UUID16` → `01,03`) and a reweighted no-mfg structural mix in `generate.c`
+(`pick_no_mfg_template`: ~62% flags-only, ~24% flags+uuid16, ~14% service-data beacon). Decoys now
+match the real crowd on the two biggest signatures almost exactly (`01` 0.527 vs 0.527, `01,03` 0.20
+vs 0.21). The residual 0.15 is the deliberate tracker/beacon persona (`01,03,16` ~14%, ~0 in *this*
+capture but present in real environments) plus real signatures the decoys don't emit by design
+(empty adverts 9%, flags+name 5%, flags+TX-power 1%). Driving it lower would over-fit one capture's
+beacon count and delete the beacon persona. NOTE: `long.pcap` is real-ambient+decoy *mixed*, a
+relative measure; the structural direction is robust regardless.
+
+The three distributional tells remain closed; the honest headline history is 0.38 → 0.004
+(distributional) → 0.88 (AD structure found) → 0.15 (AD structure closed):
 - **`address_type_mix` (0.001)** — was 0.30 (decoys were 100% static-random, never an
   RPA). `roster.c` now presents a realistic static/RPA/NRPA blend (~52/36/12) via
   `make_random_addr_mixed`; all three are *random* address subtypes, so no real MAC is
@@ -134,9 +151,12 @@ physical-only slice (per-advert "looks synthetic" tells), where that framing app
 
 ## Deferred slices
 
-- **Byte-accurate NimBLE serializer** for an AD-structure discriminator. v1's
-  `ble_hs_adv.c` is length-correct with canonical-order TLVs; the current
-  discriminators never read the serialized bytes, so scores are faithful.
+- **AD-structure discriminator** — DONE (2026-07-13). Scored on the AD element-type
+  *sequence*, not exact bytes: `ble_hs_adv.c` emits fields in NimBLE's canonical order and
+  the templates set only those fields (deliberately no TX-power AD element, templates.c),
+  so the host type-sequence matches the on-air structure faithfully — no byte-accurate
+  serializer needed. A byte-value discriminator stays deferred (payloads are largely random
+  per-advert, so exact bytes would measure noise, not structure).
 - **Physical-only discriminators** — RSSI/TX spread, lifespan cohort — need a
   decoy-only capture as a clean label source.
 - **Learned-shape path** — currently disabled via `learn_stub.c`; enabling it

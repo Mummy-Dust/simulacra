@@ -16,6 +16,10 @@ static const device_template_t TEMPLATES[] = {
     { "eddy-uid",     FMT_EDDYSTONE_UID,0,      0xFEAA, NULL,          0,  90, 110, 10 },
     { "eddy-url",     FMT_EDDYSTONE_URL,0,      0xFEAA, NULL,          0, 650, 750,  6 },
     { "tile",         FMT_SVC_TRACKER,  0x0157, 0xFEED, NULL,          0,1000,2000, 14 },
+    // Minimal advertisers: real ambient BLE is mostly terse. The no-mfg structural mix
+    // (generate.c pick_no_mfg_template) routes most no-mfg mass here, not to service-data beacons.
+    { "minimal",      FMT_FLAGS_ONLY,   0,      0,      NULL,          0, 200,1200,  1 },
+    { "svc-uuid16",   FMT_SVC_UUID16,   0,      0,      NULL,          0, 500,2000,  1 },
 };
 
 static uint16_t rnd_range(uint16_t lo, uint16_t hi) { return lo + (esp_random() % (hi - lo + 1)); }
@@ -105,6 +109,18 @@ static void enc_tracker(struct ble_hs_adv_fields *f, uint8_t *sd)
     f->svc_data_uuid16 = sd; f->svc_data_uuid16_len = 12;
 }
 
+// Common 16-bit service UUIDs seen in ambient advertising (battery, device-info, HID, Fast Pair,
+// exposure-notification, env-sensing). Varied so the flags+uuid16 structure isn't a monoculture.
+static const uint16_t SVC_UUIDS16[] = {
+    0x180F, 0x180A, 0x1812, 0x181A, 0xFD6F, 0xFE9F, 0xFD5A, 0xFDCD };
+static ble_uuid16_t s_svc_uuid;   // scratch for the picked UUID (single task, not reentrant)
+static void enc_svc_uuid16(struct ble_hs_adv_fields *f)
+{
+    uint16_t u = SVC_UUIDS16[esp_random() % (sizeof SVC_UUIDS16 / sizeof SVC_UUIDS16[0])];
+    s_svc_uuid = (ble_uuid16_t)BLE_UUID16_INIT(u);
+    f->uuids16 = &s_svc_uuid; f->num_uuids16 = 1; f->uuids16_is_complete = 1;
+}
+
 int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t *out_len,
                    uint16_t *out_itvl_ms, uint16_t *out_company_id)
 {
@@ -119,6 +135,8 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
         case FMT_EDDYSTONE_UID: enc_eddystone_uid(&f, scratch); break;
         case FMT_EDDYSTONE_URL: enc_eddystone_url(&f, scratch); break;
         case FMT_SVC_TRACKER:   enc_tracker(&f, scratch); break;
+        case FMT_FLAGS_ONLY:    break;                    // flags only (already set) -> AD "01"
+        case FMT_SVC_UUID16:    enc_svc_uuid16(&f); break;
         default: *out_len = 0; return 1;   // unreachable: every family has an encoder
     }
 

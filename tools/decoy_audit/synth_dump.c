@@ -26,6 +26,20 @@ static unsigned company_onair(const uint8_t *ad, size_t len) {
     }
     return 0;
 }
+/* Ordered AD element type codes from the serialized payload, as a decoy fingerprinter reads
+   them off air (e.g. "01,03,16"). Same TLV walk as company_onair; the host serializer emits
+   the fields in NimBLE's canonical order, so this matches the on-air structure. */
+static void ad_types_onair(const uint8_t *ad, size_t len, char *out, size_t outsz) {
+    size_t i = 0, o = 0; if (outsz) out[0] = 0;
+    while (i + 1 < len) {
+        uint8_t l = ad[i];
+        if (l == 0 || i + 1 + (size_t)l > len) break;
+        int w = snprintf(out + o, outsz - o, o ? ",%02x" : "%02x", ad[i + 1]);
+        if (w < 0 || (size_t)w >= outsz - o) break;
+        o += (size_t)w;
+        i += 1 + l;
+    }
+}
 /* Read a model-seed file (produced by capture_profile.py) into an rf_model_t.
    Format: "POP <f>", "V <cid_hex> <count> <b0..b6>", "OTHER <count> <b0..b6>". */
 static int load_model_seed(const char *path, rf_model_t *m) {
@@ -116,10 +130,11 @@ int main(int argc, char **argv) {
         identity_t *id = &roster[i];
         char hex[13];
         for (int b = 0; b < 6; b++) sprintf(hex + b*2, "%02x", id->addr[b]);
+        char adsig[48]; ad_types_onair(id->payload, id->payload_len, adsig, sizeof adsig);
         printf("{\"addr\":\"%s\",\"atype\":\"%s\",\"company\":%u,\"itvl_ms\":%u,"
-               "\"tx\":%d,\"arch\":%u,\"plen\":%u}\n",
+               "\"tx\":%d,\"arch\":%u,\"plen\":%u,\"ad\":\"%s\"}\n",
                hex, atype_of(id->addr), company_onair(id->payload, id->payload_len), id->adv_itvl_ms,
-               id->tx_power, id->archetype_idx, id->payload_len);
+               id->tx_power, id->archetype_idx, id->payload_len, adsig);
     }
     return 0;
 }

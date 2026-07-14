@@ -44,25 +44,38 @@ static uint16_t sample_interval(const uint32_t bins[RF_ITVL_BINS])
     return rnd_range16(ITVL_LO[b], ITVL_HI[b]);
 }
 
-// Pick a service-data template (eddystone / tile) weighted by .weight. These families carry NO
-// on-air manufacturer element, so they keep no-mfg (OTHER) decoy mass genuinely no-mfg while still
-// varying WITHIN the beacon families (no service-data-uniformity tell). NULL if none exist.
+static bool is_beacon_family(fmt_family_t f)
+{ return f==FMT_EDDYSTONE_UID || f==FMT_EDDYSTONE_URL || f==FMT_SVC_TRACKER; }
+
+// First template of a family (the minimal-advertiser families have a single row each).
+static const device_template_t *first_of_family(fmt_family_t fam)
+{
+    for (size_t i = 0; i < templates_count(); i++)
+        if (template_at(i)->family == fam) return template_at(i);
+    return 0;
+}
+
+// Choose the AD structure for a no-mfg decoy, matched to real ambient BLE: mostly TERSE advertisers
+// (flags-only "01", flags+uuid16 "01,03") with a small service-data beacon share for tracker/beacon
+// persona. All are no-mfg on air, so this keeps the vendor histogram closed while closing the
+// AD-structure tell — the no-mfg mass used to be ~100% service-data ("01,03,16") against a
+// flags-heavy real crowd (~53% flags-only / ~21% flags+uuid). NULL only if no templates exist.
 static const device_template_t *pick_no_mfg_template(void)
 {
+    uint32_t r = esp_random() % 100;
+    const device_template_t *t = 0;
+    if      (r < 62) t = first_of_family(FMT_FLAGS_ONLY);   // terse-advertiser majority
+    else if (r < 86) t = first_of_family(FMT_SVC_UUID16);   // flags + service UUID
+    if (t) return t;
+    // remaining share (and any fallback): a service-data beacon, weighted within the beacon families.
     uint32_t total = 0;
-    for (size_t i = 0; i < templates_count(); i++) {
-        const device_template_t *t = template_at(i);
-        if (t->family==FMT_EDDYSTONE_UID || t->family==FMT_EDDYSTONE_URL || t->family==FMT_SVC_TRACKER)
-            total += t->weight;
-    }
+    for (size_t i = 0; i < templates_count(); i++)
+        if (is_beacon_family(template_at(i)->family)) total += template_at(i)->weight;
     if (!total) return 0;
-    uint32_t r = esp_random() % total;
+    uint32_t rr = esp_random() % total;
     for (size_t i = 0; i < templates_count(); i++) {
-        const device_template_t *t = template_at(i);
-        if (t->family==FMT_EDDYSTONE_UID || t->family==FMT_EDDYSTONE_URL || t->family==FMT_SVC_TRACKER) {
-            if (r < t->weight) return t;
-            r -= t->weight;
-        }
+        const device_template_t *b = template_at(i);
+        if (is_beacon_family(b->family)) { if (rr < b->weight) return b; rr -= b->weight; }
     }
     return 0;
 }

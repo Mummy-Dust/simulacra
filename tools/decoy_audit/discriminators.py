@@ -39,11 +39,16 @@ def synth_distributions(synth):
         c=x.get("company")
         ven["none" if (not c or c==0xFFFF) else str(c)] += 1
     vt=sum(ven.values()) or 1
+    # AD-structure signature: the ordered AD element type codes each decoy advertises
+    # (e.g. "01,03,16"). One row = one device, so this is already device-weighted.
+    ad=Counter(x.get("ad","") for x in synth)
+    adt=sum(ad.values()) or 1
     return {"atype":[at.get(k,0)/n for k in ("static","rpa","public")],
             "itvl_bins":_norm(ib),
-            "vendor":{k:v/vt for k,v in ven.items()}}
+            "vendor":{k:v/vt for k,v in ven.items()},
+            "ad_sig":{k:v/adt for k,v in ad.items()}}
 
-def _vendor_vectors(sv, pv):
+def _hist_vectors(sv, pv):
     keys=sorted(set(sv)|set(pv))
     return [sv.get(k,0) for k in keys],[pv.get(k,0) for k in keys]
 
@@ -53,11 +58,17 @@ def d_address_type(sd, prof):
 def d_interval(sd, prof):
     return js_divergence(sd["itvl_bins"], prof["itvl_bins"])
 def d_vendor(sd, prof):
-    s,p=_vendor_vectors(sd["vendor"], prof["vendor"]); return js_divergence(s,p)
+    s,p=_hist_vectors(sd["vendor"], prof["vendor"]); return js_divergence(s,p)
+def d_ad_structure(sd, prof):
+    # No real AD-structure data in the profile (older profile.json) -> no evidence, score 0.
+    pa=prof.get("ad_sig")
+    if not pa: return 0.0
+    s,p=_hist_vectors(sd["ad_sig"], pa); return js_divergence(s,p)
 
 DISCRIMINATORS=[("address_type_mix",d_address_type),
                 ("interval_distribution",d_interval),
-                ("vendor_histogram",d_vendor)]
+                ("vendor_histogram",d_vendor),
+                ("ad_structure",d_ad_structure)]
 
 def score_all(synth, profile):
     sd=synth_distributions(synth)

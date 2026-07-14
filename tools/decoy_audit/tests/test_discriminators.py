@@ -53,5 +53,21 @@ class ADStructure(unittest.TestCase):
         s={d["name"]:d["separability"] for d in D.score_all(synth, prof)}
         self.assertEqual(s["ad_structure"], 0.0)
 
+class Presence(unittest.TestCase):
+    def test_presence_bins_consecutive_diff(self):
+        # slot 0: an address at t=0 replaced at t=600000 (10 min) -> first address present 10 min
+        # (5-15m bin); the last address runs to sim end (here 0 ms -> <1m bin).
+        text = ("D 0 0 aa rpa transient born 0 100\n"
+                "D 600000 0 bb rpa transient rotate 0 100\n")
+        b = D.presence_bins_from_devices(text)
+        self.assertEqual(b[2], 1)   # 10-min presence -> 5-15m
+        self.assertEqual(b[0], 1)   # last address, 0-length -> <1m
+    def test_presence_identical_zero(self):
+        self.assertAlmostEqual(D.d_presence([0,10,0,0,0,0,0], {"presence_ms_bins":[0,10,0,0,0,0,0]}), 0.0, places=6)
+    def test_presence_disjoint_high(self):
+        self.assertGreater(D.d_presence([0,0,0,0,0,0,10], {"presence_ms_bins":[10,0,0,0,0,0,0]}), 0.9)
+    def test_presence_missing_profile_scores_zero(self):
+        self.assertEqual(D.d_presence([1,2,3,0,0,0,0], {}), 0.0)
+
 if __name__=="__main__":
     unittest.main()

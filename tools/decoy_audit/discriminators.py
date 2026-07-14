@@ -11,6 +11,34 @@ def _itvl_bin(ms):
         if ITVL_LO[i] <= ms < ITVL_HI[i]: return i
     return 6
 
+# Per-address presence-duration bins (ms), matching capture_profile.presence_ms_bins:
+# <1, 5, 15, 30, 60, 120, >120 min. The passively-observable projection of rotation + lifetime.
+PRESENCE_BINS=[0,60000,300000,900000,1800000,3600000,7200000,10**12]
+def presence_bins_from_devices(text):
+    # Per-ADDRESS presence from a `synth_dump --devices` dump: the gap until the SAME slot's next
+    # address replaces it (last address in a slot -> to sim end). This is what a passive sniffer
+    # sees; NOT the born->last-rotate span (which scores a static non-rotating address as 0).
+    from collections import defaultdict as _dd
+    rows=[]
+    for ln in text.splitlines():
+        p=ln.split()
+        if len(p)==9 and p[0]=="D": rows.append((int(p[1]), int(p[2])))   # (t, slot)
+    bins=[0]*(len(PRESENCE_BINS)-1)
+    if not rows: return bins
+    tmax=max(r[0] for r in rows); slot=_dd(list)
+    for t,s in rows: slot[s].append(t)
+    for ts in slot.values():
+        ts.sort()
+        for i in range(len(ts)):
+            d=(ts[i+1] if i+1<len(ts) else tmax)-ts[i]
+            for k in range(len(PRESENCE_BINS)-1):
+                if PRESENCE_BINS[k]<=d<PRESENCE_BINS[k+1]: bins[k]+=1; break
+    return bins
+def d_presence(pbins, profile):
+    real=profile.get("presence_ms_bins")
+    if not real: return 0.0            # older profile without presence data -> no evidence
+    return js_divergence(pbins, real)
+
 def _norm(v):
     s=sum(v)
     return [x/s for x in v] if s else [0.0]*len(v)

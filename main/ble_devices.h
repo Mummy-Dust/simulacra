@@ -8,7 +8,10 @@
 #define BLE_DEVICES_MAX 32
 
 typedef enum { BLE_ATYPE_STATIC, BLE_ATYPE_RPA, BLE_ATYPE_NRPA } ble_atype_t;
-typedef enum { BLE_ROLE_TRANSIENT, BLE_ROLE_RESIDENT } ble_role_t;
+// PERSISTENT = long-lived static "infrastructure" (beacons/fixtures): one address held for hours,
+// matching the real ambient >2h presence tail that a purely-churning fleet lacks. Always static
+// (only a non-rotating address can actually persist on air).
+typedef enum { BLE_ROLE_TRANSIENT, BLE_ROLE_RESIDENT, BLE_ROLE_PERSISTENT } ble_role_t;
 
 typedef struct {
     identity_t  id;             // advertising identity: addr + frozen behaviour (payload/itvl/tx/company/arch)

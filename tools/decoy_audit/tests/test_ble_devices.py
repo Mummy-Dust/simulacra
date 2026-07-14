@@ -46,6 +46,14 @@ class Spawn(unittest.TestCase):
         rows = sim(3, n=16)
         self.assertTrue(all(itvl > 0 for *_, itvl in rows), "a device has zero advertising interval")
 
+    def test_persistent_cohort_is_static(self):
+        # A slice of the fleet are PERSISTENT infrastructure: long-lived and ALWAYS static (only a
+        # non-rotating address can actually persist on air), matching the real >2h presence tail.
+        rows = sim(31, n=32, ticks=8000, tick_ms=1000)
+        persist = [r for r in rows if r[4] == "persistent"]
+        self.assertTrue(persist, "no persistent devices spawned")
+        self.assertTrue(all(r[3] == "static" for r in persist), "a persistent device was not static")
+
 @unittest.skipUnless(os.path.exists(EXE), "synth_dump not built")
 class Rotation(unittest.TestCase):
     def segments(self, rows):
@@ -124,6 +132,7 @@ class Lifecycle(unittest.TestCase):
             for a, b in zip(bs, bs[1:]):
                 span = b[0] - a[0]                          # birth-to-rebirth ≈ life_ms
                 role = a[4]
+                if role == "persistent": continue           # infrastructure: multi-hour, no cap
                 cap = 720000 if role == "transient" else 5400000
                 self.assertLessEqual(span, cap + 1000, f"{role} slot {slot} outlived its band: {span} ms")
 

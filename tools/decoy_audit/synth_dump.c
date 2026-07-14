@@ -125,7 +125,8 @@ int main(int argc, char **argv) {
                     const char *ev = (d->born_ms == t) ? "born" : "rotate";
                     const char *at = d->atype == BLE_ATYPE_STATIC ? "static"
                                    : d->atype == BLE_ATYPE_RPA    ? "rpa" : "nrpa";
-                    const char *ro = d->role  == BLE_ROLE_RESIDENT ? "resident" : "transient";
+                    const char *ro = d->role == BLE_ROLE_PERSISTENT ? "persistent"
+                                   : d->role == BLE_ROLE_RESIDENT   ? "resident" : "transient";
                     char hex[13];
                     for (int b = 0; b < 6; b++) sprintf(hex + b*2, "%02x", d->id.addr[b]);
                     printf("D %u %d %s %s %s %s %u %u\n", (unsigned)t, i, hex, at, ro, ev,

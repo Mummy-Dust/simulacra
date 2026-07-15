@@ -30,6 +30,8 @@ typedef struct __attribute__((packed)) {
         uint8_t sessions_seen, places_seen;             // recurrence counters (escalation)
     } threats[RADAR_MAX_THREATS];
     uint8_t form_restless, form_wandering, form_bound;  // BLE shade-form counts: RPA/NRPA/static
+    uint16_t battery_mv;                                 // cell voltage, 0 = no battery / no gauge
+    uint8_t  battery_pct;                                // state-of-charge %, 0xFF = unavailable (ADC backend)
 } radar_wire_status_t;
 
 typedef struct { uint8_t salt[4]; uint64_t counter; bool seen; } radar_replay_t;

@@ -76,6 +76,8 @@ void webui_gather_status(webui_status_t *out)
     out->probes_sent     = probe_total_sent();
     out->tx_degraded     = !probe_tx_healthy();
     out->battery_low     = vbat_low();
+    int bmv = vbat_mv();  out->battery_mv  = (bmv > 0)  ? (uint16_t)bmv : 0;
+    int bpc = vbat_soc_pct(); out->battery_pct = (bpc >= 0) ? (uint8_t)bpc : 0xFF;
     out->epoch           = coexist_current_epoch();
     out->active_target   = churn_active_target();
     rf_model_t m;

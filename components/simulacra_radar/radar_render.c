@@ -119,10 +119,17 @@ static void draw_home(radar_gfx_t *g, const radar_node_view_t *nodes, int nc){
         bool degraded = alive && (nodes[i].st->flags & 0x04);
         uint16_t sc = !alive ? COL_ASH : (low_batt || degraded) ? COL_WARD : COL_CHANNEL;
         const char *health = !alive ? "SILENT" : low_batt ? "LOW BATT" : degraded ? "DEGRADED" : "CHANNEL";
-        char b[10]; snprintf(b,sizeof b,"N%u",(unsigned)nodes[i].id); radar_gfx_text(g, x+8, y+6, b, COL_BONE);
+        char b[12]; snprintf(b,sizeof b,"N%u",(unsigned)nodes[i].id); radar_gfx_text(g, x+8, y+6, b, COL_BONE);
         radar_gfx_fill_rect(g, x+68, y+8, 4, 4, sc);
-        snprintf(b,sizeof b,"%u",(unsigned)(alive?nodes[i].st->active_devices:0)); radar_gfx_text(g, x+8, y+26, b, COL_BONE);
-        radar_gfx_text(g, x+8, y+52, health, sc);
+        snprintf(b,sizeof b,"%u",(unsigned)(alive?nodes[i].st->active_devices:0)); radar_gfx_text(g, x+8, y+24, b, COL_BONE);
+        // Battery readout: SoC%% if a fuel gauge provides it, else cell voltage; amber when low. Blank on USB.
+        if (alive && nodes[i].st->battery_mv) {
+            uint16_t mv = nodes[i].st->battery_mv; uint8_t pc = nodes[i].st->battery_pct;
+            if (pc != 0xFF) snprintf(b,sizeof b,"%u%% %u.%01uV",(unsigned)pc,(unsigned)(mv/1000),(unsigned)((mv%1000)/100));
+            else            snprintf(b,sizeof b,"%u.%02uV",(unsigned)(mv/1000),(unsigned)((mv%1000)/10));
+            radar_gfx_text(g, x+8, y+40, b, low_batt ? COL_WARD : COL_ASH);
+        }
+        radar_gfx_text(g, x+8, y+54, health, sc);
     }
     static const sigil_id_t sig[6]={SIGIL_CIRCLE,SIGIL_HUNTER,SIGIL_LIVING,SIGIL_RITE,SIGIL_WARD,SIGIL_GRIMOIRE};
     static const char *lbl[6]={"RADAR","FOLLOWERS","DECOYS","CONTROL","LIBRARY","INFO"};

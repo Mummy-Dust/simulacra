@@ -48,12 +48,23 @@ void vbat_init(void)
     uint16_t probe;
     if (rd_reg(REG_VCELL, &probe) == 0) { s_present = true; sample();
         ESP_LOGW(VTAG, "MAX17048 present: %d mV, %d%%", s_mv, s_soc); }
-    else ESP_LOGW(VTAG, "no fuel gauge on I2C (SDA=%d SCL=%d)", SIMULACRA_VBAT_SDA, SIMULACRA_VBAT_SCL);
+    else ESP_LOGW(VTAG, "no fuel gauge yet on I2C (SDA=%d SCL=%d) -- will detect on battery connect",
+                  SIMULACRA_VBAT_SDA, SIMULACRA_VBAT_SCL);
 }
-bool vbat_present(void) { return s_present; }
-int  vbat_mv(void)      { if (s_present) sample(); return s_present ? s_mv  : -1; }
-int  vbat_soc_pct(void) { if (s_present) sample(); return s_present ? s_soc : -1; }
-bool vbat_low(void)     { return s_present && vbat_soc_pct() >= 0 && s_soc < SIMULACRA_VBAT_LOW_PCT; }
+// Re-probe if not yet seen: the gauge only answers once V_BATT is powered (a LiPo is connected),
+// so a battery plugged into a running board is picked up here without a reboot. s_dev is valid
+// after init (add_device succeeds even if the gauge didn't ACK).
+static void ensure_present(void)
+{
+    if (s_present || !s_dev) return;
+    uint16_t p;
+    if (rd_reg(REG_VCELL, &p) == 0) { s_present = true; sample();
+        ESP_LOGW(VTAG, "MAX17048 detected: %d mV, %d%%", s_mv, s_soc); }
+}
+bool vbat_present(void) { ensure_present(); return s_present; }
+int  vbat_mv(void)      { ensure_present(); if (s_present) sample(); return s_present ? s_mv  : -1; }
+int  vbat_soc_pct(void) { ensure_present(); if (s_present) sample(); return s_present ? s_soc : -1; }
+bool vbat_low(void)     { ensure_present(); return s_present && s_soc >= 0 && s_soc < SIMULACRA_VBAT_LOW_PCT; }
 
 /* ---- Backend 2: ADC voltage divider (Waveshare ESP32-C5-WIFI6-KIT: BAT_ADC on GPIO6, /3) ------ */
 #elif defined(SIMULACRA_VBAT_ADC)

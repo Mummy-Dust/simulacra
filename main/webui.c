@@ -73,6 +73,7 @@ void webui_gather_status(webui_status_t *out)
     ble_devices_form_counts(&out->form_restless, &out->form_wandering, &out->form_bound);
     out->roster_size     = CHURN_ROSTER_SIZE;
     out->probes_sent     = probe_total_sent();
+    out->tx_degraded     = !probe_tx_healthy();
     out->epoch           = coexist_current_epoch();
     out->active_target   = churn_active_target();
     rf_model_t m;

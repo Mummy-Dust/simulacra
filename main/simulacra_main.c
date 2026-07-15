@@ -58,6 +58,7 @@
 #include "sig_store.h"
 #include "webui.h"
 #include "esp_now_link.h"
+#include "vbat.h"
 
 #if !defined(CONFIG_BT_NIMBLE_EXT_ADV)
 #error "Simulacra requires CONFIG_BT_NIMBLE_EXT_ADV (see sdkconfig.defaults.esp32c6)"
@@ -167,6 +168,7 @@ static void simulacra_task(void *arg)
 #if SIMULACRA_ESPNOW
     esp_now_link_start();   // listen-only responder; answers CYD requests over ESP-NOW
 #endif
+    vbat_init();            // fuel-gauge probe (no-op unless SIMULACRA_VBAT + I2C pins are configured)
     for (;;) {                                          // this task idles; coexist runs the show
         // Always-on crowd-diversity indicator: active count + distinct manufacturers + the
         // dominant company's share. A collapse to one vendor (the monoculture bug) shows here.
@@ -182,6 +184,8 @@ static void simulacra_task(void *arg)
         for (uint8_t j = 0; j < k; j++) if (cnt[j] > topn) { topn = cnt[j]; top = ids[j]; }
         ESP_LOGW(TAG, "decoy alive active=%u companies=%u top=0x%04X x%u",
                  (unsigned)tot, (unsigned)k, top, (unsigned)topn);
+        if (vbat_present())
+            ESP_LOGW(TAG, "battery: %d mV, %d%%%s", vbat_mv(), vbat_soc_pct(), vbat_low() ? "  LOW" : "");
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 #endif

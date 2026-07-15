@@ -112,14 +112,17 @@ static void draw_home(radar_gfx_t *g, const radar_node_view_t *nodes, int nc){
     for(int i=0;i<cols;i++){
         int x=i*80, y=30;
         radar_gfx_fill_rect(g, x+2, y, 76, 70, COL_CRYPT);
-        // A node is DEGRADED when alive but its probe TX is wedged (status flag bit2) -- alive but
-        // not actually injecting. That reads amber, distinct from CHANNEL (healthy) and SILENT (gone).
-        bool degraded = nodes[i].alive && (nodes[i].st->flags & 0x04);
-        uint16_t sc = !nodes[i].alive ? COL_ASH : degraded ? COL_WARD : COL_CHANNEL;
+        // Per-node health from the status flags: bit3 LOW BATT (fuel gauge), bit2 DEGRADED (probe TX
+        // wedged). Both read amber, distinct from CHANNEL (healthy) and SILENT (gone). Battery wins.
+        bool alive = nodes[i].alive;
+        bool low_batt = alive && (nodes[i].st->flags & 0x08);
+        bool degraded = alive && (nodes[i].st->flags & 0x04);
+        uint16_t sc = !alive ? COL_ASH : (low_batt || degraded) ? COL_WARD : COL_CHANNEL;
+        const char *health = !alive ? "SILENT" : low_batt ? "LOW BATT" : degraded ? "DEGRADED" : "CHANNEL";
         char b[10]; snprintf(b,sizeof b,"N%u",(unsigned)nodes[i].id); radar_gfx_text(g, x+8, y+6, b, COL_BONE);
         radar_gfx_fill_rect(g, x+68, y+8, 4, 4, sc);
-        snprintf(b,sizeof b,"%u",(unsigned)(nodes[i].alive?nodes[i].st->active_devices:0)); radar_gfx_text(g, x+8, y+26, b, COL_BONE);
-        radar_gfx_text(g, x+8, y+52, !nodes[i].alive ? "SILENT" : degraded ? "DEGRADED" : "CHANNEL", sc);
+        snprintf(b,sizeof b,"%u",(unsigned)(alive?nodes[i].st->active_devices:0)); radar_gfx_text(g, x+8, y+26, b, COL_BONE);
+        radar_gfx_text(g, x+8, y+52, health, sc);
     }
     static const sigil_id_t sig[6]={SIGIL_CIRCLE,SIGIL_HUNTER,SIGIL_LIVING,SIGIL_RITE,SIGIL_WARD,SIGIL_GRIMOIRE};
     static const char *lbl[6]={"RADAR","FOLLOWERS","DECOYS","CONTROL","LIBRARY","INFO"};

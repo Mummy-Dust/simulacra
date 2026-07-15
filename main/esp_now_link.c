@@ -6,7 +6,8 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
     memset(out, 0, sizeof(*out));
     out->uptime_s = in->uptime_s;
     out->flags = (uint8_t)((in->decoy_paused ? 0x1 : 0) | (in->wifi_config_mode ? 0x2 : 0)
-                           | (in->tx_degraded ? 0x4 : 0));   // bit2: probe TX wedged (health)
+                           | (in->tx_degraded ? 0x4 : 0)      // bit2: probe TX wedged (health)
+                           | (in->battery_low ? 0x8 : 0));    // bit3: fuel-gauge SoC low
     out->active_devices = in->active_devices; out->roster_size = in->roster_size;
     out->probes_sent = in->probes_sent; out->epoch = in->epoch; out->pop_ewma = in->pop_ewma;
     out->total_obs = in->total_obs; out->active_target = in->active_target;

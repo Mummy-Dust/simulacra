@@ -26,6 +26,17 @@ static const char *TAG = "probe";
 // actually injecting (radio/driver wedged) -> report degraded. A single success clears it.
 #define PROBE_TX_FAIL_THRESH 16
 
+// --- en_sys_seq bench-gate hooks (default-off; see tools/seq_gate). Shipped decoy UNAFFECTED. ---
+// The gate needs single-channel injection so the sniffer hears EVERY frame (a shared HW counter
+// ticks on every TX regardless of channel; a hopping injector viewed on one channel hides the
+// +1 signature). PROBE_FORCE_SHARED deliberately triggers the regression to prove the gate catches it.
+#ifndef PROBE_FIX_CH
+#define PROBE_FIX_CH 0        // >0: pin injection to this channel; 0 = normal 1/6/11(+5G) hop
+#endif
+#ifndef PROBE_FORCE_SHARED
+#define PROBE_FORCE_SHARED 0  // 1: en_sys_seq=true (shared HW counter) — regression simulation only
+#endif
+
 static const uint8_t CH_24[] = { 1, 6, 11 };
 #if PROBE_USE_5G
 static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
@@ -89,7 +100,9 @@ int probe_inject_burst(uint8_t channel)
         uint16_t sc = (uint16_t)(probe_agent_next_seq(due[i]) << 4);   // seq -> bits 4..15, frag=0
         f[22] = (uint8_t)(sc & 0xFF);
         f[23] = (uint8_t)((sc >> 8) & 0xFF);
-        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, false);  // en_sys_seq=false: per-agent seq
+        // en_sys_seq=false honors the per-agent seq we wrote (the whole defense). The gate can force
+        // true (PROBE_FORCE_SHARED) to simulate the shared-HW-counter regression and prove it's caught.
+        rc = esp_wifi_80211_tx(WIFI_IF_STA, f, (int)n, PROBE_FORCE_SHARED);  // 0 -> false (shipped)
         if (rc != 0) { if (s_tx_consec_fail < 0xFFFF) s_tx_consec_fail++; }
         else s_tx_consec_fail = 0;
         s_probes_sent++; sent++;
@@ -122,7 +135,11 @@ static void probe_task(void *arg)
 {
     (void)arg;
     for (;;) {
+#if PROBE_FIX_CH
+        probe_inject_burst(PROBE_FIX_CH);   // gate mode: single channel so the sniffer hears every frame
+#else
         probe_inject_burst(next_channel());
+#endif
         vTaskDelay(pdMS_TO_TICKS(PROBE_BURST_MS));
     }
 }

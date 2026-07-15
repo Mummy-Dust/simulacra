@@ -100,6 +100,8 @@ def main():
     ap.add_argument("logfile", help="sniffer serial log, or - for stdin")
     ap.add_argument("--rssi-min", type=int, default=None)
     ap.add_argument("--rssi-max", type=int, default=None)
+    ap.add_argument("--seq-only", action="store_true",
+                    help="run ONLY the seq-independence check (the en_sys_seq regression gate)")
     a = ap.parse_args()
     fh = sys.stdin if a.logfile == "-" else open(a.logfile, encoding="utf-8", errors="ignore")
     frames = load(fh, a.rssi_min, a.rssi_max)
@@ -109,11 +111,14 @@ def main():
     print(f"parsed {len(frames)} probe frames, {len({f[1] for f in frames})} distinct MACs")
     if a.rssi_min is not None or a.rssi_max is not None:
         print(f"  (rssi filter: min={a.rssi_min} max={a.rssi_max})")
-    ok = all([
-        check_seq_independence(frames),
-        check_decorrelation(frames),
-        check_constellation(frames),
-    ])
+    if a.seq_only:
+        ok = check_seq_independence(frames)   # en_sys_seq regression gate: this check alone
+    else:
+        ok = all([
+            check_seq_independence(frames),
+            check_decorrelation(frames),
+            check_constellation(frames),
+        ])
     print("\nRESULT:", "PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)
 

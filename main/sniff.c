@@ -13,7 +13,9 @@ static const uint8_t CH[] = { 1, 6, 11 };
 
 // Debug: park on a single 2.4 GHz channel instead of hopping (0 = hop). Used to isolate an
 // injector pinned to the same channel from ambient noise.
+#ifndef SNIFF_FIXED_CH
 #define SNIFF_FIXED_CH 1
+#endif
 
 // Per-frame SA+seq logging: verifies the injector's 802.11 sequence numbers are independent
 // per source MAC (not one shared hardware counter). 0 = counts only.

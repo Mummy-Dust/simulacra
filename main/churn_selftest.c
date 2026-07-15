@@ -1065,7 +1065,7 @@ static void test_radar_wire(void)
 static void test_espnow_convert(void)
 {
     webui_status_t w; memset(&w, 0, sizeof w);
-    w.uptime_s = 61; w.decoy_paused = true; w.tx_degraded = true; w.active_devices = 6; w.roster_size = 64;
+    w.uptime_s = 61; w.decoy_paused = true; w.tx_degraded = true; w.battery_low = true; w.active_devices = 6; w.roster_size = 64;
     w.probes_sent = 2048; w.epoch = 3; w.pop_ewma = 9; w.total_obs = 500;
     w.active_target = 6; w.threat_count = 1;
     w.threats[0].hash = 0xC0FFEE; w.threats[0].vendor = 0x004C;
@@ -1079,6 +1079,7 @@ static void test_espnow_convert(void)
              "scalars copied");
     ST_CHECK((r.flags & 0x1) != 0, "paused flag packed");
     ST_CHECK((r.flags & 0x4) != 0, "tx-degraded health flag packed");
+    ST_CHECK((r.flags & 0x8) != 0, "battery-low health flag packed");
     ST_CHECK(r.threat_count == 1 && r.threats[0].hash == 0xC0FFEE &&
              r.threats[0].best_rssi == -50, "threat copied hash-only");
     ST_CHECK(r.threats[0].kind == DETECT_KIND_KNOWN && r.threats[0].class_id == SIG_CLASS_TILE,

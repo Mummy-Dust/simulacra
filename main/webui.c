@@ -16,6 +16,7 @@
 #include "settings.h"
 #include "roster.h"
 #include "probe.h"
+#include "vbat.h"
 #include "coexist.h"
 #include "rf_model.h"
 #include "ble_devices.h"
@@ -74,6 +75,7 @@ void webui_gather_status(webui_status_t *out)
     out->roster_size     = CHURN_ROSTER_SIZE;
     out->probes_sent     = probe_total_sent();
     out->tx_degraded     = !probe_tx_healthy();
+    out->battery_low     = vbat_low();
     out->epoch           = coexist_current_epoch();
     out->active_target   = churn_active_target();
     rf_model_t m;

@@ -4,6 +4,7 @@
 #include "probe_frame.h"
 #include "probe_agents.h"
 #include "uniq_id.h"
+#include "phantom.h"
 
 /*
  * Host dumper for the probe-request archetype builder.
@@ -70,6 +71,32 @@ int main(int argc, char **argv)
                 printf("E %u ", (unsigned)t);
                 for (int b = 0; b < 6; b++) printf("%02x", due[i]->mac[b]);
                 printf(" %u\n", (unsigned)sq);
+            }
+        }
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--phantoms") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n      = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 12;
+        int      ticks  = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 4000;
+        unsigned tickms = argc > 5 ? (unsigned)strtoul(argv[5], 0, 10) : 1000;
+        srand(seed);
+        uint32_t t = 0;
+        phantom_init(n, t);
+        static uint32_t gen_seen[PHANTOM_MAX];
+        for (int i = 0; i < n && i < PHANTOM_MAX; i++) gen_seen[i] = 0;
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            phantom_lifecycle(t);
+            for (int i = 0; i < phantom_count(); i++) {
+                const phantom_t *ph = phantom_at(i);
+                if (ph->generation != gen_seen[i]) {         // emit on each new life
+                    gen_seen[i] = ph->generation;
+                    printf("P %u %d %d %d %04x %u\n", (unsigned)t, i, (int)ph->family,
+                           (int)phantom_arch(ph->family), (unsigned)phantom_company(ph->family),
+                           (unsigned)ph->generation);
+                }
             }
         }
         return 0;

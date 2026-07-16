@@ -68,8 +68,13 @@ Roles are selected at build time so one firmware tree serves every board.
 
 ## Features
 
-- Rotating decoy crowd across BLE (and Wi-Fi probe) with realistic MACs, vendor shapes, and
-  advertising intervals.
+- Rotating BLE decoy crowd with realistic random-static MACs, vendor/format shapes, and advertising
+  cadence — including **persistent devices with per-type address rotation** (RPAs/NRPAs rotate on
+  realistic schedules, static beacons hold) and a **death/rebirth lifecycle**, so the population
+  turns over like a real crowd instead of a fixed set of decoys.
+- **Wi-Fi PAN cover:** independent, archetype-faithful probe-request agents (iPhone / Galaxy /
+  Pixel / generic Android). Each fake phone carries its **own 802.11 sequence counter**, so the
+  real device can't be fingerprinted out of the probe traffic by its sequence/timing constellation.
 - On-device **self-learning** of ambient device *shapes* into new decoy archetypes (structure-only,
   Law-3 gated), synced across the fleet and persisted to an **encrypted-at-rest** SD library on Vigil.
 - **Passive follower detection** and **tracker/surveillance fingerprint** matching.
@@ -77,8 +82,10 @@ Roles are selected at build time so one firmware tree serves every board.
   NORMAL / DENSE / MAX) to every decoy over ESP-NOW.
 - **On-air fleet enrollment (ECDH):** decoys ship with no shared transport key and enroll on-air via
   a mutually-authenticated 3-message handshake, so **capturing a decoy does not compromise the fleet.**
-- **Vigil console:** live radar/threat display, touch-driven controls, and an on-panel roster to
-  enroll or revoke fleet members.
+- **Vigil console:** live radar/threat display, touch-driven sigil dashboard, a per-node fleet
+  roster, and enroll/revoke control for fleet members.
+- **Fleet health at a glance:** decoys report TX self-health and battery state over the link, so
+  Vigil surfaces a `DEGRADED` or `LOW BATT` node on its roster before it goes quiet in the field.
 
 ## Security model
 
@@ -88,6 +95,10 @@ Roles are selected at build time so one firmware tree serves every board.
   on receipt, so a leaked key or spoofed node still cannot inject a forbidden identity.
 - **Structure-only learning.** Real-world captures are stripped to skeletons; no bystander identities
   or names are stored or emitted.
+- **Measured, not assumed.** A host-side audit suite compiles the *real* generator and scores how
+  separable the decoys are from a real crowd across every axis an adversary could use — address type,
+  advertising interval, vendor mix, AD structure, presence/lifespan, and RSSI — turning "are the
+  decoys convincing?" into a single regression-gate number instead of a hope.
 
 ## Hardware
 
@@ -126,20 +137,32 @@ the key in `components/simulacra_radar/radar_key.h`). Changing any `-D…` flag 
 ## Repository layout
 
 ```
-main/                    decoy firmware (churn, self-learning, detection, ESP-NOW link)
+main/                    decoy firmware (churn, persistent devices, probes, self-learning, detection, ESP-NOW)
 cyd/                     Vigil controller firmware (display, touch, SD librarian, fleet authority)
 components/simulacra_radar/  shared code (wire formats, learning, signatures, rendering)
 components/tweetnacl/     vendored TweetNaCl (Ed25519 / X25519)
-tools/pcap_learn/         offline host tools — replay a BLE capture through the real pipeline,
-                          validate structure-only learning, and scan for trackers
-docs/design/              specs and implementation plans
+tools/pcap_learn/         replay a BLE capture through the real learn/detect pipeline
+tools/decoy_audit/        score how separable the BLE decoys are from a real crowd
+tools/probe_audit/        verify Wi-Fi probe frames are archetype-faithful and Law-3 safe
+tools/seq_gate/           post-flash check that each fake phone's 802.11 sequence stays independent
+docs/                     design specs, implementation plans, hardware notes, and the roadmap
 ```
 
-## Offline tools
+## Offline & bench tools
 
-`tools/pcap_learn/` builds the *real* firmware pipeline on a host to replay a BLE capture:
-validate that learning is structure-only, emit a seed library, and run the tracker matcher with
-dwell/co-travel analysis. See `tools/pcap_learn/README.md`.
+Simulacra's host tools compile the **real firmware code** (not reimplementations), so behaviour is
+verified against the same source that runs on-device:
+
+- **`tools/pcap_learn/`** — replay a BLE capture through the actual self-learning pipeline (validate
+  structure-only learning, emit a seed library) and the tracker matcher with dwell/co-travel analysis.
+- **`tools/decoy_audit/`** — compile the real BLE generator on the host and score how separable the
+  synthetic crowd is from a real capture, as a ranked scorecard plus a single regression-gate number.
+- **`tools/probe_audit/`** — byte-exact verification that the Wi-Fi probe frames match real-phone
+  archetypes and never leak a directed SSID (the Law-3 guard).
+- **`tools/seq_gate/`** — a two-board post-flash gate confirming each fake phone keeps its own
+  802.11 sequence counter after an IDF/toolchain bump.
+
+Each tool has its own README with build and run steps.
 
 ## Credits
 

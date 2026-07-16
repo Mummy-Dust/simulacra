@@ -75,22 +75,24 @@ HERE = os.path.dirname(__file__); TOOL = os.path.dirname(HERE)
 EXE  = os.path.join(TOOL, "probe_dump.exe" if os.name == "nt" else "probe_dump")
 
 
-def gen(seed, n):
-    out = subprocess.check_output([EXE, "--uniq", str(seed), str(n)], text=True)
+def gen(seed, n, mode="--uniq"):
+    out = subprocess.check_output([EXE, mode, str(seed), str(n)], text=True)
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
 @unittest.skipUnless(os.path.exists(EXE), "probe_dump not built")
 class Uniq(unittest.TestCase):
     def test_no_duplicates_within_history(self):
-        addrs = gen(1, 1500)                 # < UNIQ_HISTORY (2048): must be all-distinct
+        # --uniq makes ONE distinct pass of n addresses (n < UNIQ_HISTORY 2048): all-distinct
+        addrs = gen(1, 1500)
         self.assertEqual(len(addrs), 1500)
         self.assertEqual(len(set(addrs)), 1500, "uniq_try issued a duplicate within history")
 
     def test_reset_allows_reissue(self):
-        # the dump resets between the two halves and re-seeds identically -> the same
+        # --uniqreset resets + re-seeds identically between the two halves -> the same
         # sequence reappears, proving uniq_reset clears history.
-        a = gen(2, 200)
+        a = gen(2, 200, "--uniqreset")
+        self.assertEqual(len(a), 200)
         self.assertEqual(a[:100], a[100:], "uniq_reset did not clear history")
 
 
@@ -106,6 +108,19 @@ In `tools/probe_audit/probe_dump.c`, add `#include "uniq_id.h"` near the top inc
     if (argc > 1 && strcmp(argv[1], "--uniq") == 0) {
         unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;
+        srand(seed);
+        uniq_reset();
+        for (int i = 0; i < n; i++) {           // one distinct pass of n addresses
+            uint8_t a[6];
+            do { for (int b = 0; b < 6; b++) a[b] = (uint8_t)(rand() & 0xff); } while (!uniq_try(a));
+            for (int b = 0; b < 6; b++) printf("%02x", a[b]);
+            printf("\n");
+        }
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--uniqreset") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 200;
         // Two identical halves around a reset, so the test can prove reset clears history.
         for (int half = 0; half < 2; half++) {
             srand(seed);

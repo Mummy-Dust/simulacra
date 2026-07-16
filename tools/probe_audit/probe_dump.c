@@ -3,6 +3,7 @@
 #include <string.h>
 #include "probe_frame.h"
 #include "probe_agents.h"
+#include "uniq_id.h"
 
 /*
  * Host dumper for the probe-request archetype builder.
@@ -14,6 +15,35 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--uniq") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;
+        srand(seed);
+        uniq_reset();
+        for (int i = 0; i < n; i++) {           // one distinct pass of n addresses
+            uint8_t a[6];
+            do { for (int b = 0; b < 6; b++) a[b] = (uint8_t)(rand() & 0xff); } while (!uniq_try(a));
+            for (int b = 0; b < 6; b++) printf("%02x", a[b]);
+            printf("\n");
+        }
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--uniqreset") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 200;
+        for (int half = 0; half < 2; half++) {
+            srand(seed);
+            uniq_reset();
+            for (int i = 0; i < n / 2; i++) {
+                uint8_t a[6];
+                do { for (int b = 0; b < 6; b++) a[b] = (uint8_t)(rand() & 0xff); } while (!uniq_try(a));
+                for (int b = 0; b < 6; b++) printf("%02x", a[b]);
+                printf("\n");
+            }
+        }
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--agents") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      nag    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 8;

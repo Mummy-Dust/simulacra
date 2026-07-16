@@ -463,8 +463,8 @@ def phantoms(seed, n=12, ticks=4000, tick_ms=1000):
     rows = []
     for ln in out.splitlines():
         p = ln.split()
-        if len(p) == 6 and p[0] == "P":
-            # P <t> <idx> <family> <arch> <company> <generation>
+        if len(p) == 7 and p[0] == "P":
+            # P <t> <idx> <family> <arch> <company> <generation> (generation ignored here)
             rows.append((int(p[1]), int(p[2]), int(p[3]), int(p[4]), int(p[5], 16)))
     return rows
 
@@ -480,7 +480,7 @@ class Phantom(unittest.TestCase):
             self.assertEqual(comp, exp_comp, f"family {FAM[fam]} wrong company")
 
     def test_all_families_appear_over_time(self):
-        fams = Counter(fam for *_ , in [(r[2],) for r in phantoms(3)])
+        fams = Counter(r[2] for r in phantoms(3))   # r[2] = family
         # over thousands of reincarnations the weighted draw should hit every family
         self.assertEqual(set(fams), {0, 1, 2, 3}, f"some family never drawn: {dict(fams)}")
 

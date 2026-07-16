@@ -8,6 +8,38 @@ from collections import defaultdict, Counter
 AA = bytes.fromhex("d6be898e")
 ITVL_LO = [0,50,100,200,500,1000,2000]; ITVL_HI = [50,100,200,500,1000,2000,3000]
 
+# RSSI histogram (dBm). Fixed absolute bins; the analyzer centers on the median for
+# placement-invariant comparison. -100..-30 in 5 dB steps = 14 bins.
+RSSI_LO = -100; RSSI_HI = -30; RSSI_W = 5
+RSSI_NBINS = (RSSI_HI - RSSI_LO) // RSSI_W   # 14
+
+def rssi_hist(values):
+    """RSSI list (dBm; may contain None) -> {rssi_bins, rssi_median, rssi_stdev, n_rssi}, or None if empty."""
+    vals = [v for v in values if v is not None]
+    if not vals:
+        return None
+    bins = [0] * RSSI_NBINS
+    for v in vals:
+        idx = int((v - RSSI_LO) // RSSI_W)
+        idx = 0 if idx < 0 else RSSI_NBINS - 1 if idx >= RSSI_NBINS else idx
+        bins[idx] += 1
+    s = sum(bins) or 1
+    return {"rssi_bins": [b / s for b in bins],
+            "rssi_median": statistics.median(vals),
+            "rssi_stdev": statistics.pstdev(vals) if len(vals) > 1 else 0.0,
+            "n_rssi": len(vals)}
+
+def _rssi_from(linktype, data, aa_off):
+    """Per-record RSSI in dBm, or None if unavailable/implausible."""
+    r = None
+    if linktype == 157 and aa_off >= 7:            # Nordic BLE: -dBm magnitude, 7 bytes before the AA
+        r = -data[aa_off - 7]
+    elif linktype == 256 and len(data) >= 2:       # LE LL w/ PHDR: signed Signal_Power at offset 1
+        b = data[1]; r = b - 256 if b > 127 else b
+    if r is None or not (-110 <= r <= -20):        # sanity gate drops zeros/garbage (synthetic fixtures)
+        return None
+    return r
+
 def itvl_bin(ms):
     for i in range(7):
         if ITVL_LO[i] <= ms < ITVL_HI[i]: return i
@@ -39,7 +71,8 @@ def _atype(msb):
 def parse_adverts(path):
     out=[]
     with open(path,"rb") as f:
-        f.read(24)
+        gh=f.read(24)
+        linktype = struct.unpack("<I", gh[20:24])[0] if len(gh) >= 24 else 0
         while True:
             rh=f.read(16)
             if len(rh)<16: break
@@ -47,6 +80,7 @@ def parse_adverts(path):
             if len(data)<incl: break
             off=data.find(AA)
             if off<0 or off+6>len(data): continue
+            rssi=_rssi_from(linktype, data, off)
             pdu=data[off+4:]
             if len(pdu)<8: continue
             h0,plen=pdu[0],pdu[1]
@@ -56,7 +90,7 @@ def parse_adverts(path):
             adva=body[:6]; ad=body[6:]
             out.append({"ts":ts_s+ts_u/1e6, "addr":adva[::-1].hex(),
                         "atype":_atype(adva[5]), "company":_company(ad),
-                        "ad_sig":_ad_types(ad)})
+                        "ad_sig":_ad_types(ad), "rssi":rssi})
     return out
 
 def build_profile(adverts):
@@ -99,12 +133,16 @@ def build_profile(adverts):
     isum=sum(ibins) or 1
     vtot=sum(ven.values()) or 1
     adtot=sum(ads.values()) or 1
-    return {"n_adverts":len(adverts),"n_addrs":len(ts),
+    prof = {"n_adverts":len(adverts),"n_addrs":len(ts),
             "atype":{k:at[k]/n for k in ("static","rpa","public")},
             "itvl_bins":[b/isum for b in ibins],
             "vendor":{k:v/vtot for k,v in ven.items()},
             "ad_sig":{k:v/adtot for k,v in ads.items()},
             "presence_ms_bins":pbins}
+    rh = rssi_hist([a.get("rssi") for a in adverts])
+    if rh:
+        prof.update(rh)          # rssi_bins / rssi_median / rssi_stdev / n_rssi (omitted if no RSSI)
+    return prof
 
 def write_model_seed(profile, path):
     # convert normalized vendor shares back into integer counts (scale 1000) + interval bins

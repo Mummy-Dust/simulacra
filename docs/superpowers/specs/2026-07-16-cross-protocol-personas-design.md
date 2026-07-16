@@ -50,8 +50,11 @@ unique co-occurring pair.
   no Wi-Fi. So **every probe agent is bound into a persona** (persona count = probe
   agent count, ~8–16), while extra **BLE-only** decoys (`ble_devices`) fill out the
   crowd. This keeps the population realistic and bounds complexity.
-  `n_persona = min(probe_agent_count, ble_population)` so every persona has both a Wi-Fi
-  and a BLE slot; the remaining BLE slots are the unbound crowd.
+  **Composition (decided 2026-07-16):** every probe agent is bound (`n_persona = probe_agent_count`);
+  the BLE population is *grown* to `probe_agent_count + ~8` so all personas get a co-present BLE
+  twin AND an unbound remainder preserves the static/NRPA/persistent BLE-only mix (i.e. the
+  address-type + presence tells we already closed do not regress). On the C5 that is 16 personas +
+  8 BLE-only = 24; on the C6, 8 + 8 = 16 (both within `BLE_DEVICES_MAX` = 32).
 - **Persona BLE members are always RPA** (resolvable private address) — that is how
   phones present on BLE — so they rotate their address within life. Co-presence is by
   *time*, not by address; rotation within a persona's life is realistic and does not

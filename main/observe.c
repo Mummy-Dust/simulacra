@@ -10,6 +10,9 @@
 #ifndef SIMULACRA_LEARN
 #define SIMULACRA_LEARN 1
 #endif
+#ifndef OBSERVE_LOG_RSSI
+#define OBSERVE_LOG_RSSI 0   // 1 = log per-advert RSSI for the decoy_audit physical slice (bench only)
+#endif
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
@@ -180,6 +183,9 @@ static int observe_gap_event(struct ble_gap_event *event, void *arg)
 
     // legacy_event_type is the PDU type for legacy ads; non-legacy ext ads clamp to the last bin.
     if (s_report_cb) s_report_cb(d->addr.val, d->rssi, company, hitp);   // M9 tap: raw MAC still live here
+#if OBSERVE_LOG_RSSI
+    ESP_LOGW(TAG, "obs rssi=%d company=0x%04x", (int)d->rssi, (unsigned)company);   // decoy_audit physical slice
+#endif
 #if SIMULACRA_LEARN
     learn_offer(observe_hash_mac(d->addr.val), d->data, d->length_data, company, now);
 #endif

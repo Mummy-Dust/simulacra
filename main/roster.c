@@ -4,6 +4,7 @@
 #include "generate.h"
 #include "trace.h"
 #include "esp_random.h"
+#include "uniq_id.h"
 
 static identity_t s_roster[CHURN_ROSTER_SIZE];
 static size_t     s_cursor;
@@ -19,7 +20,8 @@ void make_random_addr(uint8_t out[6], uint8_t top2)
         out[5] = (uint8_t)((out[5] & 0x3f) | (top2 & 0xc0));
         int ones = __builtin_popcount(out[5] & 0x3f);
         for (int i = 0; i < 5; i++) ones += __builtin_popcount(out[i]);
-        if (ones != 0 && ones != 46) return;
+        if (ones == 0 || ones == 46) continue;   // NimBLE rejects all-zero/all-ones
+        if (uniq_try(out)) return;                // guaranteed-unique across live + recent history
     }
 }
 

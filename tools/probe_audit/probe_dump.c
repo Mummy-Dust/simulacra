@@ -15,6 +15,14 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
+        srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
+        uniq_reset();
+        uint8_t m[6];
+        probe_random_mac(m);
+        printf("%d\n", uniq_try(m) ? 1 : 0);   // 0 = routed (recorded), 1 = not routed
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--uniq") == 0) {
         unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;

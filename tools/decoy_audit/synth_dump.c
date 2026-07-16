@@ -8,6 +8,7 @@
 #include "roster.h"
 #include "learn.h"
 #include "learn_record.h"
+#include "uniq_id.h"
 
 static const char *atype_of(const uint8_t addr[6]) {
     switch (addr[5] >> 6) { case 3: return "static"; case 1: return "rpa";
@@ -103,6 +104,14 @@ static int load_learn_seed(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
+        srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
+        uniq_reset();
+        uint8_t a[6];
+        make_random_addr(a, 0xc0);
+        printf("%d\n", uniq_try(a) ? 1 : 0);   // 0 = routed (recorded), 1 = not routed
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--devices") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      ndev   = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 16;

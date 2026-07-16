@@ -1,6 +1,7 @@
 #include <string.h>
 #include "probe_frame.h"
 #include "esp_random.h"
+#include "uniq_id.h"
 
 // ============================================================================
 // Archetype IE bodies (the frame body after the 24-byte MAC header + seq ctl).
@@ -98,7 +99,8 @@ void probe_random_mac(uint8_t out[6])
         out[0] = (uint8_t)((out[0] & 0xFC) | 0x02);   // locally-administered, unicast
         int zero = 1, ff = 1;
         for (int i = 0; i < 6; i++) { if (out[i]) zero = 0; if (out[i] != 0xff) ff = 0; }
-        if (!zero && !ff) return;
+        if (zero || ff) continue;
+        if (uniq_try(out)) return;                    // shares the allocator with BLE
     }
 }
 

@@ -25,3 +25,8 @@ int   phantom_count(void);
 const phantom_t *phantom_at(int i);
 probe_arch_t phantom_arch(phantom_family_t f);   // family -> Wi-Fi archetype
 uint16_t     phantom_company(phantom_family_t f);// family -> BLE company id (0 = anonymous RPA)
+
+// Align every bound probe agent to its phantom (agent i <-> phantom i). Reincarnates an agent
+// whenever its phantom's generation has advanced, so the Wi-Fi identity co-appears/co-leaves
+// with the persona and adopts the family's archetype. Requires probe_agents_init(n) first.
+void phantom_sync_wifi(uint32_t now_ms);

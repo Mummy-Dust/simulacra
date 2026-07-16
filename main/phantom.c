@@ -1,5 +1,6 @@
 #include "phantom.h"
 #include "esp_random.h"
+#include "probe_agents.h"
 
 // Phone-like lifetime band: a persona is a person's phone passing through or lingering.
 #define PHANTOM_LIFE_MIN_MS   180000u    // 3 min
@@ -64,5 +65,14 @@ uint16_t phantom_company(phantom_family_t f) {
         case PF_SAMSUNG: return 0x0075;   // Samsung
         case PF_GOOGLE:  return 0x00E0;   // Google
         default:         return 0;        // Apple/generic -> anonymous RPA (Law-3-safe)
+    }
+}
+
+void phantom_sync_wifi(uint32_t now_ms)
+{
+    (void)now_ms;
+    for (int i = 0; i < s_n; i++) {
+        const phantom_t *ph = &s_ph[i];
+        probe_agent_sync(i, phantom_arch(ph->family), ph->born_ms, ph->life_ms, ph->generation);
     }
 }

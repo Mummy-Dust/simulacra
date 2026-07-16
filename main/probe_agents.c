@@ -77,3 +77,22 @@ int probe_agents_due(uint32_t now_ms, probe_agent_t **out, int max)
     }
     return k;
 }
+
+int probe_agent_sync(int i, probe_arch_t arch, uint32_t born_ms, uint32_t life_ms, uint32_t generation)
+{
+    if (i < 0 || i >= s_n) return 0;
+    probe_agent_t *a = &s_agents[i];
+    if (a->persona_gen == generation && a->alive) return 0;   // already synced to this life
+    probe_random_mac(a->mac);                                  // fresh unique MAC
+    a->arch        = arch;                                     // adopt persona family's archetype
+    a->seq         = (uint16_t)(esp_random() & 0x0FFFu);
+    a->duty        = (esp_random() % 3u == 0u) ? DUTY_ACTIVE : DUTY_IDLE;
+    a->born_ms     = born_ms;
+    a->life_ms     = life_ms;
+    a->alive       = true;
+    a->persona_gen = generation;
+    uint32_t base  = (a->duty == DUTY_ACTIVE) ? rnd_range(ACTIVE_MIN_MS, ACTIVE_MAX_MS)
+                                              : rnd_range(IDLE_MIN_MS, IDLE_MAX_MS);
+    a->next_scan_ms = born_ms + (esp_random() % base);
+    return 1;
+}

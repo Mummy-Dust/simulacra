@@ -102,6 +102,35 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    if (argc > 1 && strcmp(argv[1], "--wbind") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n      = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 12;
+        int      ticks  = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 4000;
+        unsigned tickms = argc > 5 ? (unsigned)strtoul(argv[5], 0, 10) : 1000;
+        srand(seed);
+        uint32_t t = 0;
+        phantom_init(n, t);
+        probe_agents_init(n, t);
+        phantom_sync_wifi(t);
+        static uint32_t gen_seen[PROBE_AGENTS_MAX];
+        for (int i = 0; i < n && i < PROBE_AGENTS_MAX; i++) gen_seen[i] = 0;
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            phantom_lifecycle(t);
+            phantom_sync_wifi(t);
+            for (int i = 0; i < probe_agents_count(); i++) {
+                const probe_agent_t *a = probe_agents_at(i);
+                if (a->persona_gen != gen_seen[i]) {
+                    gen_seen[i] = a->persona_gen;
+                    printf("W %u %d ", (unsigned)t, i);
+                    for (int b = 0; b < 6; b++) printf("%02x", a->mac[b]);
+                    printf(" %d %u\n", (int)a->arch, (unsigned)a->persona_gen);
+                }
+            }
+        }
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--pick") == 0) {
         srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
         int n = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;

@@ -30,3 +30,9 @@ uint16_t     phantom_company(phantom_family_t f);// family -> BLE company id (0 
 // whenever its phantom's generation has advanced, so the Wi-Fi identity co-appears/co-leaves
 // with the persona and adopts the family's archetype. Requires probe_agents_init(n) first.
 void phantom_sync_wifi(uint32_t now_ms);
+
+// Align the bound BLE slots [0, phantom_count()) to their phantoms: slot i <-> phantom i.
+// Reincarnates slot i whenever phantom i's generation advances, so the BLE identity co-appears
+// with the Wi-Fi twin and carries the family's vendor (or a Law-3-safe anonymous RPA).
+// Requires ble_devices_init(n) with n >= phantom_count().
+void phantom_sync_ble(uint32_t now_ms);

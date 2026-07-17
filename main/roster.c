@@ -107,6 +107,13 @@ size_t roster_count_in_state(id_state_t s)
 
 identity_t *roster_at(size_t i) { return &s_roster[i]; }
 
+identity_t *roster_pick_company(uint16_t company_id)
+{
+    for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++)
+        if (s_roster[i].company_id == company_id) return &s_roster[i];
+    return NULL;
+}
+
 void roster_reseed_idle(const rf_model_t *m)
 {
     for (size_t i = 0; i < CHURN_ROSTER_SIZE; i++) {

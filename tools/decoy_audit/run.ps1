@@ -60,7 +60,7 @@ if ($Rebuild -or -not (Test-Path $exe)) {
            synth_dump.c ble_hs_adv.c roster_stub.c `
            ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c `
            ..\..\main\learn.c ..\..\components\simulacra_radar\law3.c ..\..\components\simulacra_radar\learn_wire.c `
-           ..\..\main\uniq_id.c `
+           ..\..\main\uniq_id.c ..\..\main\phantom.c ..\..\main\probe_agents.c ..\..\main\probe_frame.c `
            /Fe:synth_dump.exe | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 3 }
     } finally { Pop-Location }

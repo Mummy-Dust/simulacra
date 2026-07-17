@@ -1,6 +1,7 @@
 #include "phantom.h"
 #include "esp_random.h"
 #include "probe_agents.h"
+#include "ble_devices.h"
 
 // Phone-like lifetime band: a persona is a person's phone passing through or lingering.
 #define PHANTOM_LIFE_MIN_MS   180000u    // 3 min
@@ -74,5 +75,16 @@ void phantom_sync_wifi(uint32_t now_ms)
     for (int i = 0; i < s_n; i++) {
         const phantom_t *ph = &s_ph[i];
         probe_agent_sync(i, phantom_arch(ph->family), ph->born_ms, ph->life_ms, ph->generation);
+    }
+}
+
+void phantom_sync_ble(uint32_t now_ms)
+{
+    (void)now_ms;
+    int slots = ble_devices_count();
+    for (int i = 0; i < s_n; i++) {
+        if (i >= slots) break;                  // no BLE slot for this persona (misconfig guard)
+        const phantom_t *ph = &s_ph[i];
+        ble_device_sync(i, i, phantom_company(ph->family), ph->born_ms, ph->life_ms, ph->generation);
     }
 }

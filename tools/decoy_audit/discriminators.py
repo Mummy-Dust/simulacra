@@ -103,6 +103,64 @@ def d_rssi(synth, profile):
     return rssi_separability((decoy["rssi_bins"], decoy["rssi_median"]),
                              (real_bins, profile.get("rssi_median", 0.0)))
 
+# --- K-node (mesh) modeled RSSI ---------------------------------------------------------------
+# With K separated nodes, decoys originate from K points, not one. We model that by assigning each
+# decoy round-robin to a node whose base RSSI is drawn from the real crowd's OWN distribution
+# (anchored -> no free spread parameter). k=1 delegates to the single-node model so the score is
+# unchanged. As k grows, node bases cover the real spread more fully -> the decoy crowd spread
+# approaches the real crowd's -> separability falls. We report the EXPECTED separability by averaging
+# over RSSI_FLEET_SAMPLES seeded placements (deterministic across runs), because one random placement
+# is noisy AND placement diversity smooths the discrete tx-dither comb across the 5-dB scoring bins.
+# HONEST NOTE: the fall is a strong DOWNWARD TREND, not strictly monotone -- the discrete tx-power
+# dither (3 dB steps) beating against the 5 dB scoring bins resonates, so some K score a touch higher
+# than a neighbour. The trend and the ceiling (K points, not one-per-device) are the real result.
+def _sample_bases_from_bins(rssi_bins, k, rng):
+    """Draw k node-base RSSIs (dBm bin-centers) from a normalized histogram, weighted by the bins."""
+    centers = [cp.RSSI_LO + (i + 0.5) * cp.RSSI_W for i in range(cp.RSSI_NBINS)]
+    weights = rssi_bins if any(rssi_bins) else [1.0] * len(centers)
+    return [rng.choices(centers, weights=weights, k=1)[0] for _ in range(k)]
+
+
+def modeled_decoy_rssi_hist_k(synth, profile, k, seed=RSSI_MODEL_SEED, sigma=RSSI_SIGMA_DB):
+    """One placement of the K-node modeled decoy RSSI. k<=1 (or no real RSSI) delegates to the
+    single-node model so k=1 reproduces d_rssi exactly. For k>1, decoys are assigned round-robin to K
+    node bases drawn (weighted) from the real distribution; tx-dither + N(0,sigma) jitter as usual."""
+    real_bins = profile.get("rssi_bins")
+    if k <= 1 or not real_bins:
+        return modeled_decoy_rssi_hist(synth, seed=seed, sigma=sigma)
+    bases = _sample_bases_from_bins(real_bins, k, random.Random(seed ^ 0x9E3779B9))
+    jit = random.Random(seed)
+    samples = []
+    i = 0
+    for x in synth:
+        tx = x.get("tx")
+        if tx is None:
+            continue
+        samples.append(bases[i % k] + tx + jit.gauss(0.0, sigma))
+        i += 1
+    return cp.rssi_hist(samples)
+
+
+RSSI_FLEET_SAMPLES = 32  # seeded node placements averaged per K -> deterministic expected separability
+
+def d_rssi_k(synth, profile, k):
+    """Expected separability of the K-node modeled decoy RSSI from the real crowd, placement-invariant
+    and deterministic (seeded average over RSSI_FLEET_SAMPLES placements). d_rssi_k(.,.,1) == d_rssi(.,.)
+    exactly. Larger k lowers separability as a strong downward trend (see the note above; not strictly
+    monotone). 0.0 when the profile has no RSSI."""
+    real_bins = profile.get("rssi_bins")
+    if not real_bins:
+        return 0.0
+    rm = profile.get("rssi_median", 0.0)
+    reps = 1 if k <= 1 else RSSI_FLEET_SAMPLES
+    total = 0.0
+    for s in range(reps):
+        decoy = modeled_decoy_rssi_hist_k(synth, profile, k, seed=RSSI_MODEL_SEED + s)
+        if not decoy:
+            return 0.0
+        total += rssi_separability((decoy["rssi_bins"], decoy["rssi_median"]), (real_bins, rm))
+    return total / reps
+
 def synth_distributions(synth):
     at=Counter(x["atype"] for x in synth)
     n=len(synth) or 1

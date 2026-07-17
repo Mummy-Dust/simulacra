@@ -60,12 +60,17 @@ and **cross-modal correlation**.*
 - **M10 — Cross-protocol personas.** Bind a BLE identity + a Wi-Fi identity (later sub-GHz) into
   one synthetic "device" that emits consistently across protocols and appears/leaves together —
   defeating correlators that filter BLE-only ghosts. **Same-board v1 done 2026-07-16
-  (`feat/cross-protocol-personas`, firmware compile-verified esp32c5+esp32c6); mesh-distributed
-  personas — *distributing whole personas across physically separated nodes* (each persona keeps
-  its two radios co-located, as a real phone does, but different personas originate from different
-  points) to beat the crowd-level co-location / RSSI tell — remain future. Note: splitting a single
-  persona's two radios across nodes would be wrong — it manufactures a "phone whose radios are
-  metres apart" tell no real device has; the fix is spatial diversity of the *crowd*, not the pair.**
+  (`feat/cross-protocol-personas`, firmware compile-verified esp32c5+esp32c6). **Mesh-distributed
+  personas landed 2026-07-17** (`-DSIMULACRA_FLEET_SIZE=K`): each node runs `1/K` of the population,
+  so *whole personas are distributed across physically separated nodes* (each persona keeps its two
+  radios co-located, as a real phone does, but different personas originate from different points) —
+  spatial diversity of the *crowd*. The audit measures the win and it is **modest on real data**:
+  modeled RSSI separability falls K=1 **0.15** → K=2 **0.14** → K=3 **0.12** (`scorecard.py
+  --fleet-curve`), because the per-identity TX-power dither already closes most of the co-location
+  tell — the larger mesh benefit is `K` distinct RF fingerprints, which this axis does not measure.
+  Note: splitting a single persona's two radios across nodes would be wrong — it manufactures a
+  "phone whose radios are metres apart" tell no real device has; the fix is crowd spatial diversity,
+  not the pair.**
 - **M11 — Targeted mimicry (mimic ring).** Detect your own device(s) and generate decoys that
   clone their vendor/type, so your real device is one of many identical signatures instead of a
   unique one co-occurring with you.
@@ -86,7 +91,10 @@ and **cross-modal correlation**.*
   modeled single-node decoy RSSI is only ~0.15 separable from a real crowd — the per-identity
   TX-power dither mitigates it well — but the ceiling stands; only spatially separated nodes (M9)
   truly beat it. This closes the audit's last discriminator axis (address / interval / vendor /
-  AD-structure / presence / RSSI all done).*
+  AD-structure / presence / RSSI all done). Mesh v2 (`-DSIMULACRA_FLEET_SIZE=K`) now distributes the
+  crowd across K nodes and the audit confirms it lowers the modeled separability (0.15 → ~0.12 at
+  K=3) — but the honest ceiling stands: **K nodes give K points, not one-per-device; the win is
+  proportional to node count**, and modest here because the dither already did most of the work.*
 - **Decoys, not jamming.** Jamming and cellular spoofing are illegal and a different (worse) project.
 - **Realistic claim, even maxed out:** *raises the cost of and degrades automated / mass RF
   correlation — especially as a heterogeneous multi-node mesh — not a guarantee against a targeted,

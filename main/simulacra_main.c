@@ -47,6 +47,7 @@
 #include "settings.h"
 #include "churn_adv.h"
 #include "churn_selftest.h"
+#include "fleet_pop.h"
 #include "observe.h"
 #include "rf_model.h"
 #include "generate.h"
@@ -138,24 +139,26 @@ static void simulacra_task(void *arg)
     // to the coordinator (it owns churn_tick + Wi-Fi bursts + re-profile). roster_init()
     // MUST precede churn_init(): churn pulls identities straight from the roster pool.
     roster_init();
-    int ndev = 12;
+    int fleet_k = fleet_pop_size();                 // K nodes share the crowd (default 1 = standalone)
+    int ndev = fleet_pop_share(12);                 // fallback density -> this node's share
     {
         rf_model_t m;
         if (rf_model_load_nvs(&m) == 0 && m.total_obs >= GEN_MIN_OBS) {
-            uint8_t at = generate_active_target(&m);
+            uint8_t at = (uint8_t)fleet_pop_share(generate_active_target(&m));  // node's share of observed density
             churn_set_active_target(at);
             ndev = (int)at;
-            ESP_LOGW(TAG, "population-match: pop=%u active_target=%u",
-                     (unsigned)(m.pop_ewma + 0.5f), (unsigned)at);
+            ESP_LOGW(TAG, "population-match: pop=%u fleet_k=%d active_target=%u",
+                     (unsigned)(m.pop_ewma + 0.5f), fleet_k, (unsigned)at);
         }
     }
-    if (ndev < probe_desired_ble_floor()) ndev = probe_desired_ble_floor();   // room for personas
+    int ble_floor = fleet_pop_share(probe_desired_ble_floor());   // floor scales with the persona share
+    if (ndev < ble_floor) ndev = ble_floor;                      // room for this node's personas + twins
     ble_devices_init(ndev, (uint32_t)(esp_timer_get_time() / 1000));  // population size; clamped to max
     // Create the persona registry HERE, on simulacra_task, BEFORE coexist_start spawns coexist_task
     // (task creation is a memory barrier). All phantom_lifecycle/sync_* thereafter run only on the
     // coexist tick, so the phantom state has a single writer -> no lock needed. Binding is deferred
     // to the first coexist tick (phantom_sync_wifi/ble), after probe_agents_init / ble_devices_init.
-    phantom_init(probe_phone_target(), (uint32_t)(esp_timer_get_time() / 1000));
+    phantom_init(fleet_pop_share(probe_phone_target()), (uint32_t)(esp_timer_get_time() / 1000));
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
     sim_settings_init();   // restore persisted churn tunables (or firmware defaults)

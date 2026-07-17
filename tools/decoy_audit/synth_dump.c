@@ -4,6 +4,7 @@
 #include "rf_model.h"
 #include "identity.h"
 #include "generate.h"
+#include "fleet_pop.h"
 #include "ble_devices.h"
 #include "roster.h"
 #include "learn.h"
@@ -106,6 +107,16 @@ static int load_learn_seed(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--fleet-share") == 0) {
+        int target = argc > 2 ? (int)strtol(argv[2], 0, 10) : 0;
+        int k      = argc > 3 ? (int)strtol(argv[3], 0, 10) : 1;
+        printf("%d\n", fleet_pop_share_k(target, k));
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--fleet-size") == 0) {
+        printf("%d\n", fleet_pop_size());
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--persona-pop") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      nph    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 16;

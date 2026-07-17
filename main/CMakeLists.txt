@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "simulacra_main.c" "churn_adv.c" "roster.c" "churn_selftest.c" "churn.c" "ble_devices.c" "settings.c" "templates.c" "rf_model.c" "observe.c" "generate.c" "probe.c" "probe_frame.c" "probe_agents.c" "sniff.c" "espnow_sniff.c" "drift.c" "coexist.c" "detect.c" "webui.c" "esp_now_link.c" "learn.c" "sig_store.c" "fleet.c" "fleet_key.c" "vbat.c" "uniq_id.c" "phantom.c"
+    SRCS "simulacra_main.c" "churn_adv.c" "roster.c" "churn_selftest.c" "churn.c" "ble_devices.c" "settings.c" "templates.c" "rf_model.c" "observe.c" "generate.c" "probe.c" "probe_frame.c" "probe_agents.c" "sniff.c" "espnow_sniff.c" "drift.c" "coexist.c" "detect.c" "webui.c" "esp_now_link.c" "learn.c" "sig_store.c" "fleet.c" "fleet_key.c" "vbat.c" "uniq_id.c" "phantom.c" "fleet_pop.c"
     INCLUDE_DIRS "."
     REQUIRES bt nvs_flash driver esp_adc esp_wifi esp_netif esp_event esp_http_server simulacra_radar
     EMBED_TXTFILES "webui_index.html"
@@ -16,7 +16,7 @@ foreach(flag
     SIMULACRA_VBAT_MAX17048 SIMULACRA_VBAT_SDA SIMULACRA_VBAT_SCL SIMULACRA_VBAT_LOW_PCT
     SIMULACRA_VBAT_ADC SIMULACRA_VBAT_ADC_GPIO SIMULACRA_VBAT_ADC_DIV SIMULACRA_VBAT_LOW_MV
     PROBE_FIX_CH PROBE_FORCE_SHARED SNIFF_FIXED_CH
-    OBSERVE_LOG_RSSI)
+    OBSERVE_LOG_RSSI SIMULACRA_FLEET_SIZE)
     if(DEFINED ${flag})
         target_compile_definitions(${COMPONENT_LIB} PRIVATE ${flag}=${${flag}})
     endif()

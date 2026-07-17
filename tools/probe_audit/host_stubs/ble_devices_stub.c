@@ -11,10 +11,10 @@
 
 int ble_devices_count(void) { return 0; }
 
-int ble_device_sync(int slot, int persona_idx, uint16_t company,
+int ble_device_sync(int slot, int persona_idx, bool apple,
                      uint32_t born_ms, uint32_t life_ms, uint32_t generation)
 {
-    (void)slot; (void)persona_idx; (void)company;
+    (void)slot; (void)persona_idx; (void)apple;
     (void)born_ms; (void)life_ms; (void)generation;
     return 0;
 }

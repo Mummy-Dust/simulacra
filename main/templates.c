@@ -171,3 +171,26 @@ int template_build_vendor_mfg(uint16_t company_id, uint8_t out_payload[31], uint
     *out_len = len;
     return 0;
 }
+
+// Real phones present on BLE as a terse advertiser on a wide, jittered interval -- not the tight
+// 120-180 ms accessory band. This band spreads N personas across the interval histogram.
+#define PHONE_ITVL_MIN_MS  180
+#define PHONE_ITVL_MAX_MS 1000
+
+int template_build_phone(bool apple, uint8_t out_payload[31], uint8_t *out_len, uint16_t *out_itvl_ms)
+{
+    struct ble_hs_adv_fields f;
+    memset(&f, 0, sizeof(f));
+    f.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+
+    // Apple: flags-only (Continuity is off-limits -> the honest iPhone floor). Android: ~40% carry
+    // a 16-bit service-UUID list (battery / device-info / HID / Google svc), else flags-only.
+    if (!apple && (esp_random() % 100) < 40) enc_svc_uuid16(&f);
+
+    uint8_t buf[BLE_HS_ADV_MAX_SZ], len = 0;
+    if (ble_hs_adv_set_fields(&f, buf, &len, sizeof(buf)) != 0) { *out_len = 0; return 1; }
+    memcpy(out_payload, buf, len);
+    *out_len = len;
+    *out_itvl_ms = rnd_range(PHONE_ITVL_MIN_MS, PHONE_ITVL_MAX_MS);
+    return 0;
+}

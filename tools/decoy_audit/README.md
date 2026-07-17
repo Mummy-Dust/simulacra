@@ -221,8 +221,9 @@ names, or raw AD. No absolute paths or usernames belong in any committed file he
 system (the phantom registry + probe agents + ble_devices) and emits `W` (Wi-Fi) and `B` (BLE)
 events. `tests/test_personas.py` asserts the properties that make a persona a convincing dual-radio
 device: **dual-radio coverage** (every Wi-Fi identity has a co-present BLE twin), co-appearance on
-the same tick, that persona BLE members are RPA and Law-3-safe (never Apple mfg data),
-Samsung/Google vendor-matching, cross-radio address uniqueness, and **same-vendor payload diversity**
-(reservoir-sampled `roster_pick_company` — several Samsung "phones" must not be byte-identical).
+the same tick, that persona BLE members are RPA and Law-3-safe (never Apple mfg data), a **realistic
+phone shape** (terse flags-only / 16-bit service-UUID list, no accessory manufacturer data),
+cross-radio address uniqueness, and a **widened phone interval band** (personas spread across
+intervals rather than clustering on one accessory value).
 This is the "are our fake phones real dual-radio devices?" axis: a real phone-heavy environment has
 near-100% coverage with diverse payloads, so the decoys must too.

@@ -39,8 +39,9 @@ const ble_device_t *ble_devices_at(int i);
 void  ble_devices_form_counts(uint8_t *restless, uint8_t *wandering, uint8_t *bound);
 
 // Bind BLE slot `slot` to phantom `persona_idx` (see phantom.h): when the phantom's generation
-// advances, reincarnate the slot as an RPA device carrying `company`'s behaviour (0 = anonymous
-// Law-3-safe RPA), the phantom's shared born/life, and a fresh unique address. Returns 1 if
-// reincarnated. Bound slots do NOT expire via ble_devices_tick; the phantom owns their lifetime.
-int ble_device_sync(int slot, int persona_idx, uint16_t company,
+// advances, reincarnate the slot as an RPA device carrying a Law-3-safe phone advertisement
+// (flags-only / 16-bit service-UUID list, no manufacturer data), the phantom's shared born/life,
+// and a fresh unique address. `apple` selects the iPhone floor (flags-only, no Continuity).
+// Returns 1 if reincarnated. Bound slots do NOT expire via ble_devices_tick; the phantom owns them.
+int ble_device_sync(int slot, int persona_idx, bool apple,
                     uint32_t born_ms, uint32_t life_ms, uint32_t generation);

@@ -106,6 +106,41 @@ static int load_learn_seed(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--persona-pop") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      nph    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 16;
+        int      ndev   = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 24;
+        int      ticks  = argc > 5 ? (int)strtoul(argv[5], 0, 10) : 4000;
+        unsigned tickms = argc > 6 ? (unsigned)strtoul(argv[6], 0, 10) : 1000;
+        srand(seed);
+        roster_init();
+        uint32_t t = 0;
+        phantom_init(nph, t);
+        ble_devices_init(ndev, t);
+        probe_agents_init(nph, t);
+        phantom_sync_wifi(t);
+        phantom_sync_ble(t);
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            phantom_lifecycle(t);
+            phantom_sync_wifi(t);
+            phantom_sync_ble(t);
+            ble_devices_tick(t);
+        }
+        // Snapshot the standing live BLE population (bound RPA personas + unbound crowd) as NDJSON
+        // in the SAME shape the roster synth emits, so the existing scorecard scores it unchanged.
+        for (int i = 0; i < ble_devices_count(); i++) {
+            const ble_device_t *d = ble_devices_at(i);
+            char hex[13];
+            for (int b = 0; b < 6; b++) sprintf(hex + b*2, "%02x", d->id.addr[b]);
+            char adsig[48]; ad_types_onair(d->id.payload, d->id.payload_len, adsig, sizeof adsig);
+            printf("{\"addr\":\"%s\",\"atype\":\"%s\",\"company\":%u,\"itvl_ms\":%u,"
+                   "\"tx\":%d,\"arch\":%u,\"plen\":%u,\"ad\":\"%s\"}\n",
+                   hex, atype_of(d->id.addr), company_onair(d->id.payload, d->id.payload_len),
+                   d->id.adv_itvl_ms, d->id.tx_power, d->id.archetype_idx, d->id.payload_len, adsig);
+        }
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--personas") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      nph    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 12;

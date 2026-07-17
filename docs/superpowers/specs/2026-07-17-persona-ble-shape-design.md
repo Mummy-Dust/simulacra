@@ -129,3 +129,41 @@ atype tilt is a separate tracked follow-up and not a goal of this change).
 - Silent live service-data frames (Find-My-Device / Fast Pair non-discoverable) — deferred: Law-3
   pop-up risk and 2026 anachronism (Exposure Notification) outweigh the marginal realism; the
   flags + UUID-list + wide-interval mix already removes the tells this change targets.
+
+## Results (2026-07-17)
+
+Measured with `synth_dump --persona-pop 1 16 24 4000 1000` (16 bound personas + 8 unbound in a
+24-device BLE population) scored via `scorecard --atype-detail` vs `long.pcap`. Prior baseline
+figures are the recorded 2026-07-17 persona-atype measurement (raw persona-pop).
+
+| discriminator        | before | after  | note |
+|----------------------|--------|--------|------|
+| **ad_structure**     | 0.72   | **0.17** | primary target — device-class/structure monoculture removed |
+| interval_distribution| 0.58   | **0.37** | improved; now the top persona tell — reference mismatch (below) |
+| vendor_histogram     | ~0.12  | 0.12   | personas emit no mfg (all company 0); residual is the unbound ambient crowd |
+| address_type_mix     | 0.15   | 0.15   | RPA tilt — untouched, separate tracked follow-up |
+| **persona-pop headline** | **0.72** | **0.37** | worst tell moved ad_structure → interval |
+
+The 256-decoy (model-seeded, non-persona) headline is unchanged at **0.1526** (ad_structure) — this
+change touches only the persona path.
+
+**ad_structure 0.72 → 0.17 is the headline win:** personas no longer advertise as earbuds / Tile /
+Eddystone. Flags-only + 16-bit service-UUID lists match the terse structure of real ambient BLE, so
+the device-class tell is closed.
+
+**The residual interval 0.37 is a reference-validity artifact, not a decoy defect.** The bins:
+
+```
+                 (0-50) (50-100) (100-200) (200-500) (500-1000) (1000-2000) (2000-3000)
+decoy (personas)  0.00   0.04     0.08      0.42      0.33       0.08        0.04
+real  (long.pcap) 0.00   0.00     0.01      0.07      0.15       0.30        0.47
+```
+
+Personas are **fast advertisers** (200–1000 ms — spanning Android low-latency to low-power modes
+and iOS nearby), where real phones live. `long.pcap` is a **slow beacon/sensor** crowd: 77% of its
+advertisers sit above 1000 ms. A phone-realistic interval *cannot* match a beacon-heavy reference —
+tuning personas slower to close this gap would make them unrealistic phones to game a mismatched
+capture. Widening 120–180 → 180–1000 already de-spiked the monoculture (0.58 → 0.37); the remainder
+resolves only against a **phone-dense** reference capture (the tracked hardware-gated follow-up), not
+by further band tuning.
+

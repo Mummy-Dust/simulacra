@@ -61,8 +61,11 @@ and **cross-modal correlation**.*
   one synthetic "device" that emits consistently across protocols and appears/leaves together —
   defeating correlators that filter BLE-only ghosts. **Same-board v1 done 2026-07-16
   (`feat/cross-protocol-personas`, firmware compile-verified esp32c5+esp32c6); mesh-distributed
-  personas — splitting a persona's two radios across physically separated nodes to beat the
-  co-location tell — remain future.**
+  personas — *distributing whole personas across physically separated nodes* (each persona keeps
+  its two radios co-located, as a real phone does, but different personas originate from different
+  points) to beat the crowd-level co-location / RSSI tell — remain future. Note: splitting a single
+  persona's two radios across nodes would be wrong — it manufactures a "phone whose radios are
+  metres apart" tell no real device has; the fix is spatial diversity of the *crowd*, not the pair.**
 - **M11 — Targeted mimicry (mimic ring).** Detect your own device(s) and generate decoys that
   clone their vendor/type, so your real device is one of many identical signatures instead of a
   unique one co-occurring with you.
@@ -91,7 +94,11 @@ and **cross-modal correlation**.*
 
 ## Hardware status
 
-- **Working node:** Seeed XIAO ESP32-C6. Firmware builds for **C6** (✅ verified), **S3** (builds;
-  ext-adv unreliable on its older BLE controller), **C5** (builds with `--preview`; HW test pending).
-- **Inbound:** SparkFun Thing Plus C6 (battery-ready node, onboard charging + fuel gauge),
-  ESP32-C5-WROOM-1 (dual-band Wi-Fi 6 + 8 MB PSRAM — the moonshot chip if its ext-adv works).
+- **In-hand fleet:** ESP32-**C5** (dual-band Wi-Fi 6) ×2, SparkFun Thing Plus ESP32-**C6**
+  (onboard charging + MAX17048 fuel gauge) ×1, and an ESP32 "Cheap Yellow Display" (**Vigil**) ×1.
+- **Firmware builds + HW-validated:** **C6** (✅ verified) and **C5** (✅ HW-validated — extended
+  advertising works; builds with `--preview`). **S3** builds but its older BLE controller makes
+  ext-adv unreliable (not a target).
+- **Multi-node note:** the fleet can be physically separated for mesh work, but only one node is
+  USB-tethered (flash + serial) at a time; a second runs headless on a powerbank, with Vigil as an
+  always-on ESP-NOW observation point.

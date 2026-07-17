@@ -148,6 +148,7 @@ static void simulacra_task(void *arg)
                      (unsigned)(m.pop_ewma + 0.5f), (unsigned)at);
         }
     }
+    if (ndev < probe_desired_ble_floor()) ndev = probe_desired_ble_floor();   // room for personas
     ble_devices_init(ndev, (uint32_t)(esp_timer_get_time() / 1000));  // population size; clamped to max
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));

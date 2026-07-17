@@ -35,6 +35,7 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "freertos/task.h"
 #include "churn.h"
 #include "probe.h"
+#include "phantom.h"
 #include "drift.h"
 #include "observe.h"
 #include "generate.h"
@@ -252,6 +253,7 @@ static void coexist_task(void *arg)
         coexist_due_t d = coexist_due(p, now, &last_wifi, &last_repro);
         if (d.fire_wifi && s_wifi_ok) {
             const uint8_t *ch24; size_t n24 = probe_channels_24(&ch24);
+            phantom_sync_wifi(now);                                   // agents track persona lives
             if (n24) probe_inject_burst(ch24[hop24++ % n24]);        // 2.4 GHz (coex-arbitrated)
             if (p->use_5g && (++s_wifi_ctr % COEX_5G_EVERY == 0)) coexist_5g_excursion();
         }

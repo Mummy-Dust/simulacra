@@ -239,13 +239,15 @@ multipath jitter (σ = 4 dB). That modeled spread (~6.5 dB) is scored, placement
 invariant (median-centered), against a real crowd's RSSI distribution from an
 RSSI-bearing capture (Nordic DLT157 or LE-LL-with-PHDR DLT256).
 
-The row is labeled `visibility=modeled`. It is **headline-eligible**: the physical
-layer is real exposure (an adversary co-located with the decoys sees it), and it is
-usually the worst tell — the honest single-board ceiling that one radio cannot beat
-(only the tx-power dither mitigates it). σ is anchored to a real over-air decoy
-capture (the modeled spread sits below the measured 10.1 dB), not invented. For a
-real over-air number when a decoy OBSERVE capture is available, use
-`analyzers/rssi_audit.py`.
+The row is labeled `visibility=modeled` and is **headline-eligible**: the physical
+layer is real exposure (an adversary co-located with the decoys sees it). In
+practice the per-identity tx-power dither keeps it **modest** — measured ~0.15
+against real captures (modeled ~6.6 dB spread vs a real crowd's ~12 dB), comparable
+to the well-controlled structural tells, not dominant. Its value is as a regression
+gate: drop the dither and the spread collapses, spiking the tell. σ is anchored to a
+real over-air decoy capture (the modeled spread sits below the measured 10.1 dB),
+not invented. For a real over-air number when a decoy OBSERVE capture is available,
+use `analyzers/rssi_audit.py`.
 
 Because the tell scores *shape* against a real reference, the reference matters: a
 stationary single-vantage capture has a narrow real RSSI spread of its own, which

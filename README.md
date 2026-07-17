@@ -164,6 +164,28 @@ verified against the same source that runs on-device:
 
 Each tool has its own README with build and run steps.
 
+## Recent updates
+
+Newest first. Forward-looking milestones live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+- **Cross-protocol personas (M10 v1).** BLE and Wi-Fi identities are now bound into single,
+  co-present synthetic devices that appear and leave together — so a correlator can't isolate your
+  real dual-radio phone by filtering out single-radio "ghosts." Persona BLE identities present a
+  realistic, Law-3-safe phone shape (terse flags-only / 16-bit service-UUID adverts on rotating
+  RPAs), never vendor-matched accessory beacons.
+- **Detectability, measured across every axis.** The host audit compiles the real generator *and*
+  the real self-learning path, then scores separability from a real capture on address-type mix,
+  advertising interval, vendor histogram, AD structure, and presence/lifespan — turning "are the
+  decoys convincing?" into a single regression-gate number. Recent passes closed several structural
+  tells (AD-structure monoculture, a bogus presence metric) and added a static-infrastructure cohort.
+- **Presence & lifespan realism.** Decoys now include persistent static-infrastructure devices and
+  per-type address rotation alongside the death/rebirth churn, so the population's come-and-go
+  behaviour matches a real crowd instead of a fixed set.
+- **Vigil console (CYD).** Live radar/threat dashboard reskinned, plain-language labels, responsive
+  touch control, and a per-node fleet roster surfacing TX-health and battery state.
+- **Post-flash sequence gate.** A two-board bench check confirms each fake phone keeps an
+  independent 802.11 sequence counter after an IDF/toolchain bump.
+
 ## Credits
 
 Originally forked from and built on [**0xXyc/splinter**](https://github.com/0xXyc/splinter) — the

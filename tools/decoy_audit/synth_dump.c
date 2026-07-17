@@ -147,7 +147,8 @@ int main(int argc, char **argv) {
                                    : d->atype == BLE_ATYPE_RPA    ? "rpa" : "nrpa";
                     printf("B %u %d ", (unsigned)t, pi);
                     for (int b = 0; b < 6; b++) printf("%02x", d->id.addr[b]);
-                    printf(" %s %04x %u\n", at, (unsigned)d->id.company_id, (unsigned)d->persona_gen);
+                    printf(" %s %04x %u %u\n", at, (unsigned)d->id.company_id,
+                           (unsigned)d->persona_gen, (unsigned)d->id.adv_itvl_ms);
                 }
             }
         }

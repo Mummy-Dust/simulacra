@@ -13,8 +13,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from discriminators import js_divergence   # noqa: E402
-import capture_profile as cp                # noqa: E402
+from discriminators import rssi_separability   # noqa: E402  (shared comparator)
+import capture_profile as cp                    # noqa: E402
 
 
 def load_rssi(prof):
@@ -23,22 +23,6 @@ def load_rssi(prof):
         return None
     return (prof["rssi_bins"], prof.get("rssi_median", 0.0),
             prof.get("rssi_stdev", 0.0), prof.get("n_rssi", 0))
-
-
-def _median_bin(median):
-    idx = int((median - cp.RSSI_LO) // cp.RSSI_W)
-    return max(0, min(cp.RSSI_NBINS - 1, idx))
-
-
-def rssi_separability(decoy, real):
-    """JS-divergence of the two median-centered RSSI shapes, in [0, 1]."""
-    db, dm = decoy[0], decoy[1]
-    rb, rm = real[0], real[1]
-    dc, rc = _median_bin(dm), _median_bin(rm)
-    dd = {i - dc: w for i, w in enumerate(db)}     # relative-index -> weight, aligned on own median
-    rr = {i - rc: w for i, w in enumerate(rb)}
-    keys = sorted(set(dd) | set(rr))
-    return js_divergence([dd.get(k, 0.0) for k in keys], [rr.get(k, 0.0) for k in keys])
 
 
 def read_log_rssi(path):

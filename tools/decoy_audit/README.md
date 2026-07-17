@@ -27,7 +27,8 @@ defines our exposure.
   `scorecard.py` ranks them and reports the max as the headline. Tells: address-type mix,
   interval distribution, vendor histogram, and **AD structure** (the ordered AD element-type
   signature each device advertises, e.g. `01,03,16` — device-weighted, what a sniffer reads
-  off the raw advert).
+  off the raw advert). Also scored: **presence/lifespan** (per-address on-air duration) and a
+  modeled **physical (RSSI)** tell (see below).
 
 ## Build `synth_dump`
 
@@ -227,3 +228,27 @@ cross-radio address uniqueness, and a **widened phone interval band** (personas 
 intervals rather than clustering on one accessory value).
 This is the "are our fake phones real dual-radio devices?" axis: a real phone-heavy environment has
 near-100% coverage with diverse payloads, so the decoys must too.
+
+## The physical (RSSI) tell — modeled
+
+An ESP32 cannot hear its own injected frames, so decoy RSSI cannot be captured on
+the board. The scorecard instead **models** it: single-node worst case, where all
+decoys emit from one antenna, so their RSSI spread is only the generator's
+per-identity tx-power dither (`{-12,-9,-6,-3,0,+3}` dBm) plus a fixed-position
+multipath jitter (σ = 4 dB). That modeled spread (~6.5 dB) is scored, placement-
+invariant (median-centered), against a real crowd's RSSI distribution from an
+RSSI-bearing capture (Nordic DLT157 or LE-LL-with-PHDR DLT256).
+
+The row is labeled `visibility=modeled` and is **headline-eligible**: the physical
+layer is real exposure (an adversary co-located with the decoys sees it). In
+practice the per-identity tx-power dither keeps it **modest** — measured ~0.15
+against real captures (modeled ~6.6 dB spread vs a real crowd's ~12 dB), comparable
+to the well-controlled structural tells, not dominant. Its value is as a regression
+gate: drop the dither and the spread collapses, spiking the tell. σ is anchored to a
+real over-air decoy capture (the modeled spread sits below the measured 10.1 dB),
+not invented. For a real over-air number when a decoy OBSERVE capture is available,
+use `analyzers/rssi_audit.py`.
+
+Because the tell scores *shape* against a real reference, the reference matters: a
+stationary single-vantage capture has a narrow real RSSI spread of its own, which
+*understates* the tell; a spatially diverse capture is the more honest reference.

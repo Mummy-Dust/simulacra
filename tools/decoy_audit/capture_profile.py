@@ -78,7 +78,10 @@ def parse_adverts(path):
             if len(rh)<16: break
             ts_s,ts_u,incl,_=struct.unpack("<IIII",rh); data=f.read(incl)
             if len(data)<incl: break
-            off=data.find(AA)
+            # DLT256 (LE LL w/ PHDR) carries a *reference* copy of the advertising AA at record
+            # offset 4; the real packet AA is at offset 10. Search past the PHDR so we lock onto
+            # the packet AA, not the reference. DLT157 (Nordic) has a single AA -> search from 0.
+            off = data.find(AA, 8) if linktype == 256 else data.find(AA)
             if off<0 or off+6>len(data): continue
             rssi=_rssi_from(linktype, data, off)
             pdu=data[off+4:]

@@ -12,6 +12,13 @@ def build_scorecard(synth, profile, devices_text=None):
     if devices_text is not None:
         pb=D.presence_bins_from_devices(devices_text)
         ds.append({"name":"presence_duration","separability":round(D.d_presence(pb,profile),4),"visibility":"logic"})
+    # Modeled physical (RSSI) tell: decoy RSSI is modeled from tx dither + jitter (the board can't
+    # hear its own frames), so it is labeled "modeled". Included in the ranking/headline because
+    # the physical layer is real exposure -- an adversary co-located with the decoys sees it.
+    if profile.get("rssi_bins"):
+        ds.append({"name":"rssi_physical",
+                   "separability":round(D.d_rssi(synth, profile),4),
+                   "visibility":"modeled"})
     ds=sorted(ds, key=lambda d:-d["separability"])
     headline=ds[0]["separability"] if ds else 0.0
     return {"discriminators":ds,"headline":headline,

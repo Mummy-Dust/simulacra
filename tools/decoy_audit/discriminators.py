@@ -3,7 +3,9 @@
 population from the real crowd, per feature. Each returns a score in [0,1]
 (0 = indistinguishable, 1 = trivially separable) via Jensen-Shannon divergence."""
 import math
+import random
 from collections import Counter
+import capture_profile as cp
 
 ITVL_LO=[0,50,100,200,500,1000,2000]; ITVL_HI=[50,100,200,500,1000,2000,3000]
 def _itvl_bin(ms):
@@ -53,6 +55,53 @@ def js_divergence(p, q):
         return s
     jsd=0.5*kl(p,m)+0.5*kl(q,m)
     return max(0.0, min(1.0, jsd))
+
+def _median_bin(median):
+    idx = int((median - cp.RSSI_LO) // cp.RSSI_W)
+    return max(0, min(cp.RSSI_NBINS - 1, idx))
+
+def rssi_separability(decoy, real):
+    """JS-divergence of two median-centered RSSI shapes, in [0,1]. Placement-invariant:
+    each distribution is aligned on its own median, so absolute level does not drive the score."""
+    db, dm = decoy[0], decoy[1]
+    rb, rm = real[0], real[1]
+    dc, rc = _median_bin(dm), _median_bin(rm)
+    dd = {i - dc: w for i, w in enumerate(db)}
+    rr = {i - rc: w for i, w in enumerate(rb)}
+    keys = sorted(set(dd) | set(rr))
+    return js_divergence([dd.get(k, 0.0) for k in keys], [rr.get(k, 0.0) for k in keys])
+
+# --- modeled physical (RSSI) tell -------------------------------------------------------------
+# Single-node worst case: all decoys emit from one antenna, so their RSSI spread comes only from
+# the generator's per-identity tx-power dither plus fixed-position multipath jitter -- no spatial
+# spread. sigma is anchored to the real over-air capture (modeled ~6.5 dB stdev < measured 10.1 dB).
+RSSI_SIGMA_DB  = 4.0     # fixed-position multipath jitter (dB), the one physical unknown
+RSSI_MODEL_SEED = 1337   # deterministic jitter so the tell is reproducible across runs
+RSSI_MODEL_BASE = -60    # co-location reference level; irrelevant to the score (median-centered)
+
+def modeled_decoy_rssi_hist(synth, seed=RSSI_MODEL_SEED, sigma=RSSI_SIGMA_DB, base=RSSI_MODEL_BASE):
+    """Model single-node decoy RSSI from each identity's tx dither + N(0,sigma) jitter.
+    Returns a capture_profile.rssi_hist-shaped dict, or None if no row carries a numeric tx."""
+    rng = random.Random(seed)
+    samples = []
+    for x in synth:
+        tx = x.get("tx")
+        if tx is None:
+            continue
+        samples.append(base + tx + rng.gauss(0.0, sigma))
+    return cp.rssi_hist(samples)   # None when samples is empty
+
+def d_rssi(synth, profile):
+    """Separability of the modeled decoy RSSI shape from the real crowd's, placement-invariant.
+    0.0 when the profile has no RSSI (older capture) or the decoys carry no tx (no evidence)."""
+    real_bins = profile.get("rssi_bins")
+    if not real_bins:
+        return 0.0
+    decoy = modeled_decoy_rssi_hist(synth)
+    if not decoy:
+        return 0.0
+    return rssi_separability((decoy["rssi_bins"], decoy["rssi_median"]),
+                             (real_bins, profile.get("rssi_median", 0.0)))
 
 def synth_distributions(synth):
     at=Counter(x["atype"] for x in synth)

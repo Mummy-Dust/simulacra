@@ -27,10 +27,15 @@ unique co-occurring pair.
 - **Does not beat (honest ceiling, this feature):** on a single board every persona
   shares one physical radio and one location, so all personas have an identical RF
   hardware fingerprint and identical RSSI/motion. A correlator with RF-fingerprinting
-  gear or fine RSSI still sees "many dual-radio devices at one point." Defeating the
-  **co-location** tell requires spreading a persona's two radios across two physically
-  separated mesh nodes — **mesh-distributed personas (v2)**, out of scope here. v1 is
-  same-board.
+  gear or fine RSSI still sees "many dual-radio devices at one point." Defeating this
+  **crowd-level co-location** tell requires *distributing whole personas across* two
+  physically separated mesh nodes (each persona keeps its two radios co-located, as a
+  real phone does; the crowd is what spreads across points) — **mesh-distributed
+  personas (v2)**, out of scope here. v1 is same-board.
+  *(Revised 2026-07-17: an earlier draft said "spread a persona's two radios across
+  nodes." That is wrong — it would make one device's BLE and Wi-Fi originate metres
+  apart, a tell no real phone produces. The tell is crowd-level, so the fix distributes
+  whole personas, not a persona's radios.)*
 - **Additive only:** cannot silence the user's real device. Strongest posture remains
   Simulacra + emission hygiene.
 
@@ -197,9 +202,13 @@ for the same window (rotating addresses within it, like a real phone), and disap
 
 ## Out of scope (future)
 
-- **Mesh-distributed personas (v2):** split a persona's two radios across two physically
-  separated mesh nodes so the pair no longer shares one RF fingerprint / one location.
-  This is the hardening that beats the co-location tell; it needs an ESP-NOW coordination
-  protocol and is its own spec.
+- **Mesh-distributed personas (v2):** distribute *whole* personas across two physically
+  separated mesh nodes — each node runs a share (`budget / K`) of the population, each
+  persona's two radios stay co-located on its node, but different personas originate from
+  different points — so the *crowd* no longer collapses to one RF fingerprint / one
+  location. This is the hardening that beats the crowd-level co-location tell; it needs a
+  lightweight fleet-size agreement over ESP-NOW and is its own spec. *(Revised 2026-07-17
+  — was "split a persona's two radios across nodes"; that manufactures a per-device
+  radios-metres-apart tell. See the honest-ceiling note above.)*
 - Activity/motion coupling (full behavioral coherence) — needs motion data a stationary
   board cannot source; deferred.

@@ -1,5 +1,4 @@
 import os, subprocess, unittest
-from collections import defaultdict
 
 HERE = os.path.dirname(__file__); TOOL = os.path.dirname(HERE)
 EXE  = os.path.join(TOOL, "synth_dump.exe" if os.name == "nt" else "synth_dump")
@@ -44,35 +43,23 @@ class Personas(unittest.TestCase):
             self.assertEqual(atype, "rpa", "persona BLE member is not RPA")
             self.assertNotEqual(comp, APPLE, "persona BLE member emitted Apple mfg data (Law-3)")
 
-    def test_samsung_google_families_are_vendor_matched(self):
-        ble, wifi = personas(4)
-        # arch 1=GALAXY expects company 0x0075; arch 2=PIXEL expects 0x00E0 (when present in roster)
-        arch_by_key = {(i, g): a for _t, i, _m, a, g in wifi}
-        seen_match = False
-        for _t, i, _addr, _atype, comp, g, _itvl in ble:
-            a = arch_by_key.get((i, g))
-            if a == 1 and comp == 0x0075: seen_match = True
-            if a == 2 and comp == 0x00E0: seen_match = True
-            # a matched Galaxy/Pixel persona must not carry the *other* vendor's id
-            if a == 1: self.assertNotEqual(comp, 0x00E0, "Galaxy persona carried Google id")
-        self.assertTrue(seen_match, "no vendor-matched Samsung/Google persona observed")
+    def test_persona_ble_is_realistic_phone_shape(self):
+        ble, _ = personas(4)
+        self.assertTrue(ble, "no persona BLE events")
+        # A persona presents a terse PHONE shape: no manufacturer data at all, so the on-air
+        # company id is always 0 (never earbuds vendor mfg, never Apple Continuity 0x004C).
+        for _t, _i, _addr, atype, comp, _g, _itvl in ble:
+            self.assertEqual(atype, "rpa", "persona BLE member is not RPA")
+            self.assertEqual(comp, 0, f"persona emitted manufacturer data (company {comp:#06x})")
+        # Widened phone interval band -> personas spread across intervals instead of clustering on
+        # the single 120-180 ms accessory band (the measured interval monoculture tell).
+        itvls = {itvl for _t, _i, _a, _at, _c, _g, itvl in ble}
+        self.assertGreater(len(itvls), 1, "persona intervals collapsed to one value (monoculture)")
 
     def test_all_addresses_unique_across_both_radios(self):
         ble, wifi = personas(5)
         addrs = [a for _t, _i, a, _at, _c, _g, _itvl in ble] + [m for _t, _i, m, _a, _g in wifi]
         self.assertEqual(len(addrs), len(set(addrs)), "an address collided across the fleet")
-
-    def test_same_vendor_personas_get_diverse_payloads(self):
-        ble, _ = personas(1)
-        itvls = defaultdict(set)
-        for _t, _i, _a, _at, comp, _g, itvl in ble:
-            itvls[comp].add(itvl)
-        # roster_pick_company picks a RANDOM same-vendor roster row (not always the first), and
-        # template payloads/intervals are randomized -> a busy vendor's personas must NOT all share
-        # one interval. With always-first cloning every vendor would collapse to a single interval.
-        self.assertTrue(any(len(v) > 1 for v in itvls.values()),
-                        f"no vendor shows payload diversity (byte-identical clones): "
-                        f"{ {k: len(v) for k, v in itvls.items()} }")
 
 
 if __name__ == "__main__":

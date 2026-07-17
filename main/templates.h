@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // A device "archetype" — a self-contained bundle binding vendor/format, interval band, and
 // (optional) name together, so generation can never produce an impossible combination.
@@ -39,3 +40,10 @@ int template_build(const device_template_t *t, uint8_t out_payload[31], uint8_t 
 // Build a generic-but-valid vendor manufacturer-data advertisement for an arbitrary company id
 // (for model-driven generation of vendors with no specific template). Returns 0 on success.
 int template_build_vendor_mfg(uint16_t company_id, uint8_t out_payload[31], uint8_t *out_len);
+
+// Build a phone-plausible BLE advertisement for a cross-protocol persona. Law-3 safe by
+// construction: emits only flags-only, or flags + a 16-bit service-UUID LIST (no manufacturer
+// data, no service-data), so it can never trigger a Continuity / Fast-Pair pairing pop-up.
+// company_id is implicitly 0. apple=true -> flags-only (the iPhone floor; no Continuity available);
+// apple=false -> a 16-bit service-UUID list part of the time, else flags-only. Returns 0 on success.
+int template_build_phone(bool apple, uint8_t out_payload[31], uint8_t *out_len, uint16_t *out_itvl_ms);

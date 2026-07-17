@@ -1,5 +1,6 @@
 #include "ble_devices.h"
 #include "roster.h"
+#include "templates.h"
 #include "esp_random.h"
 
 // Role split (user-chosen): ~70% transient / ~30% resident.
@@ -127,19 +128,22 @@ void ble_devices_tick(uint32_t now_ms)
     }
 }
 
-int ble_device_sync(int slot, int persona_idx, uint16_t company,
+int ble_device_sync(int slot, int persona_idx, bool apple,
                     uint32_t born_ms, uint32_t life_ms, uint32_t generation)
 {
     if (slot < 0 || slot >= s_n) return 0;
     ble_device_t *d = &s_dev[slot];
     if (d->persona_idx == persona_idx && d->persona_gen == generation && d->alive) return 0;
-    identity_t *src = roster_pick_company(company);
-    if (!src) src = roster_pick_company(0);              // fall back to an anonymous no-mfg shape
-    if (!src) src = roster_at(0);                        // last resort: any behaviour
-    d->id = *src;                                        // adopt the family's frozen behaviour
-    d->atype = BLE_ATYPE_RPA;                            // phones present on BLE as RPA
+    // A phone presents on BLE as a terse phone shape (flags-only / svc-uuid16), never accessory
+    // manufacturer data. Build it directly (no roster draw); company id stays 0.
+    d->id.company_id    = 0;
+    d->id.tx_power      = 0;
+    d->id.archetype_idx = 0;
+    if (template_build_phone(apple, d->id.payload, &d->id.payload_len, &d->id.adv_itvl_ms) != 0)
+        d->id.payload_len = 0;                          // serialization guard (self-test catches)
+    d->atype = BLE_ATYPE_RPA;                           // phones present on BLE as RPA
     make_random_addr(d->id.addr, top2_for(BLE_ATYPE_RPA));   // fresh unique RPA address
-    d->role   = BLE_ROLE_TRANSIENT;                      // lifetime is the phantom's, not a band
+    d->role   = BLE_ROLE_TRANSIENT;                     // lifetime is the phantom's, not a band
     d->born_ms = born_ms;
     d->life_ms = life_ms;
     d->alive = true;

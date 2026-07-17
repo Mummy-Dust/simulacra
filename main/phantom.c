@@ -85,6 +85,6 @@ void phantom_sync_ble(uint32_t now_ms)
     for (int i = 0; i < s_n; i++) {
         if (i >= slots) break;                  // no BLE slot for this persona (misconfig guard)
         const phantom_t *ph = &s_ph[i];
-        ble_device_sync(i, i, phantom_company(ph->family), ph->born_ms, ph->life_ms, ph->generation);
+        ble_device_sync(i, i, ph->family == PF_APPLE, ph->born_ms, ph->life_ms, ph->generation);
     }
 }

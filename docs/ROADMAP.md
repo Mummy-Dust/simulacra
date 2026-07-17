@@ -79,6 +79,11 @@ and **cross-modal correlation**.*
   timing randomization; ditch always-on wearables).
 - **Can't touch non-RF / legal anchors** — a license plate, cellular identity.
 - **One radio can't forge N hardware fingerprints** — which is exactly why the Coven matters.
+  *The detectability audit now measures this physical (RSSI) tell directly (**done 2026-07-17**):
+  modeled single-node decoy RSSI is only ~0.15 separable from a real crowd — the per-identity
+  TX-power dither mitigates it well — but the ceiling stands; only spatially separated nodes (M9)
+  truly beat it. This closes the audit's last discriminator axis (address / interval / vendor /
+  AD-structure / presence / RSSI all done).*
 - **Decoys, not jamming.** Jamming and cellular spoofing are illegal and a different (worse) project.
 - **Realistic claim, even maxed out:** *raises the cost of and degrades automated / mass RF
   correlation — especially as a heterogeneous multi-node mesh — not a guarantee against a targeted,

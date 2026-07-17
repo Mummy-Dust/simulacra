@@ -8,6 +8,7 @@
 static const device_template_t TEMPLATES[] = {
     // archetype      family            company svc    name           np  imin imax  w
     { "earbuds-sams", FMT_VENDOR_MFG,   0x0075, 0,     "Galaxy Buds", 60, 120, 180, 12 },
+    { "earbuds-goog", FMT_VENDOR_MFG,   0x00E0, 0,     "Pixel Buds",  60, 120, 180, 10 },
     { "earbuds-bose", FMT_VENDOR_MFG,   0x009E, 0,     "Bose QC",     60, 120, 180,  6 },
     { "earbuds-sony", FMT_VENDOR_MFG,   0x012D, 0,     NULL,          40, 120, 180,  4 },
     { "fitness-grmn", FMT_VENDOR_MFG,   0x0087, 0,     "vivosmart",   50, 900,1100, 14 },

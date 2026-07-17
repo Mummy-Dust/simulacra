@@ -75,16 +75,20 @@ int probe_desired_ble_floor(void)
     return floor > BLE_DEVICES_MAX ? BLE_DEVICES_MAX : floor;
 }
 
+// One persona per Wi-Fi agent. Exposed so simulacra_task can phantom_init() the registry BEFORE
+// coexist_task is spawned (task creation is a memory barrier), keeping every phantom_* access on
+// the single coexist tick thereafter -- no lock needed.
+int probe_phone_target(void) { return PROBE_PHONES; }
+
 void probe_pool_init(void)
 {
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     probe_agents_init(PROBE_PHONES, now);
-    phantom_init(PROBE_PHONES, now);        // one persona per Wi-Fi agent (bind from the Wi-Fi side)
-    phantom_sync_wifi(now);                 // agents adopt their persona family immediately
-    phantom_sync_ble(now);                  // slots [0,PROBE_PHONES) become the bound RPA twins
-    ESP_LOGW(TAG, "phantoms=%d agents=%d ble=%d (bound=%d unbound=%d)",
-             phantom_count(), probe_agents_count(), ble_devices_count(),
-             PROBE_PHONES, ble_devices_count() - PROBE_PHONES);
+    // Phantoms are created early (simulacra_task, before coexist_task spawns); the first coexist
+    // Wi-Fi turn binds these agents to them via phantom_sync_wifi, and churn_tick binds the BLE
+    // twins via phantom_sync_ble. Doing the sync here (a possibly-different task) would race.
+    ESP_LOGW(TAG, "probe agents: %d (phantom-bound; ble=%d)",
+             probe_agents_count(), ble_devices_count());
 }
 
 int probe_phone_count(void) { return probe_agents_count(); }

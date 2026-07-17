@@ -27,6 +27,8 @@ def main():
     ap.add_argument("synth"); ap.add_argument("profile")
     ap.add_argument("--devices", help="a `synth_dump --devices` dump -> adds the presence-duration tell")
     ap.add_argument("--json"); ap.add_argument("--gate", type=float, default=1.1)
+    ap.add_argument("--atype-detail", action="store_true",
+                    help="print decoy vs real static/rpa/public fractions under the scorecard")
     a=ap.parse_args()
     synth=_load_ndjson(a.synth); profile=json.load(open(a.profile))
     devices_text=open(a.devices, encoding="utf-8-sig").read() if a.devices else None
@@ -34,6 +36,11 @@ def main():
     print("%-24s %12s %s" % ("DISCRIMINATOR","SEPARABILITY","VISIBILITY"))
     for d in card["discriminators"]:
         print("%-24s %12.4f %s" % (d["name"], d["separability"], d["visibility"]))
+    if a.atype_detail:
+        dec = D.synth_distributions(synth)["atype"]                       # [static, rpa, public]
+        real = [profile["atype"].get(k, 0) for k in ("static", "rpa", "public")]
+        print("atype detail   decoy static/rpa/public = %.2f/%.2f/%.2f   real = %.2f/%.2f/%.2f"
+              % (dec[0], dec[1], dec[2], real[0], real[1], real[2]))
     print("-"*50)
     print("HEADLINE (max) %.4f  worst tell: %s" % (card["headline"], card["headline_tell"]))
     if a.json: json.dump(card, open(a.json,"w"), indent=2)

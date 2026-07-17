@@ -21,6 +21,8 @@ typedef struct {
     uint32_t    life_ms;        // bounded lifetime; on expiry the device dies and is reborn fresh
     uint32_t    next_rotate_ms; // next address rotation (ignored for STATIC)
     bool        alive;
+    int8_t   persona_idx;       // >=0: bound to phantom[persona_idx]; -1: unbound BLE-only crowd
+    uint32_t persona_gen;       // last phantom generation this bound member synced to
 } ble_device_t;
 
 // Spawn `n` persistent devices (clamped to BLE_DEVICES_MAX). Behaviour is drawn from the
@@ -35,3 +37,10 @@ const ble_device_t *ble_devices_at(int i);
 // Shade-form breakdown of the live population by address subtype: restless=RPA (rotating),
 // wandering=NRPA (rotating, no resolvable identity), bound=static (never rotates).
 void  ble_devices_form_counts(uint8_t *restless, uint8_t *wandering, uint8_t *bound);
+
+// Bind BLE slot `slot` to phantom `persona_idx` (see phantom.h): when the phantom's generation
+// advances, reincarnate the slot as an RPA device carrying `company`'s behaviour (0 = anonymous
+// Law-3-safe RPA), the phantom's shared born/life, and a fresh unique address. Returns 1 if
+// reincarnated. Bound slots do NOT expire via ble_devices_tick; the phantom owns their lifetime.
+int ble_device_sync(int slot, int persona_idx, uint16_t company,
+                    uint32_t born_ms, uint32_t life_ms, uint32_t generation);

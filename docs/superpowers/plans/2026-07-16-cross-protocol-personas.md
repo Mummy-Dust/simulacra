@@ -75,22 +75,24 @@ HERE = os.path.dirname(__file__); TOOL = os.path.dirname(HERE)
 EXE  = os.path.join(TOOL, "probe_dump.exe" if os.name == "nt" else "probe_dump")
 
 
-def gen(seed, n):
-    out = subprocess.check_output([EXE, "--uniq", str(seed), str(n)], text=True)
+def gen(seed, n, mode="--uniq"):
+    out = subprocess.check_output([EXE, mode, str(seed), str(n)], text=True)
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
 @unittest.skipUnless(os.path.exists(EXE), "probe_dump not built")
 class Uniq(unittest.TestCase):
     def test_no_duplicates_within_history(self):
-        addrs = gen(1, 1500)                 # < UNIQ_HISTORY (2048): must be all-distinct
+        # --uniq makes ONE distinct pass of n addresses (n < UNIQ_HISTORY 2048): all-distinct
+        addrs = gen(1, 1500)
         self.assertEqual(len(addrs), 1500)
         self.assertEqual(len(set(addrs)), 1500, "uniq_try issued a duplicate within history")
 
     def test_reset_allows_reissue(self):
-        # the dump resets between the two halves and re-seeds identically -> the same
+        # --uniqreset resets + re-seeds identically between the two halves -> the same
         # sequence reappears, proving uniq_reset clears history.
-        a = gen(2, 200)
+        a = gen(2, 200, "--uniqreset")
+        self.assertEqual(len(a), 200)
         self.assertEqual(a[:100], a[100:], "uniq_reset did not clear history")
 
 
@@ -106,6 +108,19 @@ In `tools/probe_audit/probe_dump.c`, add `#include "uniq_id.h"` near the top inc
     if (argc > 1 && strcmp(argv[1], "--uniq") == 0) {
         unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;
+        srand(seed);
+        uniq_reset();
+        for (int i = 0; i < n; i++) {           // one distinct pass of n addresses
+            uint8_t a[6];
+            do { for (int b = 0; b < 6; b++) a[b] = (uint8_t)(rand() & 0xff); } while (!uniq_try(a));
+            for (int b = 0; b < 6; b++) printf("%02x", a[b]);
+            printf("\n");
+        }
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--uniqreset") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 200;
         // Two identical halves around a reset, so the test can prove reset clears history.
         for (int half = 0; half < 2; half++) {
             srand(seed);
@@ -199,16 +214,73 @@ git commit -m "feat(personas): guaranteed-unique identity allocator (uniq_id)"
 - Modify: `main/roster.c:15-24` (`make_random_addr`)
 - Modify: `main/probe_frame.c:94-103` (`probe_random_mac`)
 - Modify: `tools/decoy_audit/run.ps1` (add `..\..\main\uniq_id.c` to the `cl` line) and `tools/decoy_audit/Makefile` (parity)
-- Test: `tools/decoy_audit/tests/test_uniqueness_e2e.py` (new)
-- Test (reuse): `tools/probe_audit/tests/test_probe_agents.py` (still passes — MACs now unique too)
+- Modify: `tools/probe_audit/probe_dump.c` and `tools/decoy_audit/synth_dump.c` (add a `--routecheck` mode each)
+- Test: `tools/probe_audit/tests/test_route_uniq.py` and `tools/decoy_audit/tests/test_route_uniq.py` (new)
 
 **Interfaces:**
 - Consumes: `uniq_try` from Task 1.
-- Produces: no new symbols; `make_random_addr` and `probe_random_mac` now never return a value colliding with recent history.
+- Produces: no new symbols; `make_random_addr` and `probe_random_mac` now record every value they return via `uniq_try`, so they never return a value colliding with recent history.
 
-- [ ] **Step 1: Write the failing end-to-end uniqueness test**
+**Why not an "all distinct" test:** 46-bit random addresses never collide by chance, so an
+"all addresses distinct over a long run" assertion passes whether or not the routing is wired —
+it cannot detect the wiring, and shrinking the ring cannot *manufacture* a collision (the ring
+prevents collisions, it does not create them). Instead we test the routing **directly**: after the
+generator produces an address, that address must already be in the ring (`uniq_try` returns
+`false`), which is true only if the generator recorded it. RED = generator not routed →
+`uniq_try` returns `true`; GREEN = routed → `false`.
 
-Create `tools/decoy_audit/tests/test_uniqueness_e2e.py`:
+- [ ] **Step 1: Add a `--routecheck` mode to each dumper**
+
+In `tools/probe_audit/probe_dump.c`, add `#include "uniq_id.h"` and this block in `main`:
+
+```c
+    if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
+        // Prove probe_random_mac records through uniq_id: after generating, the MAC must already
+        // be in the ring. Prints 0 if routed (recorded), 1 if NOT routed.
+        srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
+        uniq_reset();
+        uint8_t m[6];
+        probe_random_mac(m);
+        printf("%d\n", uniq_try(m) ? 1 : 0);
+        return 0;
+    }
+```
+
+In `tools/decoy_audit/synth_dump.c`, add `#include "uniq_id.h"` and this block at the start of `main`:
+
+```c
+    if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
+        // Prove make_random_addr records through uniq_id. Prints 0 if routed, 1 if NOT.
+        srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
+        uniq_reset();
+        uint8_t a[6];
+        make_random_addr(a, 0xc0);
+        printf("%d\n", uniq_try(a) ? 1 : 0);
+        return 0;
+    }
+```
+
+Create `tools/probe_audit/tests/test_route_uniq.py`:
+
+```python
+import os, subprocess, unittest
+
+HERE = os.path.dirname(__file__); TOOL = os.path.dirname(HERE)
+EXE  = os.path.join(TOOL, "probe_dump.exe" if os.name == "nt" else "probe_dump")
+
+
+@unittest.skipUnless(os.path.exists(EXE), "probe_dump not built")
+class Route(unittest.TestCase):
+    def test_probe_random_mac_records_via_uniq(self):
+        out = subprocess.check_output([EXE, "--routecheck", "1"], text=True).strip()
+        self.assertEqual(out, "0", "probe_random_mac did not record via uniq_try (routing missing)")
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+Create `tools/decoy_audit/tests/test_route_uniq.py`:
 
 ```python
 import os, subprocess, unittest
@@ -217,23 +289,11 @@ HERE = os.path.dirname(__file__); TOOL = os.path.dirname(HERE)
 EXE  = os.path.join(TOOL, "synth_dump.exe" if os.name == "nt" else "synth_dump")
 
 
-def dev_addrs(seed, ndev=16, ticks=1500, tick_ms=1000):
-    out = subprocess.check_output([EXE, "--devices", str(seed), str(ndev), str(ticks), str(tick_ms)], text=True)
-    addrs = []
-    for ln in out.splitlines():
-        p = ln.split()
-        if len(p) >= 4 and p[0] == "D":
-            addrs.append(p[3])          # the hex address column
-    return addrs
-
-
 @unittest.skipUnless(os.path.exists(EXE), "synth_dump not built")
-class Uniqueness(unittest.TestCase):
-    def test_ble_births_and_rotations_never_repeat(self):
-        addrs = dev_addrs(5)
-        self.assertGreater(len(addrs), 50, "no BLE address events produced")
-        self.assertEqual(len(addrs), len(set(addrs)),
-                         "a BLE birth/rotation reissued an address within history")
+class Route(unittest.TestCase):
+    def test_make_random_addr_records_via_uniq(self):
+        out = subprocess.check_output([EXE, "--routecheck", "1"], text=True).strip()
+        self.assertEqual(out, "0", "make_random_addr did not record via uniq_try (routing missing)")
 
 
 if __name__ == "__main__":
@@ -290,32 +350,36 @@ In `tools/decoy_audit/run.ps1`, append `..\..\main\uniq_id.c` to the `cl` source
 
 Also append `$(ROOT)/main/uniq_id.c` to `tools/decoy_audit/Makefile` `SRC` for parity.
 
-- [ ] **Step 5: Build with a shrunk history to verify the test FAILS**
+- [ ] **Step 5: Prove RED — build with routing disabled**
 
-The routing is in place, so a normal build would PASS; force an 8-entry ring so reuse is guaranteed and the test proves it catches reuse. From a Developer PowerShell for VS:
-
-```powershell
-cd tools/decoy_audit
-cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /DUNIQ_HISTORY=8 /FIportab.h /Ihost_stubs /I..\..\main /I..\..\components\simulacra_radar synth_dump.c ble_hs_adv.c roster_stub.c ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c ..\..\main\learn.c ..\..\components\simulacra_radar\law3.c ..\..\components\simulacra_radar\learn_wire.c ..\..\main\uniq_id.c /Fe:synth_dump.exe
-"C:/Program Files/Python312/python.exe" -m pytest tests/test_uniqueness_e2e.py -v
-```
-Expected: the test **FAILS** (an 8-entry ring reissues addresses), confirming it detects reuse.
-
-- [ ] **Step 6: Rebuild normally and run the tests to verify they PASS**
+The routecheck detects the wiring directly. To capture RED, temporarily disable the routing: in `main/roster.c` change `make_random_addr`'s `if (uniq_try(out)) return;` back to a plain `return;` (drop the `uniq_try` guard for one build), and likewise in `main/probe_frame.c` change `probe_random_mac`'s `if (uniq_try(out)) return;` to `return;`. Build both harnesses and run the routechecks:
 
 ```powershell
 cd tools/decoy_audit
 cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h /Ihost_stubs /I..\..\main /I..\..\components\simulacra_radar synth_dump.c ble_hs_adv.c roster_stub.c ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c ..\..\main\learn.c ..\..\components\simulacra_radar\law3.c ..\..\components\simulacra_radar\learn_wire.c ..\..\main\uniq_id.c /Fe:synth_dump.exe
-"C:/Program Files/Python312/python.exe" -m pytest tests/test_uniqueness_e2e.py -v
-cd ../probe_audit ; .\run.ps1 -Rebuild
-"C:/Program Files/Python312/python.exe" -m pytest tests/test_probe_agents.py tests/test_uniq_id.py -v
+"C:/Program Files/Python312/python.exe" -m pytest tests/test_route_uniq.py -v
+cd ..\probe_audit ; .\run.ps1 -Rebuild
+"C:/Program Files/Python312/python.exe" -m pytest tests/test_route_uniq.py -v
 ```
-Expected: all PASS (probe agents still monotonic/independent; MACs now also globally unique — the default 2048-entry ring never reissues within the run).
+Expected: both routecheck tests **FAIL** (`--routecheck` prints `1` — the generator returned an address the ring had NOT recorded). This proves the test detects missing routing.
+
+- [ ] **Step 6: Restore routing and prove GREEN**
+
+Restore the `if (uniq_try(out)) return;` guard in both `make_random_addr` and `probe_random_mac` (Steps 2-3), rebuild both harnesses, and run the routechecks plus the existing suites:
+
+```powershell
+cd tools/decoy_audit
+cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h /Ihost_stubs /I..\..\main /I..\..\components\simulacra_radar synth_dump.c ble_hs_adv.c roster_stub.c ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c ..\..\main\learn.c ..\..\components\simulacra_radar\law3.c ..\..\components\simulacra_radar\learn_wire.c ..\..\main\uniq_id.c /Fe:synth_dump.exe
+"C:/Program Files/Python312/python.exe" -m pytest tests/test_route_uniq.py -v
+cd ..\probe_audit ; .\run.ps1 -Rebuild
+"C:/Program Files/Python312/python.exe" -m pytest tests -v
+```
+Expected: both routechecks print `0` and PASS; the full probe_audit suite (test_uniq_id, test_probe_agents, test_route_uniq) stays green (MACs now also drawn through the shared allocator).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add main/roster.c main/probe_frame.c tools/decoy_audit/run.ps1 tools/decoy_audit/Makefile tools/decoy_audit/tests/test_uniqueness_e2e.py
+git add main/roster.c main/probe_frame.c tools/decoy_audit/run.ps1 tools/decoy_audit/Makefile tools/decoy_audit/synth_dump.c tools/probe_audit/probe_dump.c tools/probe_audit/tests/test_route_uniq.py tools/decoy_audit/tests/test_route_uniq.py
 git commit -m "feat(personas): draw every BLE/Wi-Fi address through the unique allocator"
 ```
 
@@ -399,8 +463,8 @@ def phantoms(seed, n=12, ticks=4000, tick_ms=1000):
     rows = []
     for ln in out.splitlines():
         p = ln.split()
-        if len(p) == 6 and p[0] == "P":
-            # P <t> <idx> <family> <arch> <company> <generation>
+        if len(p) == 7 and p[0] == "P":
+            # P <t> <idx> <family> <arch> <company> <generation> (generation ignored here)
             rows.append((int(p[1]), int(p[2]), int(p[3]), int(p[4]), int(p[5], 16)))
     return rows
 
@@ -416,7 +480,7 @@ class Phantom(unittest.TestCase):
             self.assertEqual(comp, exp_comp, f"family {FAM[fam]} wrong company")
 
     def test_all_families_appear_over_time(self):
-        fams = Counter(fam for *_ , in [(r[2],) for r in phantoms(3)])
+        fams = Counter(r[2] for r in phantoms(3))   # r[2] = family
         # over thousands of reincarnations the weighted draw should hit every family
         self.assertEqual(set(fams), {0, 1, 2, 3}, f"some family never drawn: {dict(fams)}")
 

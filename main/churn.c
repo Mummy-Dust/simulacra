@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include "churn.h"
 #include "ble_devices.h"
+#include "phantom.h"
 
 // Presenter state: which device index occupies each hardware instance, and the address last
 // applied there (so a rotation — same device, new address — triggers a single re-apply).
@@ -25,7 +26,9 @@ void churn_init(uint32_t now_ms)
 void churn_tick(uint32_t now_ms)
 {
     if (s_paused) return;                          // hold the current on-air set
-    ble_devices_tick(now_ms);                      // advance death/rebirth + rotation
+    phantom_lifecycle(now_ms);      // advance persona births/deaths (single source of truth)
+    phantom_sync_ble(now_ms);       // bound BLE slots co-appear/co-leave with their persona
+    ble_devices_tick(now_ms);       // advance the unbound crowd (bound slots are skipped)
     if (now_ms - s_last_slice_ms < CHURN_SLICE_MS) return;
     s_last_slice_ms = now_ms; s_phase++;
 

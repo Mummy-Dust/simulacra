@@ -59,7 +59,10 @@ and **cross-modal correlation**.*
   biggest hardening — one radio can't forge N fingerprints; many radios can.
 - **M10 — Cross-protocol personas.** Bind a BLE identity + a Wi-Fi identity (later sub-GHz) into
   one synthetic "device" that emits consistently across protocols and appears/leaves together —
-  defeating correlators that filter BLE-only ghosts.
+  defeating correlators that filter BLE-only ghosts. **Same-board v1 done 2026-07-16
+  (`feat/cross-protocol-personas`, firmware compile-verified esp32c5+esp32c6); mesh-distributed
+  personas — splitting a persona's two radios across physically separated nodes to beat the
+  co-location tell — remain future.**
 - **M11 — Targeted mimicry (mimic ring).** Detect your own device(s) and generate decoys that
   clone their vendor/type, so your real device is one of many identical signatures instead of a
   unique one co-occurring with you.

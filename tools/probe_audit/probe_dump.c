@@ -3,6 +3,8 @@
 #include <string.h>
 #include "probe_frame.h"
 #include "probe_agents.h"
+#include "uniq_id.h"
+#include "phantom.h"
 
 /*
  * Host dumper for the probe-request archetype builder.
@@ -14,6 +16,43 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
+        srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
+        uniq_reset();
+        uint8_t m[6];
+        probe_random_mac(m);
+        printf("%d\n", uniq_try(m) ? 1 : 0);   // 0 = routed (recorded), 1 = not routed
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--uniq") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 1000;
+        srand(seed);
+        uniq_reset();
+        for (int i = 0; i < n; i++) {           // one distinct pass of n addresses
+            uint8_t a[6];
+            do { for (int b = 0; b < 6; b++) a[b] = (uint8_t)(rand() & 0xff); } while (!uniq_try(a));
+            for (int b = 0; b < 6; b++) printf("%02x", a[b]);
+            printf("\n");
+        }
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--uniqreset") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 200;
+        for (int half = 0; half < 2; half++) {
+            srand(seed);
+            uniq_reset();
+            for (int i = 0; i < n / 2; i++) {
+                uint8_t a[6];
+                do { for (int b = 0; b < 6; b++) a[b] = (uint8_t)(rand() & 0xff); } while (!uniq_try(a));
+                for (int b = 0; b < 6; b++) printf("%02x", a[b]);
+                printf("\n");
+            }
+        }
+        return 0;
+    }
+
     if (argc > 1 && strcmp(argv[1], "--agents") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      nag    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 8;
@@ -32,6 +71,61 @@ int main(int argc, char **argv)
                 printf("E %u ", (unsigned)t);
                 for (int b = 0; b < 6; b++) printf("%02x", due[i]->mac[b]);
                 printf(" %u\n", (unsigned)sq);
+            }
+        }
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--phantoms") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n      = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 12;
+        int      ticks  = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 4000;
+        unsigned tickms = argc > 5 ? (unsigned)strtoul(argv[5], 0, 10) : 1000;
+        srand(seed);
+        uint32_t t = 0;
+        phantom_init(n, t);
+        static uint32_t gen_seen[PHANTOM_MAX];
+        for (int i = 0; i < n && i < PHANTOM_MAX; i++) gen_seen[i] = 0;
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            phantom_lifecycle(t);
+            for (int i = 0; i < phantom_count(); i++) {
+                const phantom_t *ph = phantom_at(i);
+                if (ph->generation != gen_seen[i]) {         // emit on each new life
+                    gen_seen[i] = ph->generation;
+                    printf("P %u %d %d %d %04x %u\n", (unsigned)t, i, (int)ph->family,
+                           (int)phantom_arch(ph->family), (unsigned)phantom_company(ph->family),
+                           (unsigned)ph->generation);
+                }
+            }
+        }
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--wbind") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n      = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 12;
+        int      ticks  = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 4000;
+        unsigned tickms = argc > 5 ? (unsigned)strtoul(argv[5], 0, 10) : 1000;
+        srand(seed);
+        uint32_t t = 0;
+        phantom_init(n, t);
+        probe_agents_init(n, t);
+        phantom_sync_wifi(t);
+        static uint32_t gen_seen[PROBE_AGENTS_MAX];
+        for (int i = 0; i < n && i < PROBE_AGENTS_MAX; i++) gen_seen[i] = 0;
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            phantom_lifecycle(t);
+            phantom_sync_wifi(t);
+            for (int i = 0; i < probe_agents_count(); i++) {
+                const probe_agent_t *a = probe_agents_at(i);
+                if (a->persona_gen != gen_seen[i]) {
+                    gen_seen[i] = a->persona_gen;
+                    printf("W %u %d ", (unsigned)t, i);
+                    for (int b = 0; b < 6; b++) printf("%02x", a->mac[b]);
+                    printf(" %d %u\n", (int)a->arch, (unsigned)a->persona_gen);
+                }
             }
         }
         return 0;

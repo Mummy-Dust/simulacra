@@ -20,7 +20,7 @@ if ($Rebuild -or -not (Test-Path $exe)) {
     try {
         cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h `
            /Ihost_stubs /I..\..\main `
-           probe_dump.c ..\..\main\probe_frame.c ..\..\main\probe_agents.c /Fe:probe_dump.exe | Out-Null
+           probe_dump.c ..\..\main\probe_frame.c ..\..\main\probe_agents.c ..\..\main\uniq_id.c ..\..\main\phantom.c host_stubs\ble_devices_stub.c /Fe:probe_dump.exe | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 3 }
     } finally { Pop-Location }
 }

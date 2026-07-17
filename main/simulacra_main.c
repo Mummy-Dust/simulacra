@@ -51,6 +51,7 @@
 #include "rf_model.h"
 #include "generate.h"
 #include "probe.h"
+#include "phantom.h"
 #include "sniff.h"
 #include "espnow_sniff.h"
 #include "coexist.h"
@@ -148,7 +149,13 @@ static void simulacra_task(void *arg)
                      (unsigned)(m.pop_ewma + 0.5f), (unsigned)at);
         }
     }
+    if (ndev < probe_desired_ble_floor()) ndev = probe_desired_ble_floor();   // room for personas
     ble_devices_init(ndev, (uint32_t)(esp_timer_get_time() / 1000));  // population size; clamped to max
+    // Create the persona registry HERE, on simulacra_task, BEFORE coexist_start spawns coexist_task
+    // (task creation is a memory barrier). All phantom_lifecycle/sync_* thereafter run only on the
+    // coexist tick, so the phantom state has a single writer -> no lock needed. Binding is deferred
+    // to the first coexist tick (phantom_sync_wifi/ble), after probe_agents_init / ble_devices_init.
+    phantom_init(probe_phone_target(), (uint32_t)(esp_timer_get_time() / 1000));
     churn_set_apply(churn_adv_apply);
     churn_init((uint32_t)(esp_timer_get_time() / 1000));
     sim_settings_init();   // restore persisted churn tunables (or firmware defaults)

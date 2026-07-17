@@ -8,6 +8,9 @@
 #include "roster.h"
 #include "learn.h"
 #include "learn_record.h"
+#include "uniq_id.h"
+#include "phantom.h"
+#include "probe_agents.h"
 
 static const char *atype_of(const uint8_t addr[6]) {
     switch (addr[5] >> 6) { case 3: return "static"; case 1: return "rpa";
@@ -103,6 +106,62 @@ static int load_learn_seed(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--personas") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      nph    = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 12;
+        int      ndev   = argc > 4 ? (int)strtoul(argv[4], 0, 10) : 24;
+        int      ticks  = argc > 5 ? (int)strtoul(argv[5], 0, 10) : 4000;
+        unsigned tickms = argc > 6 ? (unsigned)strtoul(argv[6], 0, 10) : 1000;
+        srand(seed);
+        roster_init();
+        uint32_t t = 0;
+        phantom_init(nph, t);
+        ble_devices_init(ndev, t);        // slots [0,nph) become bound once synced
+        probe_agents_init(nph, t);
+        phantom_sync_wifi(t);
+        phantom_sync_ble(t);
+        static uint32_t bgen[PHANTOM_MAX], wgen[PHANTOM_MAX];
+        for (int i = 0; i < nph && i < PHANTOM_MAX; i++) { bgen[i] = 0; wgen[i] = 0; }
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            phantom_lifecycle(t);
+            phantom_sync_wifi(t);
+            phantom_sync_ble(t);
+            ble_devices_tick(t);
+            for (int i = 0; i < probe_agents_count(); i++) {
+                const probe_agent_t *a = probe_agents_at(i);
+                if (a->persona_gen != wgen[i]) {
+                    wgen[i] = a->persona_gen;
+                    printf("W %u %d ", (unsigned)t, i);
+                    for (int b = 0; b < 6; b++) printf("%02x", a->mac[b]);
+                    printf(" %d %u\n", (int)a->arch, (unsigned)a->persona_gen);
+                }
+            }
+            for (int i = 0; i < ble_devices_count(); i++) {
+                const ble_device_t *d = ble_devices_at(i);
+                if (d->persona_idx < 0) continue;               // unbound crowd: not a persona
+                int pi = d->persona_idx;
+                if (d->persona_gen != bgen[pi]) {
+                    bgen[pi] = d->persona_gen;
+                    const char *at = d->atype == BLE_ATYPE_STATIC ? "static"
+                                   : d->atype == BLE_ATYPE_RPA    ? "rpa" : "nrpa";
+                    printf("B %u %d ", (unsigned)t, pi);
+                    for (int b = 0; b < 6; b++) printf("%02x", d->id.addr[b]);
+                    printf(" %s %04x %u %u\n", at, (unsigned)d->id.company_id,
+                           (unsigned)d->persona_gen, (unsigned)d->id.adv_itvl_ms);
+                }
+            }
+        }
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
+        srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
+        uniq_reset();
+        uint8_t a[6];
+        make_random_addr(a, 0xc0);
+        printf("%d\n", uniq_try(a) ? 1 : 0);   // 0 = routed (recorded), 1 = not routed
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--devices") == 0) {
         unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      ndev   = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 16;

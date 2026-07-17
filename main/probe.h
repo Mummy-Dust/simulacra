@@ -26,3 +26,7 @@ bool   probe_tx_healthy(void);
 // Channel hop sets for the scheduler: fills *out, returns count. 5g returns 0 on 2.4-only personas.
 size_t probe_channels_24(const uint8_t **out);
 size_t probe_channels_5g(const uint8_t **out);
+// Minimum BLE population so every persona gets a co-present twin (PROBE_PHONES bound +
+// PHANTOM_BLE_UNBOUND unbound), clamped to BLE_DEVICES_MAX.
+int probe_desired_ble_floor(void);   // min BLE population so every persona gets a co-present twin
+int probe_phone_target(void);        // persona/agent count (PROBE_PHONES); for early phantom_init

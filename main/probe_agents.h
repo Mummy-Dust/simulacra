@@ -20,6 +20,7 @@ typedef struct {
     uint32_t     born_ms;
     uint32_t     life_ms;       // bounded lifetime; on expiry the agent dies + reincarnates
     bool         alive;
+    uint32_t     persona_gen;   // generation of the phantom this agent is bound to (0 = unbound)
 } probe_agent_t;
 
 void     probe_agents_init(int n, uint32_t now_ms);          // (re)seed n agents (<= PROBE_AGENTS_MAX)
@@ -28,3 +29,9 @@ int      probe_agents_due(uint32_t now_ms, probe_agent_t **out, int max);  // du
 uint16_t probe_agent_next_seq(probe_agent_t *a);             // return current seq, then +1 (12-bit wrap)
 int      probe_agents_count(void);
 const probe_agent_t *probe_agents_at(int i);
+
+// Bind agent i to a persona (see phantom.h): if the agent's recorded generation differs from
+// `generation`, reincarnate it with a fresh unique MAC, the given archetype, and the persona's
+// shared born/life. Returns 1 if reincarnated this call, else 0. Bound agents do NOT expire via
+// probe_agents_lifecycle; the persona owns their lifetime.
+int probe_agent_sync(int i, probe_arch_t arch, uint32_t born_ms, uint32_t life_ms, uint32_t generation);

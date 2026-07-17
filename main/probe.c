@@ -1,6 +1,8 @@
 // Live radio path. The pure frame builder + archetype tables live in probe_frame.c
 // (host-testable); this file owns Wi-Fi bring-up, the fake-phone pool, and injection.
 #include "probe.h"
+#include "phantom.h"
+#include "ble_devices.h"
 #include "esp_random.h"
 
 #include "esp_log.h"
@@ -37,6 +39,10 @@ static const char *TAG = "probe";
 #define PROBE_FORCE_SHARED 0  // 1: en_sys_seq=true (shared HW counter) — regression simulation only
 #endif
 
+// Personas need one BLE slot each PLUS this many unbound BLE-only decoys so the static/NRPA/
+// persistent mix survives (the address-type + presence tells we already closed).
+#define PHANTOM_BLE_UNBOUND 8
+
 static const uint8_t CH_24[] = { 1, 6, 11 };
 #if PROBE_USE_5G
 static const uint8_t CH_5[]  = { 36, 40, 44, 48, 149, 153, 157, 161 };
@@ -63,12 +69,26 @@ int probe_wifi_init(void)
     return 0;
 }
 
+int probe_desired_ble_floor(void)
+{
+    int floor = PROBE_PHONES + PHANTOM_BLE_UNBOUND;   // C5: 24, C6: 16
+    return floor > BLE_DEVICES_MAX ? BLE_DEVICES_MAX : floor;
+}
+
+// One persona per Wi-Fi agent. Exposed so simulacra_task can phantom_init() the registry BEFORE
+// coexist_task is spawned (task creation is a memory barrier), keeping every phantom_* access on
+// the single coexist tick thereafter -- no lock needed.
+int probe_phone_target(void) { return PROBE_PHONES; }
+
 void probe_pool_init(void)
 {
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
     probe_agents_init(PROBE_PHONES, now);
-    ESP_LOGW(TAG, "probe agents: %d (independent seq, jittered scan, lifecycle churn)",
-             probe_agents_count());
+    // Phantoms are created early (simulacra_task, before coexist_task spawns); the first coexist
+    // Wi-Fi turn binds these agents to them via phantom_sync_wifi, and churn_tick binds the BLE
+    // twins via phantom_sync_ble. Doing the sync here (a possibly-different task) would race.
+    ESP_LOGW(TAG, "probe agents: %d (phantom-bound; ble=%d)",
+             probe_agents_count(), ble_devices_count());
 }
 
 int probe_phone_count(void) { return probe_agents_count(); }
@@ -87,7 +107,6 @@ int probe_inject_burst(uint8_t channel)
 {
     bool band5 = (channel >= 36);
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-    probe_agents_lifecycle(now);                                // birth/death turnover
     int crc = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
 
     probe_agent_t *due[PROBE_MAX_PHONES];
@@ -135,6 +154,7 @@ static void probe_task(void *arg)
 {
     (void)arg;
     for (;;) {
+        probe_agents_lifecycle((uint32_t)(esp_timer_get_time() / 1000));  // standalone turnover
 #if PROBE_FIX_CH
         probe_inject_burst(PROBE_FIX_CH);   // gate mode: single channel so the sniffer hears every frame
 #else

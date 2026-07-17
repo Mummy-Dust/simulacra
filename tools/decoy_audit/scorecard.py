@@ -24,6 +24,12 @@ def build_scorecard(synth, profile, devices_text=None):
     return {"discriminators":ds,"headline":headline,
             "headline_tell":ds[0]["name"] if ds else None}
 
+def rssi_fleet_curve(synth, profile, kmax):
+    """Modeled RSSI separability vs fleet size: [(k, sep), ...] for k in 1..kmax.
+    Quantifies the mesh win -- k=1 is the single-node number; larger k spreads the crowd
+    across k anchored points. Honest ceiling: k points, not one-per-device."""
+    return [(k, round(D.d_rssi_k(synth, profile, k), 4)) for k in range(1, max(1, kmax) + 1)]
+
 def _load_ndjson(path):
     # utf-8-sig tolerates a BOM (e.g. if the file was written by a shell that adds one)
     with open(path, encoding="utf-8-sig") as f:
@@ -36,8 +42,15 @@ def main():
     ap.add_argument("--json"); ap.add_argument("--gate", type=float, default=1.1)
     ap.add_argument("--atype-detail", action="store_true",
                     help="print decoy vs real static/rpa/public fractions under the scorecard")
+    ap.add_argument("--fleet-curve", type=int, default=0, metavar="KMAX",
+                    help="print modeled RSSI separability for fleet sizes 1..KMAX and exit")
     a=ap.parse_args()
     synth=_load_ndjson(a.synth); profile=json.load(open(a.profile))
+    if a.fleet_curve:
+        print("fleet-size  rssi_separability   (honest ceiling: K points, not one-per-device)")
+        for k, sep in rssi_fleet_curve(synth, profile, a.fleet_curve):
+            print("  K=%-3d     %.4f" % (k, sep))
+        return
     devices_text=open(a.devices, encoding="utf-8-sig").read() if a.devices else None
     card=build_scorecard(synth, profile, devices_text)
     print("%-24s %12s %s" % ("DISCRIMINATOR","SEPARABILITY","VISIBILITY"))

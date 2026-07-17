@@ -50,5 +50,29 @@ class Rssi(unittest.TestCase):
         self.assertEqual(card["headline"], max(d["separability"] for d in card["discriminators"]))
 
 
+class FleetCurve(unittest.TestCase):
+    def setUp(self):
+        import capture_profile as cp
+        self.synth=[{"atype":"static","itvl_ms":150,"company":0x75,"tx":t}
+                    for t in ([-12,-9,-6,-3,0,3]*40)]
+        broad=cp.rssi_hist(list(range(-95,-35)))
+        self.profile={"atype":{"static":1.0,"rpa":0.0,"public":0.0},
+                      "itvl_bins":[0,0,1.0,0,0,0,0],"vendor":{str(0x75):1.0},
+                      "rssi_bins":broad["rssi_bins"],"rssi_median":broad["rssi_median"]}
+
+    def test_curve_length_and_k1(self):
+        import discriminators as D
+        curve=SC.rssi_fleet_curve(self.synth, self.profile, 5)
+        self.assertEqual([k for k,_ in curve], [1,2,3,4,5])
+        self.assertEqual(curve[0][1], round(D.d_rssi(self.synth, self.profile), 4))
+
+    def test_curve_trends_down(self):
+        # single node is the worst; the crowd clearly improves as nodes are added (not strictly
+        # monotone -- tx-dither comb vs 5 dB scoring bins resonates -- so assert the trend).
+        seps=[s for _,s in SC.rssi_fleet_curve(self.synth, self.profile, 6)]
+        self.assertEqual(seps[0], max(seps))
+        self.assertLess(sum(seps[3:])/3, sum(seps[:3])/3)
+
+
 if __name__=="__main__":
     unittest.main()

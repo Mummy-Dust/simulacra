@@ -273,8 +273,10 @@ void coexist_set_wifi_enabled(bool en)
 {
     if (en && !s_wifi_ok) {                       // bring Wi-Fi (STA) up now that the AP is down
         int rc = probe_wifi_init();
-        s_wifi_ok = (rc == 0);
-        if (s_wifi_ok) probe_pool_init();
+        if (rc == 0) {
+            probe_pool_init();       // init agents BEFORE publishing wifi-ready to coexist_task,
+            s_wifi_ok = true;        // so the tick can't fire phantom_sync_wifi mid-agents-init
+        }
         ESP_LOGW(TAG, "coexist: wifi enabled post-config rc=%d", rc);
     }
     s_wifi_allowed = en;
@@ -284,9 +286,10 @@ void coexist_start(void)
 {
     if (s_wifi_allowed) {
         int rc = probe_wifi_init();
-        s_wifi_ok = (rc == 0);
-        if (s_wifi_ok) { probe_pool_init(); ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
-        else           { ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
+        if (rc == 0) { probe_pool_init(); s_wifi_ok = true;    // (pre-spawn here, but keep the
+                       ESP_LOGW(TAG, "coexist: wifi up -> BLE + Wi-Fi combined decoy"); }
+        else         { s_wifi_ok = false;                      //  publish-after-init order uniform)
+                       ESP_LOGE(TAG, "coexist: wifi init rc=%d -> BLE-only fallback", rc); }
     } else {
         s_wifi_ok = false;
         ESP_LOGW(TAG, "coexist: wifi deferred (config window) -> BLE-only for now");

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Public repo: NEVER commit absolute local paths, the OS username `user`, real hardware MACs, or real SSIDs. `private/` is gitignored — never move captures out of it into tracked paths.
+- Public repo: NEVER commit absolute local paths, the OS username, real hardware MACs, or real SSIDs. `private/` is gitignored — never move captures out of it into tracked paths.
 - Commit trailers required on every commit:
   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01TgsxaF69foVD8qLkeULeJy`

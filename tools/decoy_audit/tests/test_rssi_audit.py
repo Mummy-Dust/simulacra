@@ -30,6 +30,12 @@ def test_missing_rssi_returns_none():
     assert ra.load_rssi({"atype": {}}) is None
 
 
+def test_separability_shared_from_discriminators():
+    # rssi_audit must reuse discriminators.rssi_separability, not its own copy.
+    import discriminators as Dmod
+    assert ra.rssi_separability is Dmod.rssi_separability
+
+
 def test_read_log_rssi_parses_lines():
     p = os.path.join(HERE, "_tmp_obs.log")
     with open(p, "w") as f:

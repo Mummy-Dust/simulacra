@@ -4,6 +4,7 @@ population from the real crowd, per feature. Each returns a score in [0,1]
 (0 = indistinguishable, 1 = trivially separable) via Jensen-Shannon divergence."""
 import math
 from collections import Counter
+import capture_profile as cp
 
 ITVL_LO=[0,50,100,200,500,1000,2000]; ITVL_HI=[50,100,200,500,1000,2000,3000]
 def _itvl_bin(ms):
@@ -53,6 +54,21 @@ def js_divergence(p, q):
         return s
     jsd=0.5*kl(p,m)+0.5*kl(q,m)
     return max(0.0, min(1.0, jsd))
+
+def _median_bin(median):
+    idx = int((median - cp.RSSI_LO) // cp.RSSI_W)
+    return max(0, min(cp.RSSI_NBINS - 1, idx))
+
+def rssi_separability(decoy, real):
+    """JS-divergence of two median-centered RSSI shapes, in [0,1]. Placement-invariant:
+    each distribution is aligned on its own median, so absolute level does not drive the score."""
+    db, dm = decoy[0], decoy[1]
+    rb, rm = real[0], real[1]
+    dc, rc = _median_bin(dm), _median_bin(rm)
+    dd = {i - dc: w for i, w in enumerate(db)}
+    rr = {i - rc: w for i, w in enumerate(rb)}
+    keys = sorted(set(dd) | set(rr))
+    return js_divergence([dd.get(k, 0.0) for k in keys], [rr.get(k, 0.0) for k in keys])
 
 def synth_distributions(synth):
     at=Counter(x["atype"] for x in synth)

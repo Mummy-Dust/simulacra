@@ -214,3 +214,15 @@ The repo is public. Captures and every parsed intermediate (`profile.json`,
 `*.ndjson`, `*.seed`, `card.json`) live under the gitignored `private/`.
 `profile.json` retains only aggregate distributions — never device addresses,
 names, or raw AD. No absolute paths or usernames belong in any committed file here.
+
+## Dual-radio coverage (cross-protocol personas)
+
+`synth_dump --personas <seed> <n_phantoms> <n_ble> <ticks> <tick_ms>` drives the full bound
+system (the phantom registry + probe agents + ble_devices) and emits `W` (Wi-Fi) and `B` (BLE)
+events. `tests/test_personas.py` asserts the properties that make a persona a convincing dual-radio
+device: **dual-radio coverage** (every Wi-Fi identity has a co-present BLE twin), co-appearance on
+the same tick, that persona BLE members are RPA and Law-3-safe (never Apple mfg data),
+Samsung/Google vendor-matching, cross-radio address uniqueness, and **same-vendor payload diversity**
+(reservoir-sampled `roster_pick_company` — several Samsung "phones" must not be byte-identical).
+This is the "are our fake phones real dual-radio devices?" axis: a real phone-heavy environment has
+near-100% coverage with diverse payloads, so the decoys must too.

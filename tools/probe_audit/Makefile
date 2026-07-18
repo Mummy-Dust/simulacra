@@ -1,6 +1,6 @@
 CC ?= cc
 ROOT := ../..
-SRC := probe_dump.c $(ROOT)/main/probe_frame.c $(ROOT)/main/probe_agents.c $(ROOT)/main/uniq_id.c $(ROOT)/main/phantom.c
+SRC := probe_dump.c $(ROOT)/main/probe_frame.c $(ROOT)/main/probe_agents.c $(ROOT)/main/uniq_id.c $(ROOT)/main/phantom.c $(ROOT)/main/wifi_density.c
 INC := -Ihost_stubs -I$(ROOT)/main
 CFLAGS ?= -O2 -Wall -Wno-unused-parameter
 all: probe_dump

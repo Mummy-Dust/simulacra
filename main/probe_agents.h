@@ -24,6 +24,9 @@ typedef struct {
 } probe_agent_t;
 
 void     probe_agents_init(int n, uint32_t now_ms);          // (re)seed n agents (<= PROBE_AGENTS_MAX)
+// Adjust the live agent set to n (clamped to [1, PROBE_AGENTS_MAX]): spawn to grow, drop to shrink.
+// The Wi-Fi population-match knob (mirrors churn_set_active_target on the BLE side).
+void     probe_agents_set_target(int n, uint32_t now_ms);
 int      probe_agents_lifecycle(uint32_t now_ms);            // retire+reincarnate expired; returns #reborn
 int      probe_agents_due(uint32_t now_ms, probe_agent_t **out, int max);  // due subset; reschedules them
 uint16_t probe_agent_next_seq(probe_agent_t *a);             // return current seq, then +1 (12-bit wrap)

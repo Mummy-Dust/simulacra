@@ -5,6 +5,7 @@
 #include "probe_agents.h"
 #include "uniq_id.h"
 #include "phantom.h"
+#include "wifi_density.h"
 
 /*
  * Host dumper for the probe-request archetype builder.
@@ -16,6 +17,37 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--settarget") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n0   = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 8;
+        srand(seed);
+        probe_agents_init(n0, 0);
+        printf("%d\n", probe_agents_count());
+        for (int i = 4; i < argc; i++) {
+            probe_agents_set_target((int)strtol(argv[i], 0, 10), (uint32_t)(i * 1000));
+            printf("%d\n", probe_agents_count());
+        }
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--wifiobs") == 0) {
+        char line[64], cmd[16], mh[16];
+        unsigned u;
+        while (fgets(line, sizeof line, stdin)) {
+            if (sscanf(line, "%15s", cmd) != 1) continue;
+            if (strcmp(cmd, "reset") == 0 && sscanf(line, "%*s %u", &u) == 1) {
+                wifi_obs_reset(u);
+            } else if (strcmp(cmd, "note") == 0 && sscanf(line, "%*s %12s %u", mh, &u) == 2) {
+                uint8_t m[6];
+                for (int i = 0; i < 6; i++) { char b[3] = { mh[2 * i], mh[2 * i + 1], 0 }; m[i] = (uint8_t)strtoul(b, 0, 16); }
+                wifi_obs_note(m, u);
+            } else if (strcmp(cmd, "density") == 0 && sscanf(line, "%*s %u", &u) == 1) {
+                printf("%d\n", wifi_obs_density(u));
+            } else if (strcmp(cmd, "target") == 0 && sscanf(line, "%*s %u", &u) == 1) {
+                printf("%d\n", wifi_obs_target(u));
+            }
+        }
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
         srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
         uniq_reset();

@@ -44,9 +44,14 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "esp_random.h"
 #include "detect.h"
 #include "sig_class_name.h"
+#include "wifi_observe.h"
+#include "wifi_density.h"
+#include "probe_agents.h"
 #include <string.h>
 
 static const char *TAG = "coexist";
+static bool s_wifi_obs_started = false;   // wifi_obs_start called once
+static bool s_wifi_obs_ok = false;        // promiscuous observe enabled (else use WIFI_OBS_FALLBACK)
 #define OBS_REPROFILE_MS   15000
 #define COEX_TICK_MS       250
 #define COEX_5G_EVERY      4               // do a 5 GHz excursion every Nth Wi-Fi burst (keep it sparse)
@@ -257,7 +262,17 @@ static void coexist_task(void *arg)
             if (n24) probe_inject_burst(ch24[hop24++ % n24]);        // 2.4 GHz (coex-arbitrated)
             if (p->use_5g && (++s_wifi_ctr % COEX_5G_EVERY == 0)) coexist_5g_excursion();
         }
-        if (d.fire_reprofile) coexist_reprofile(p);
+        if (s_wifi_ok && !s_wifi_obs_started) {
+            s_wifi_obs_ok = wifi_obs_start();       // enable promiscuous once the STA/injection side is up
+            s_wifi_obs_started = true;
+        }
+        if (d.fire_reprofile) {
+            coexist_reprofile(p);                                   // BLE population-match (may early-return)
+            int wt = s_wifi_obs_ok ? wifi_obs_target(now) : WIFI_OBS_FALLBACK;
+            probe_agents_set_target(wt, now);                       // Wi-Fi population-match (independent)
+            ESP_LOGW(TAG, "wifi popmatch: density=%d -> agents=%d%s",
+                     s_wifi_obs_ok ? wifi_obs_density(now) : -1, wt, s_wifi_obs_ok ? "" : " (fallback)");
+        }
         if (s_listen_ch >= 0 && s_wifi_ok)                       // espnow: park on the listen channel between bursts
             esp_wifi_set_channel((uint8_t)s_listen_ch, WIFI_SECOND_CHAN_NONE);
         vTaskDelay(pdMS_TO_TICKS(COEX_TICK_MS));

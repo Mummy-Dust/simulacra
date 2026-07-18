@@ -62,5 +62,36 @@ class Agents(unittest.TestCase):
         self.assertGreater(counts[0], counts[-1], "no active/idle cadence separation")
 
 
+def births(seed, n=16, ticks=2000, tick_ms=1000):
+    out = subprocess.check_output([EXE, "--agents", str(seed), str(n), str(ticks), str(tick_ms)], text=True)
+    recs = []
+    for ln in out.splitlines():
+        p = ln.split()
+        if len(p) == 5 and p[0] == "A":
+            recs.append((int(p[1]), int(p[2]), int(p[3]), p[4]))   # arch, born_ms, wildcard, mac
+    return recs
+
+
+@unittest.skipUnless(os.path.exists(EXE), "probe_dump not built")
+class Births(unittest.TestCase):
+    def test_births_emitted_with_unique_macs(self):
+        recs = births(2)
+        self.assertGreater(len(recs), 16)                       # initial 16 + reincarnations
+        macs = [r[3] for r in recs]
+        self.assertEqual(len(macs), len(set(macs)), "a birth reused a MAC (uniqueness broken)")
+
+    def test_wildcard_flag_is_one_today(self):
+        self.assertTrue(all(r[2] == 1 for r in births(3)))       # all probes wildcard today
+
+    def test_archetypes_in_range(self):
+        self.assertTrue(all(0 <= r[0] < 4 for r in births(4)))   # PROBE_ARCH_COUNT == 4
+
+    def test_multiplicity_per_archetype(self):
+        from collections import Counter
+        per_arch = Counter(r[0] for r in births(5, ticks=2000, tick_ms=2000))
+        self.assertTrue(any(v >= 3 for v in per_arch.values()),
+                        "no archetype churned multiple MACs (multiplicity axis would be empty)")
+
+
 if __name__ == "__main__":
     unittest.main()

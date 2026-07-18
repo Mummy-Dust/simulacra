@@ -61,9 +61,28 @@ int main(int argc, char **argv)
         srand(seed);
         uint32_t t = 0;
         probe_agents_init(nag, t);
+        uint32_t last_born[PROBE_AGENTS_MAX];
+        for (int i = 0; i < PROBE_AGENTS_MAX; i++) last_born[i] = 0u;
+        // A record: one per (re)born agent identity -> arch, born_ms, wildcard(=1 today), mac
+        for (int i = 0; i < probe_agents_count(); i++) {
+            const probe_agent_t *a = probe_agents_at(i);
+            printf("A %d %u 1 ", (int)a->arch, (unsigned)a->born_ms);
+            for (int b = 0; b < 6; b++) printf("%02x", a->mac[b]);
+            printf("\n");
+            last_born[i] = a->born_ms;
+        }
         for (int s = 0; s < ticks; s++) {
             t += tickms;
             probe_agents_lifecycle(t);
+            for (int i = 0; i < probe_agents_count(); i++) {
+                const probe_agent_t *a = probe_agents_at(i);
+                if (a->born_ms != last_born[i]) {               // reincarnated this tick
+                    printf("A %d %u 1 ", (int)a->arch, (unsigned)a->born_ms);
+                    for (int b = 0; b < 6; b++) printf("%02x", a->mac[b]);
+                    printf("\n");
+                    last_born[i] = a->born_ms;
+                }
+            }
             probe_agent_t *due[PROBE_AGENTS_MAX];
             int nd = probe_agents_due(t, due, PROBE_AGENTS_MAX);
             for (int i = 0; i < nd; i++) {

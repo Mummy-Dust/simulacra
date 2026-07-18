@@ -41,6 +41,7 @@ void espnow_status_from_webui(radar_wire_status_t *out, const webui_status_t *in
 #include "radar_key.h"
 #include "coexist.h"
 #include "churn.h"
+#include "probe_agents.h"
 #include "learn.h"
 #include "learn_wire.h"
 #include "sig_wire.h"
@@ -203,10 +204,14 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 // model / learn / detect. AES-GCM authenticated (only fleet PSK holders can read/emit it).
 static void broadcast_fleet_macs(void)
 {
-    uint8_t macs[CHURN_ACTIVE_SET][6]; size_t n = 0;
-    for (size_t s = 0; s < churn_active_count() && n < CHURN_ACTIVE_SET; s++) {
+    uint8_t macs[FLEET_BCAST_MACS_MAX][6]; size_t n = 0;
+    for (size_t s = 0; s < churn_active_count() && n < FLEET_BCAST_MACS_MAX; s++) {
         const identity_t *id = churn_active_at(s);
         if (id) memcpy(macs[n++], id->addr, 6);
+    }
+    for (int i = 0; i < probe_agents_count() && n < FLEET_BCAST_MACS_MAX; i++) {
+        const probe_agent_t *a = probe_agents_at(i);
+        if (a) memcpy(macs[n++], a->mac, 6);        // Wi-Fi probe MACs -> peers exclude them from density
     }
     if (n == 0) return;
     const uint8_t *k = fleet_key_get(); if (!k) return;

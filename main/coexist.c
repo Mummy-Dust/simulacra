@@ -47,6 +47,7 @@ coexist_due_t coexist_due(const coexist_persona_t *p, uint32_t now_ms,
 #include "wifi_observe.h"
 #include "wifi_density.h"
 #include "probe_agents.h"
+#include "fleet_pop.h"
 #include <string.h>
 
 static const char *TAG = "coexist";
@@ -269,7 +270,7 @@ static void coexist_task(void *arg)
         if (d.fire_reprofile) {
             coexist_reprofile(p);                                   // BLE population-match (may early-return)
             int wt = s_wifi_obs_ok ? wifi_obs_target(now) : WIFI_OBS_FALLBACK;
-            probe_agents_set_target(wt, now);                       // Wi-Fi population-match (independent)
+            probe_agents_set_target(fleet_pop_share(wt), now);      // /K: fleet emits ~density total, not K*density
             ESP_LOGW(TAG, "wifi popmatch: density=%d -> agents=%d%s",
                      s_wifi_obs_ok ? wifi_obs_density(now) : -1, wt, s_wifi_obs_ok ? "" : " (fallback)");
         }

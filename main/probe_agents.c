@@ -36,6 +36,14 @@ void probe_agents_init(int n, uint32_t now_ms)
     for (int i = 0; i < s_n; i++) agent_spawn(&s_agents[i], now_ms);
 }
 
+void probe_agents_set_target(int n, uint32_t now_ms)
+{
+    if (n < 1) n = 1;
+    if (n > PROBE_AGENTS_MAX) n = PROBE_AGENTS_MAX;
+    for (int i = s_n; i < n; i++) agent_spawn(&s_agents[i], now_ms);   // grow: spawn the new slots
+    s_n = n;                                                           // shrink: higher slots go dormant
+}
+
 uint16_t probe_agent_next_seq(probe_agent_t *a)
 {
     uint16_t s = a->seq;

@@ -17,6 +17,18 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--settarget") == 0) {
+        unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      n0   = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 8;
+        srand(seed);
+        probe_agents_init(n0, 0);
+        printf("%d\n", probe_agents_count());
+        for (int i = 4; i < argc; i++) {
+            probe_agents_set_target((int)strtol(argv[i], 0, 10), (uint32_t)(i * 1000));
+            printf("%d\n", probe_agents_count());
+        }
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--wifiobs") == 0) {
         char line[64], cmd[16], mh[16];
         unsigned u;

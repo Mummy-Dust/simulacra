@@ -9,7 +9,10 @@
 // queried by observe.
 
 #ifndef FLEET_MAC_CAP
-#define FLEET_MAC_CAP 48          // peer synthetic MACs tracked (~3 decoys x 16 active)
+#define FLEET_MAC_CAP 96          // peer synthetic MACs tracked (~2 peers x [16 BLE + 16 probe] + headroom)
+#endif
+#ifndef FLEET_BCAST_MACS_MAX
+#define FLEET_BCAST_MACS_MAX 32   // max MACs packed per FLEET_MACS broadcast (sealed <=250: 32*6+1=193 + 32 = 225)
 #endif
 #ifndef FLEET_MAC_TTL_MS
 #define FLEET_MAC_TTL_MS 90000u   // forget a peer MAC not re-heard within this (3x broadcast + margin)

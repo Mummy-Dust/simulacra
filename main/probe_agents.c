@@ -8,11 +8,14 @@
 #define ACTIVE_MAX_MS  16000u
 #define IDLE_MIN_MS    30000u
 #define IDLE_MAX_MS    180000u
+#define PERSONA_MAC_ROT_MIN_MS 480000u   // 8 min  (Wi-Fi MAC intra-life rotation, fast-realistic)
+#define PERSONA_MAC_ROT_MAX_MS 900000u   // 15 min
 
 static probe_agent_t s_agents[PROBE_AGENTS_MAX];
 static int           s_n;
 
 static uint32_t rnd_range(uint32_t lo, uint32_t hi) { return lo + (esp_random() % (hi - lo + 1u)); }
+static uint32_t persona_mac_rotate_base(void) { return rnd_range(PERSONA_MAC_ROT_MIN_MS, PERSONA_MAC_ROT_MAX_MS); }
 
 static void agent_spawn(probe_agent_t *a, uint32_t now_ms)
 {
@@ -26,6 +29,7 @@ static void agent_spawn(probe_agent_t *a, uint32_t now_ms)
     uint32_t base = (a->duty == DUTY_ACTIVE) ? rnd_range(ACTIVE_MIN_MS, ACTIVE_MAX_MS)
                                              : rnd_range(IDLE_MIN_MS, IDLE_MAX_MS);
     a->next_scan_ms = now_ms + (esp_random() % base);            // random phase-in (not all due at once)
+    a->next_mac_rotate_ms = now_ms + persona_mac_rotate_base();
 }
 
 void probe_agents_init(int n, uint32_t now_ms)
@@ -62,6 +66,14 @@ int probe_agents_lifecycle(uint32_t now_ms)
         if (a->alive && (now_ms - a->born_ms) >= a->life_ms) {
             agent_spawn(a, now_ms);      // dies, then reincarnates with a fresh random identity
             reborn++;
+            continue;
+        }
+        // intra-life MAC rotation: a real phone rotates its Wi-Fi MAC within a session, independent of
+        // the BLE RPA. Fresh privacy identity; keeps arch/duty/born/life/persona_gen (the binding).
+        if (a->alive && (int32_t)(now_ms - a->next_mac_rotate_ms) >= 0) {
+            probe_random_mac(a->mac);
+            a->seq = (uint16_t)(esp_random() & 0x0FFFu);
+            a->next_mac_rotate_ms = now_ms + persona_mac_rotate_base();
         }
     }
     return reborn;
@@ -102,5 +114,6 @@ int probe_agent_sync(int i, probe_arch_t arch, uint32_t born_ms, uint32_t life_m
     uint32_t base  = (a->duty == DUTY_ACTIVE) ? rnd_range(ACTIVE_MIN_MS, ACTIVE_MAX_MS)
                                               : rnd_range(IDLE_MIN_MS, IDLE_MAX_MS);
     a->next_scan_ms = born_ms + (esp_random() % base);
+    a->next_mac_rotate_ms = born_ms + persona_mac_rotate_base();
     return 1;
 }

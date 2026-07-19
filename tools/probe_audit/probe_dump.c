@@ -17,6 +17,24 @@
  */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--agentrot") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      ticks  = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 35;
+        unsigned tickms = argc > 4 ? (unsigned)strtoul(argv[4], 0, 10) : 60000;
+        srand(seed);
+        probe_agents_init(1, 0);
+        probe_agent_sync(0, ARCH_IPHONE, 0, 2400000u, 1);   // bound agent, 40 min life, gen 1
+        char last[13] = "";
+        uint32_t t = 0;
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            probe_agents_lifecycle(t);
+            const probe_agent_t *a = probe_agents_at(0);
+            char hex[13]; for (int b = 0; b < 6; b++) sprintf(hex + b * 2, "%02x", a->mac[b]);
+            if (strcmp(hex, last) != 0) { printf("%u %s %u\n", (unsigned)t, hex, (unsigned)a->persona_gen); strcpy(last, hex); }
+        }
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--settarget") == 0) {
         unsigned seed = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
         int      n0   = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 8;

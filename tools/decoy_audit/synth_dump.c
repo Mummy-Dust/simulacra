@@ -200,6 +200,25 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
+    if (argc > 1 && strcmp(argv[1], "--blerot") == 0) {
+        unsigned seed   = argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1;
+        int      ticks  = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 45;
+        unsigned tickms = argc > 4 ? (unsigned)strtoul(argv[4], 0, 10) : 60000;   // 1 min ticks
+        srand(seed);
+        roster_init();
+        uint32_t t = 0;
+        ble_devices_init(1, t);
+        ble_device_sync(0, 0, 0, t, 2400000u, 1);          // bound slot 0, 40 min life, gen 1
+        char last[13] = "";
+        for (int s = 0; s <= ticks; s++) {
+            if (s) t += tickms;
+            ble_devices_tick(t);
+            const ble_device_t *d = ble_devices_at(0);
+            char hex[13]; for (int b = 0; b < 6; b++) sprintf(hex + b * 2, "%02x", d->id.addr[b]);
+            if (strcmp(hex, last) != 0) { printf("%u %s %u\n", (unsigned)t, hex, (unsigned)d->persona_gen); strcpy(last, hex); }
+        }
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--routecheck") == 0) {
         srand(argc > 2 ? (unsigned)strtoul(argv[2], 0, 10) : 1);
         uniq_reset();

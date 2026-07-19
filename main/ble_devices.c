@@ -24,6 +24,10 @@
 #define RPA_ROT_MAX_MS    1200000u    // 20 min
 #define NRPA_ROT_MIN_MS     60000u    // 1 min
 #define NRPA_ROT_MAX_MS    600000u    // 10 min
+// Bound-persona RPA rotates on the fast-realistic end (real phones ~15 min), shorter than the unbound
+// RPA_ROT band, so a persona is never trackable by one address for its whole (up to 40 min) life.
+#define PERSONA_RPA_ROT_MIN_MS   480000u    // 8 min
+#define PERSONA_RPA_ROT_MAX_MS   900000u    // 15 min
 
 static ble_device_t s_dev[BLE_DEVICES_MAX];
 static int          s_n;
@@ -51,6 +55,9 @@ static uint32_t rotate_base(ble_atype_t a)
         case BLE_ATYPE_NRPA: return rnd_range(NRPA_ROT_MIN_MS, NRPA_ROT_MAX_MS);
         default:             return 0;   // STATIC: unused
     }
+}
+
+static uint32_t persona_rpa_rotate_base(void) { return rnd_range(PERSONA_RPA_ROT_MIN_MS, PERSONA_RPA_ROT_MAX_MS);
 }
 
 // Draw a frozen behaviour (payload/itvl/company/tx/archetype) from the roster library and
@@ -119,11 +126,11 @@ void ble_devices_tick(uint32_t now_ms)
     for (int i = 0; i < s_n; i++) {
         ble_device_t *d = &s_dev[i];
         if (!d->alive) continue;
-        if (d->persona_idx >= 0) continue;                 // bound RPA rotation handled below
-        if (d->atype == BLE_ATYPE_STATIC) continue;
+        if (d->atype == BLE_ATYPE_STATIC) continue;        // static never rotates (bound are always RPA)
         if ((int32_t)(now_ms - d->next_rotate_ms) >= 0) {
-            make_random_addr(d->id.addr, top2_for(d->atype));
-            d->next_rotate_ms = now_ms + rotate_base(d->atype);
+            make_random_addr(d->id.addr, top2_for(d->atype));   // fresh unique addr; binding untouched
+            d->next_rotate_ms = now_ms + (d->persona_idx >= 0 ? persona_rpa_rotate_base()
+                                                              : rotate_base(d->atype));
         }
     }
 }
@@ -147,7 +154,7 @@ int ble_device_sync(int slot, int persona_idx, bool apple,
     d->born_ms = born_ms;
     d->life_ms = life_ms;
     d->alive = true;
-    d->next_rotate_ms = born_ms + rotate_base(BLE_ATYPE_RPA);
+    d->next_rotate_ms = born_ms + persona_rpa_rotate_base();   // bound: fast persona band
     d->persona_idx = (int8_t)persona_idx;
     d->persona_gen = generation;
     return 1;

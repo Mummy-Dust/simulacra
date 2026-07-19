@@ -17,6 +17,7 @@ typedef struct {
     uint16_t     seq;           // 12-bit, monotonic per agent
     probe_duty_t duty;
     uint32_t     next_scan_ms;
+    uint32_t     next_mac_rotate_ms;   // intra-life Wi-Fi MAC rotation (independent of the BLE RPA timer)
     uint32_t     born_ms;
     uint32_t     life_ms;       // bounded lifetime; on expiry the agent dies + reincarnates
     bool         alive;

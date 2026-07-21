@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 // Fleet population share. In a mesh of K decoy nodes sharing one environment, each node runs 1/K of
 // the fleet-wide population so the aggregate matches observed density (design law 4: population-match)
 // and the crowd originates from K physical points instead of one. K is static: -DSIMULACRA_FLEET_SIZE=K,
@@ -17,3 +18,8 @@ int fleet_pop_share_k(int target, int k);
 
 // This node's share of a fleet-wide target: fleet_pop_share_k(target, fleet_pop_size()).
 int fleet_pop_share(int target);
+
+// Live fleet size: distinct peer NODES heard from recently (fleet_node_count), + this node.
+// Falls back to 1 (standalone) with no peers heard -- the correct, safe default, achieved for
+// free (fleet_node_count returns 0 when nothing has been noted yet).
+int fleet_pop_live_size(uint32_t now_ms);

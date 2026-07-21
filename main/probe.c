@@ -40,8 +40,10 @@ static const char *TAG = "probe";
 #endif
 
 // Personas need one BLE slot each PLUS this many unbound BLE-only decoys so the static/NRPA/
-// persistent mix survives (the address-type + presence tells we already closed).
-#define PHANTOM_BLE_UNBOUND 8
+// persistent mix survives (the address-type + presence tells we already closed), and so the
+// unbound (non-phone) crowd is large enough to keep persona RPAs a MINORITY of the aggregate
+// (see docs/superpowers/specs/2026-07-21-persona-atype-rebalance-design.md). Shared C5/C6 constant.
+#define PHANTOM_BLE_UNBOUND 16
 
 static const uint8_t CH_24[] = { 1, 6, 11 };
 #if PROBE_USE_5G

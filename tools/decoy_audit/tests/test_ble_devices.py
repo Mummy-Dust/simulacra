@@ -30,16 +30,24 @@ class Spawn(unittest.TestCase):
             self.assertEqual(top2, want, f"{at} address {addr} has wrong top-2-bits {top2}")
 
     def test_subtype_mix_realistic(self):
+        # Unbound (non-phone) crowd is deliberately static-heavy / RPA-rare since 2026-07-21
+        # (ATYPE_STATIC_W/RPA_W/NRPA_W = 75/5/20 -- beacons/wearables/tags are almost never RPA;
+        # see docs/superpowers/specs/2026-07-21-persona-atype-rebalance-design.md). Thresholds are
+        # sanity floors/ceilings around that new ~75/5/20 mean, not the old ~52/36/12 mix.
         rows = [r for r in sim(9, n=32) if r[5] == "born"]   # sample over all births/rebirths
         c = Counter(r[3] for r in rows); tot = sum(c.values())
-        self.assertGreater(c["rpa"],  0.20 * tot, "RPA subtype under-represented")
+        self.assertGreater(c["rpa"],  0.02 * tot, "RPA subtype absent")
         self.assertGreater(c["nrpa"], 0.03 * tot, "NRPA subtype under-represented")
-        self.assertLess(c["static"],  0.75 * tot, "static subtype monoculture")
+        self.assertLess(c["static"],  0.90 * tot, "static subtype monoculture")
 
     def test_role_split_about_70_30(self):
+        # More devices are now STATIC (75% weight, was 52%), so more of the population is eligible
+        # for the persistent-static branch, shrinking the transient/resident share of ALL births
+        # (persistent devices are a separate role, diluting this count) -- a legitimate consequence
+        # of the 2026-07-21 atype rebalance, not a regression. See test_subtype_mix_realistic above.
         rows = [r for r in sim(5, n=32) if r[5] == "born"]
         c = Counter(r[4] for r in rows); tot = sum(c.values())
-        self.assertGreater(c["transient"], 0.55 * tot, "transient share too low")
+        self.assertGreater(c["transient"], 0.35 * tot, "transient share too low")
         self.assertGreater(c["resident"],  0.15 * tot, "resident share too low")
 
     def test_behaviour_populated(self):

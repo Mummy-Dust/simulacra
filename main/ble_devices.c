@@ -5,10 +5,13 @@
 
 // Role split (user-chosen): ~70% transient / ~30% resident.
 #define ROLE_RESIDENT_PCT   30
-// Address-subtype blend, matching roster.c's calibrated fleet mix (~52/36/12 static/RPA/NRPA).
-#define ATYPE_STATIC_W  52
-#define ATYPE_RPA_W     36
-#define ATYPE_NRPA_W    12
+// Address-subtype blend for the UNBOUND crowd (beacons/wearables/tags): almost never RPA in
+// reality (RPA is a phone/OS behavior). Deliberately diverges from roster.c's phone-influenced
+// 52/36/12 mix so persona RPAs (always RPA) don't dominate the aggregate BLE crowd (see
+// docs/superpowers/specs/2026-07-21-persona-atype-rebalance-design.md).
+#define ATYPE_STATIC_W  75
+#define ATYPE_RPA_W      5
+#define ATYPE_NRPA_W    20
 // Lifetime bands.
 #define TRANSIENT_MIN_MS   120000u    // 2 min
 #define TRANSIENT_MAX_MS   720000u    // 12 min

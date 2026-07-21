@@ -24,7 +24,9 @@ class PersonaAtype(unittest.TestCase):
     def test_rpa_fraction_elevated_by_personas(self):
         rows = persona_pop(1)
         rpa = sum(1 for r in rows if r["atype"] == "rpa") / len(rows)
-        # personas force 16 bound RPA + 8 unbound (~52/36/12) => RPA well above the roster's ~0.36
+        # personas force 16 bound RPA + 8 unbound (non-phone-weighted, mostly static/NRPA since
+        # 2026-07-21) => RPA well above the roster's ~0.36. This test uses its own smaller ndev=24
+        # (not the live PHANTOM_BLE_UNBOUND=16) purely as a persona-elevation regression check.
         self.assertGreater(rpa, 0.6, f"RPA fraction {rpa:.2f} not persona-elevated")
 
     def test_atype_detail_prints_decoy_and_real_fractions(self):

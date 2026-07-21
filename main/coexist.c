@@ -270,7 +270,7 @@ static void coexist_task(void *arg)
         if (d.fire_reprofile) {
             coexist_reprofile(p);                                   // BLE population-match (may early-return)
             int wt = s_wifi_obs_ok ? wifi_obs_target(now) : WIFI_OBS_FALLBACK;
-            probe_agents_set_target(fleet_pop_share(wt), now);      // /K: fleet emits ~density total, not K*density
+            probe_agents_set_target(fleet_pop_share_k(wt, fleet_pop_live_size(now)), now);  // live /K
             ESP_LOGW(TAG, "wifi popmatch: density=%d -> agents=%d%s",
                      s_wifi_obs_ok ? wifi_obs_density(now) : -1, wt, s_wifi_obs_ok ? "" : " (fallback)");
         }

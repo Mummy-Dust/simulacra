@@ -180,6 +180,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         if (nm) {
             uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
             fleet_note_peer_macs(macs, nm, now);
+            fleet_note_peer_node(info->src_addr, now);   // real hardware sender identity -> live census
             ESP_LOGW(ETAG, "fleet: peer +%u macs (peers=%u)", (unsigned)nm, (unsigned)fleet_peer_count(now));
         }
         return;

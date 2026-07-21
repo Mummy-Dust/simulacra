@@ -41,7 +41,7 @@ cl /nologo /TC /O2 /D_CRT_SECURE_NO_WARNINGS /FIportab.h ^
    ..\..\main\generate.c ..\..\main\templates.c ..\..\main\roster.c ..\..\main\ble_devices.c ^
    ..\..\main\learn.c ..\..\components\simulacra_radar\law3.c ..\..\components\simulacra_radar\learn_wire.c ^
    ..\..\main\uniq_id.c ..\..\main\phantom.c ..\..\main\probe_agents.c ..\..\main\probe_frame.c ^
-   ..\..\main\fleet_pop.c ^
+   ..\..\main\fleet_pop.c ..\..\main\fleet.c ^
    /Fe:synth_dump.exe
 ```
 

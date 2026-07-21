@@ -1,4 +1,5 @@
 #include "fleet_pop.h"
+#include "fleet.h"
 
 int fleet_pop_size(void)
 {
@@ -16,4 +17,9 @@ int fleet_pop_share_k(int target, int k)
 int fleet_pop_share(int target)
 {
     return fleet_pop_share_k(target, fleet_pop_size());
+}
+
+int fleet_pop_live_size(uint32_t now_ms)
+{
+    return (int)fleet_node_count(now_ms) + 1;
 }

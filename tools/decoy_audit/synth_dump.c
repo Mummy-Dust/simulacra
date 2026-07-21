@@ -5,6 +5,7 @@
 #include "identity.h"
 #include "generate.h"
 #include "fleet_pop.h"
+#include "fleet.h"
 #include "ble_devices.h"
 #include "roster.h"
 #include "learn.h"
@@ -115,6 +116,25 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "--fleet-size") == 0) {
         printf("%d\n", fleet_pop_size());
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--fleetnode") == 0) {
+        char line[64], cmd[16], mh[16];
+        unsigned u;
+        while (fgets(line, sizeof line, stdin)) {
+            if (sscanf(line, "%15s", cmd) != 1) continue;
+            if (strcmp(cmd, "reset") == 0) {
+                fleet_reset();
+            } else if (strcmp(cmd, "note") == 0 && sscanf(line, "%*s %12s %u", mh, &u) == 2) {
+                uint8_t m[6];
+                for (int i = 0; i < 6; i++) { char b[3] = { mh[2 * i], mh[2 * i + 1], 0 }; m[i] = (uint8_t)strtoul(b, 0, 16); }
+                fleet_note_peer_node(m, u);
+            } else if (strcmp(cmd, "count") == 0 && sscanf(line, "%*s %u", &u) == 1) {
+                printf("%d\n", (int)fleet_node_count(u));
+            } else if (strcmp(cmd, "livesize") == 0 && sscanf(line, "%*s %u", &u) == 1) {
+                printf("%d\n", fleet_pop_live_size(u));
+            }
+        }
         return 0;
     }
     if (argc > 1 && strcmp(argv[1], "--persona-pop") == 0) {

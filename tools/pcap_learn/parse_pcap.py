@@ -61,6 +61,10 @@ def main():
     magic, vma, vmi, tz, sig, snap, dlt = struct.unpack("<IHHIIII", gh)
     # DLT-agnostic: locate the advertising AA by scanning each record (handles Nordic DLT157 and
     # DLT256 alike), rather than assuming a fixed pseudo-header length. Matches capture_profile.py.
+    # DLT256 (LE LL w/ PHDR) carries a *reference* copy of the advertising AA at record offset 4;
+    # the real packet AA is at offset 10. A bare find() locks onto the reference copy and misreads
+    # the PHDR's flags byte as the PDU header -> every record decodes as a bogus type. Search past
+    # the PHDR for DLT256 (see capture_profile.py's identical fix, 9c3efdb).
     counts, emitted, recs = {}, 0, 0
     while True:
         rh = f.read(16)
@@ -71,7 +75,7 @@ def main():
         if len(data) < incl:
             break
         recs += 1
-        off = data.find(AA_LE)
+        off = data.find(AA_LE, 8) if dlt == 256 else data.find(AA_LE)
         if off < 0 or off + 6 > len(data):
             continue
         pdu = data[off + 4:]                      # skip the 4-byte AA -> advertising PDU
